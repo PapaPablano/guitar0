@@ -1,4 +1,5 @@
 import type { DrawContext } from './draw-context';
+import { barSpans } from './bars';
 import { fretLabel, techniqueMark } from './techniques';
 import { playbackBarIndexAt } from '../model/bars';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
@@ -67,19 +68,6 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
   const lineTop = height * 0.22;
   const lineGap = (height * 0.42) / Math.max(1, stringCount - 1);
 
-  // First playback occurrence of each score bar, and where playback jumps backwards (repeats).
-  const firstPlayback = new Map<number, BarEvent>();
-  const repeatEnds = new Set<number>();
-  const repeatStarts = new Set<number>();
-  timeline.bars.forEach((bar, i) => {
-    if (!firstPlayback.has(bar.scoreBar)) firstPlayback.set(bar.scoreBar, bar);
-    const next = timeline.bars[i + 1];
-    if (next && next.scoreBar <= bar.scoreBar) {
-      repeatEnds.add(bar.scoreBar);
-      repeatStarts.add(next.scoreBar);
-    }
-  });
-
   const notes = timeline.notesForTrack(trackIndex);
   const notesByPlaybackBar = new Map<number, NoteEvent[]>();
   for (const n of notes) {
@@ -90,9 +78,7 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
 
   const bars: StripBar[] = [];
   let x = 0;
-  for (let scoreBar = 0; scoreBar < timeline.scoreBarCount; scoreBar++) {
-    const playback = firstPlayback.get(scoreBar);
-    if (!playback) continue;
+  for (const { scoreBar, playback, repeatStart, repeatEnd } of barSpans(timeline)) {
     const seconds = playback.endSeconds - playback.startSeconds;
     const barWidth = Math.max(MIN_BAR_WIDTH, seconds * STRIP_PX_PER_SECOND);
     bars.push({
@@ -100,8 +86,8 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
       x,
       width: barWidth,
       playback,
-      repeatStart: repeatStarts.has(scoreBar),
-      repeatEnd: repeatEnds.has(scoreBar),
+      repeatStart,
+      repeatEnd,
       notes: notesByPlaybackBar.get(playback.playbackIndex) ?? [],
     });
     x += barWidth;
