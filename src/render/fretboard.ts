@@ -1,8 +1,14 @@
 import type { DrawContext } from './draw-context';
 import { DEFAULT_LOOKAHEAD, maxFretUsed, stepsAt, type Step } from './fretboard-steps';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
+import { noteName, spellingForTuning, type NoteSpelling } from './note-names';
 import { fretLabel } from './techniques';
 import type { NoteEvent, Timeline } from '../model/score';
+
+/** What a dot says: the fret number, the note name, or the name with the fret under it. */
+export type LabelMode = 'fret' | 'note' | 'both';
+
+export const DEFAULT_LABEL_MODE: LabelMode = 'fret';
 
 export const MIN_FRETS = 7;
 export const MAX_FRETS = 24;
@@ -29,7 +35,7 @@ export interface NeckLayout {
 export function computeNeck(width: number, height: number, stringCount: number, highestFret: number): NeckLayout {
   const strings = Math.max(1, stringCount);
   const fretCount = Math.min(MAX_FRETS, Math.max(MIN_FRETS, highestFret));
-  const nutX = Math.max(48, width * 0.06);
+  const nutX = Math.max(110, width * 0.09);
   const boardRight = width - Math.max(16, width * 0.015);
   const top = height * 0.2;
   const bottom = height * 0.8;
@@ -66,6 +72,24 @@ export function stringLineY(neck: NeckLayout, string: number): number {
 export interface FretboardOptions {
   readonly theme?: HighwayTheme;
   readonly lookahead?: number;
+  readonly labelMode?: LabelMode;
+}
+
+/** What the labels need to name a note: the track's open-string pitches and how to spell them. */
+interface Naming {
+  readonly mode: LabelMode;
+  readonly tuning: readonly number[];
+  readonly spelling: NoteSpelling;
+}
+
+/** The text on a dot, and the small fret number under it in 'both' mode. */
+export function dotText(note: NoteEvent, naming: Naming): { main: string; badge: string | null } {
+  const open = naming.tuning[note.string - 1];
+  if (naming.mode === 'fret' || open === undefined) return { main: fretLabel(note), badge: null };
+  if (note.techniques.dead) return { main: 'x', badge: null };
+  const name = noteName(open + note.fret, naming.spelling);
+  const main = note.techniques.ghost ? `(${name})` : name;
+  return { main, badge: naming.mode === 'both' ? String(note.fret) : null };
 }
 
 /** The note the path passes through for a step: its lowest-pitched note. */
@@ -92,15 +116,21 @@ export function renderFretboard(
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
   const neck = computeNeck(width, height, stringCount, maxFretUsed(notes));
   const steps = stepsAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD);
+  const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
+  const naming: Naming = {
+    mode: options.labelMode ?? DEFAULT_LABEL_MODE,
+    tuning,
+    spelling: spellingForTuning(tuning),
+  };
 
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.fillStyle = '#1b1e26';
   ctx.fillRect(0, 0, width, height);
-  drawNeck(ctx, neck, theme);
+  drawNeck(ctx, neck, theme, naming);
 
   steps.trail.forEach((step, i) => {
-    for (const note of step.notes) drawDot(ctx, neck, note, neck.dotRadius * 0.8, theme, 0.35 - i * 0.1, 'solid');
+    for (const note of step.notes) drawDot(ctx, neck, note, neck.dotRadius * 0.8, theme, 0.35 - i * 0.1, 'solid', naming);
   });
 
   drawPath(ctx, neck, steps.playing, steps.upcoming, theme);
@@ -110,15 +140,15 @@ export function renderFretboard(
     for (const note of step.notes) {
       const onPlaying = playing?.notes.some((p) => p.string === note.string && p.fret === note.fret) ?? false;
       if (onPlaying) drawRing(ctx, neck, note, theme, 0.9 - i * 0.1);
-      else drawDot(ctx, neck, note, neck.dotRadius * 0.7, theme, 0.95 - i * 0.1, 'outline');
+      else drawDot(ctx, neck, note, neck.dotRadius * 0.7, theme, 0.95 - i * 0.1, 'outline', naming);
     }
   });
 
-  if (playing) for (const note of playing.notes) drawDot(ctx, neck, note, neck.dotRadius, theme, 1, 'solid');
+  if (playing) for (const note of playing.notes) drawDot(ctx, neck, note, neck.dotRadius, theme, 1, 'solid', naming);
   ctx.restore();
 }
 
-function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme): void {
+function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme, naming: Naming): void {
   const boardTop = neck.top - neck.stringGap * 0.5 - 6;
   const boardBottom = neck.bottom + neck.stringGap * 0.5 + 6;
   ctx.fillStyle = '#2a2118';
@@ -160,6 +190,16 @@ function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme): void
     ctx.stroke();
   }
 
+  // open-string names at the far left, from the track's own tuning
+  ctx.fillStyle = '#e8eaf0';
+  ctx.font = 'bold 14px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let s = 1; s <= neck.stringCount; s++) {
+    const open = naming.tuning[s - 1];
+    if (open !== undefined) ctx.fillText(noteName(open, naming.spelling), 24, stringLineY(neck, s));
+  }
+
   // fret numbers under the neck
   ctx.fillStyle = theme.barLabel;
   ctx.font = '12px system-ui, sans-serif';
@@ -182,6 +222,7 @@ function drawDot(
   theme: HighwayTheme,
   alpha: number,
   kind: 'solid' | 'outline',
+  naming: Naming,
 ): void {
   const x = noteDotX(neck, note.fret);
   const y = stringLineY(neck, note.string);
@@ -204,7 +245,13 @@ function drawDot(
     ctx.font = `bold ${Math.round(radius * 1.1)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(fretLabel(note), x, y);
+    const text = dotText(note, naming);
+    ctx.fillText(text.main, x, y);
+    if (text.badge) {
+      ctx.fillStyle = '#e8eaf0';
+      ctx.font = `${Math.max(9, Math.round(radius * 0.8))}px system-ui, sans-serif`;
+      ctx.fillText(text.badge, x, y + radius + 8);
+    }
   }
   ctx.globalAlpha = 1;
 }

@@ -39,7 +39,8 @@ body {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
 }
 
 .topbar h1 {

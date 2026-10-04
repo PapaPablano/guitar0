@@ -1,6 +1,6 @@
 import { renderBarTimeline } from './bar-timeline';
 import type { DrawContext } from './draw-context';
-import { renderFretboard } from './fretboard';
+import { DEFAULT_LABEL_MODE, renderFretboard, type LabelMode } from './fretboard';
 import { DEFAULT_LOOKAHEAD } from './fretboard-steps';
 import { renderHighway } from './highway';
 import { renderTabStrip, type LoopBars } from './tab-strip';
@@ -15,6 +15,8 @@ export type BottomView = 'tab' | 'fretboard';
 export interface BottomOptions {
   readonly view: BottomView;
   readonly lookahead: number;
+  /** What the fretboard dots say; the tab strip view ignores it. */
+  readonly labelMode?: LabelMode;
 }
 
 /** Extra drawing calls a surface needs to place a sub-region; canvases provide these. */
@@ -57,6 +59,7 @@ export function renderComposite(
 ): void {
   const view = options.bottom?.view ?? 'tab';
   const lookahead = options.bottom?.lookahead ?? DEFAULT_LOOKAHEAD;
+  const labelMode = options.bottom?.labelMode ?? DEFAULT_LABEL_MODE;
   const { highwayHeight, gap, bottomTop, bottomHeight, timelineHeight, fretboardHeight } = frameLayout(height);
 
   ctx.save();
@@ -67,7 +70,7 @@ export function renderComposite(
 
   if (view === 'fretboard') {
     region(ctx, bottomTop, width, fretboardHeight, () =>
-      renderFretboard(ctx, timeline, trackIndex, t, width, fretboardHeight, { lookahead }),
+      renderFretboard(ctx, timeline, trackIndex, t, width, fretboardHeight, { lookahead, labelMode }),
     );
     region(ctx, bottomTop + fretboardHeight + gap, width, timelineHeight, () =>
       renderBarTimeline(ctx, timeline, t, width, timelineHeight, { loop: options.loop }),

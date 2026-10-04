@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { renderFretboard } from '../render/fretboard';
+import { renderFretboard, type LabelMode } from '../render/fretboard';
 import { barAtX, getBarTimelineLayout, renderBarTimeline } from '../render/bar-timeline';
 import { renderHighway } from '../render/highway';
 import {
@@ -21,6 +21,8 @@ interface StageProps {
   bottomView: BottomView;
   /** Upcoming steps the fretboard shows. */
   lookahead: number;
+  /** What the fretboard dots say. */
+  labelMode: LabelMode;
   loop: LoopBars | null;
   onLoopChange: (loop: LoopBars | null) => void;
   /** Called when the strip is clicked without dragging: seek to the start of a score bar. */
@@ -51,6 +53,7 @@ export function Stage({
   clock,
   bottomView,
   lookahead,
+  labelMode,
   loop,
   onLoopChange,
   onSeekBar,
@@ -64,6 +67,8 @@ export function Stage({
   loopRef.current = loop;
   const lookaheadRef = useRef(lookahead);
   lookaheadRef.current = lookahead;
+  const labelModeRef = useRef(labelMode);
+  labelModeRef.current = labelMode;
   const dragRef = useRef<{ anchorBar: number; moved: boolean } | null>(null);
 
   // A view switch unmounts the canvas that owned any drag in progress.
@@ -99,7 +104,7 @@ export function Stage({
       }
       if (fretboard) {
         const fit = fitCanvas(fretboard);
-        if (fit) renderFretboard(fit.ctx, timeline, trackIndex, t, fit.width, fit.height, { lookahead: lookaheadRef.current });
+        if (fit) renderFretboard(fit.ctx, timeline, trackIndex, t, fit.width, fit.height, { lookahead: lookaheadRef.current, labelMode: labelModeRef.current });
       }
       if (barTimeline) {
         const fit = fitCanvas(barTimeline);

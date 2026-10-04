@@ -16,6 +16,7 @@ import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
+import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls, type BottomView } from './ViewControls';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
@@ -51,6 +52,7 @@ export function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
+  const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
   /** Bumped whenever the session or its sound connection is replaced, so late results can be ignored. */
@@ -93,6 +95,7 @@ export function App() {
     setTrackIndex(firstPlayableTrack(timeline));
     setBottomView(initialViewState().bottomView);
     setLookahead(initialViewState().lookahead);
+    setLabelMode(initialViewState().labelMode);
     setTempoPercent(100);
     setLoop(null);
     setLoopOn(false);
@@ -286,7 +289,14 @@ export function App() {
       <header className="topbar">
         <h1>{title}</h1>
         <TrackPicker tracks={timeline.tracks} value={trackIndex} onChange={setTrackIndex} />
-        <ViewControls view={bottomView} lookahead={lookahead} onViewChange={setBottomView} onLookaheadChange={setLookahead} />
+        <ViewControls
+          view={bottomView}
+          lookahead={lookahead}
+          labelMode={labelMode}
+          onViewChange={setBottomView}
+          onLookaheadChange={setLookahead}
+          onLabelModeChange={setLabelMode}
+        />
         {songsterrLink && (
           <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
             Find on Songsterr
@@ -318,6 +328,7 @@ export function App() {
         clock={clock}
         bottomView={bottomView}
         lookahead={lookahead}
+        labelMode={labelMode}
         loop={loopOn ? loop : null}
         onLoopChange={setLoopRange}
         onSeekBar={(bar) => {
@@ -378,7 +389,7 @@ export function App() {
         <ExportDialog
           timeline={timeline}
           trackIndex={trackIndex}
-          bottom={{ view: bottomView, lookahead }}
+          bottom={{ view: bottomView, lookahead, labelMode }}
           onClose={() => setExportOpen(false)}
           getAudio={(onProgress) =>
             userClock?.file
