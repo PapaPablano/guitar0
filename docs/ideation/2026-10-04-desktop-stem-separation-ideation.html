@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Desktop Stem Separation</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#5d5b55;--line:#e2dfd6;--card:#ffffff;--accent:#1f5f8b;--chip:#eef3f7;--warn:#8a4b0f}
+@media (prefers-color-scheme:dark){:root{--bg:#171715;--fg:#ecebe6;--muted:#a5a298;--line:#33322d;--card:#1f1f1c;--accent:#7fb7de;--chip:#26303a;--warn:#e0a566}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:56rem;margin:0 auto;padding:2rem 1rem 4rem}
+h1{font-size:1.9rem;margin:.2rem 0 .4rem}
+h2{font-size:1.35rem;margin:2.4rem 0 .8rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+h3{font-size:1.1rem;margin:0 0 .4rem}
+p,li{max-width:70ch}
+.meta{color:var(--muted);font-size:.9rem;display:flex;flex-wrap:wrap;gap:.4rem 1.2rem}
+.meta b{color:var(--fg);font-weight:600}
+nav.jump ol{padding-left:1.2rem}
+nav.jump a{color:var(--accent);text-decoration:none}
+nav.jump a:hover{text-decoration:underline}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1.1rem 1.2rem;margin:1.1rem 0}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem;margin:.3rem 0 .7rem}
+.chip{background:var(--chip);border-radius:999px;padding:.1rem .65rem;font-size:.82rem}
+dl.f{margin:.5rem 0 0}
+dl.f dt{font-weight:600;margin-top:.65rem}
+dl.f dd{margin:.1rem 0 0}
+code{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:.88em}
+table{border-collapse:collapse;width:100%;font-size:.93rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--chip)}
+.top{border-left:4px solid var(--accent)}
+.note{color:var(--warn)}
+footer.composition-signal{margin-top:3rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--line);padding-top:.8rem}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Ideation: Desktop Stem Separation</h1>
+<div class="meta">
+<span><b>Date</b> <time datetime="2026-10-04">2026-10-04</time></span>
+<span><b>Topic</b> desktop-stem-separation</span>
+<span><b>Focus</b> plan</span>
+<span><b>Mode</b> repo-grounded</span>
+</div>
+<p>Seven ideas survive from about 50 raw candidates, merged to 15 and critiqued by a fresh-context verifier. The focus is <code>docs/plans/2026-10-04-0945-feat-desktop-stem-separation-plan.md</code>. YouTube import (built but hidden), a song library and BPM auto-alignment are out of scope, and no idea here needs them.</p>
+</header>
+
+<nav class="jump" aria-label="Sections">
+<ol>
+<li><a href="#grounding">Grounding context</a></li>
+<li><a href="#axes">Topic axes</a></li>
+<li><a href="#ideas">Ranked ideas</a>
+<ol>
+<li><a href="#i1">1. Anchor-point alignment on the tab clock</a></li>
+<li><a href="#i2">2. Ghost guitar</a></li>
+<li><a href="#i3">3. Practice profile saved per recording</a></li>
+<li><a href="#i4">4. Scaffold fade on loop wrap</a></li>
+<li><a href="#i5">5. Export the mix as audio, or just the loop</a></li>
+<li><a href="#i6">6. First run and engine that recover</a></li>
+<li><a href="#i7">7. Measure drift, then remove it at the source</a></li>
+</ol></li>
+<li><a href="#rejected">Rejection summary</a></li>
+</ol>
+</nav>
+
+<section id="grounding">
+<h2>Grounding Context</h2>
+<p>Tab Highway is a guitar-tab practice app (tab highway, fretboard, recording playback with an offset slider, WebCodecs video export). The plan adds a Windows desktop build that carries a pinned, unmodified StemDeck engine (htdemucs_6s: vocals, drums, bass, guitar, piano, other), so a player can separate their own recording locally, mute or solo the guitar against the tab, and export the mix.</p>
+<ul>
+<li><b>Patterns:</b> pure functions for controls, gains and rendering; one clock per audio source; a bridge that tolerates the absence of Tauri so the web build is unchanged; a content-hash index for saved stems.</li>
+<li><b>Known pains:</b> one shared offset capped at 10 s that drifts when a recording speeds up or slows down; six media elements resynced every 20 ms (40 ms tolerance) with slow-tempo drift flagged as the plan's own risk; first-run model download with no resume and a fixed 90 s engine health wait; a 360 s export cap.</li>
+<li><b>Outside signal:</b> stem mute, slow-down and loop are table stakes (Moises, StemDeck's own mixer, small apps). The gaps found were a tab highway combined with the user's own stems, stem mix in tab video export, and a guitar-amount mode tied to the tab. Guitar Pro 8 aligns a recording with user-placed Sync Points. The 6-stem model's guitar stem is documented as "okay" and guitar-removed backing leaves residue.</li>
+<li><b>Boundaries held:</b> Windows only; no stem features on the web site; unmodified pinned engine; no YouTube, song library or BPM auto-alignment.</li>
+</ul>
+</section>
+
+<section id="axes">
+<h2>Topic Axes</h2>
+<ol>
+<li>Practice mixer and loop mechanics</li>
+<li>Separation engine and first run</li>
+<li>Saved stems and song identity</li>
+<li>Alignment of recording to tab</li>
+<li>Export and output</li>
+</ol>
+</section>
+
+<section id="ideas">
+<h2>Ranked Ideas</h2>
+<p>Top pick: <a href="#i1">anchor-point alignment</a>. It fixes the one limit the app already admits to in its own UI. <a href="#i2">Ghost guitar</a> is the cheapest high-value move.</p>
+
+<article class="card top" id="i1">
+<h3>1. Anchor-point alignment on the tab clock</h3>
+<div class="chips"><span class="chip">Axis: Alignment of recording to tab</span><span class="chip">Confidence 75%</span><span class="chip">Complexity Medium-High</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>Replace the single offset with 2-4 user-placed anchors ("this beat is bar 17"). Build the timeline's tempo map from the anchors so the highway and fretboard follow the performer, and leave the stems unstretched so the existing 40 ms resync is untouched. The slider stays as the one-anchor case. Allow a pre-roll or tab-side shift so a recording that starts late can be aligned. It is manual alignment, not BPM auto-alignment.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src/app/OffsetSlider.tsx:54</code> says "One offset aligns the whole recording, so a recording that speeds up or slows down against the tab will drift." <code>RANGE_SECONDS = 10</code> at line 13, and <code>user-audio.ts:97</code> clamps with <code>Math.max(0, seconds)</code>. <code>alphatab-adapter.ts:9</code> already converts ticks to seconds through a piecewise tempo map, so an anchor list has the same shape on the media side. <code>external:</code> Guitar Pro 8 Audio Track Sync Points; subtitle tools that interpolate between anchor points.</dd>
+<dt>Rationale</dt>
+<dd>Live takes drift, and no slider setting fixes a recording that rushes a chorus. The verifier found the tab-clock variant sound and the audio-side variant costly: the offset appears in the user-audio, stem-mix, stem-audio and export paths, so warping audio means touching all of them.</dd>
+<dt>Downsides</dt>
+<dd>A timeline rebuilt from anchors must fit the immutable Timeline and alphaTab playback, which is unverified. Loop bars map through the anchors, so loop wrap needs care. Drift visibility (an onset or waveform lane under the tab, computed in the page) is a natural follow-up, not part of this idea.</dd>
+</dl>
+</article>
+
+<article class="card" id="i2">
+<h3>2. Ghost guitar: a guitar-amount control instead of mute</h3>
+<div class="chips"><span class="chip">Axis: Practice mixer and loop mechanics</span><span class="chip">Confidence 80%</span><span class="chip">Complexity Low</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>One control from full guitar, through a faint ghost, to gone. Variants to choose between: scale the guitar stem to 10-25%; crossfade the guitar stem against the tab's own synth guitar so the player hears the exact notes; or build the backing as the original minus a share of the guitar stem so separation residue stays in the mix. Optionally blend the "other" stem back. The change lives in the pure gain function, and export reuses it.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src/audio/mix-gains.ts:26-34</code> computes <code>gains[name] = s.muted || (anySolo &amp;&amp; !s.solo) ? 0 : clampVolume(s.volume)</code>, and <code>src/export/stem-audio.ts:25</code> shares it. <code>external:</code> the web research found htdemucs_6s guitar "okay" with residue after removal, and no incumbent offers a guitar-amount mode tied to a tab; Music Minus One records are the long-standing analogy.</dd>
+<dt>Rationale</dt>
+<dd>A hard mute exposes the model's weakest output. A ghost level hides the artifacts and keeps a guide under the player. It is a small change to a pure function that reaches playback, export and tests at once.</dd>
+<dt>Downsides</dt>
+<dd>The synth crossfade needs the synth clock to run beside the stem clock, which has no precedent in the code. Residue quality was not measured, so the "original minus guitar" variant is a hypothesis to try by ear.</dd>
+</dl>
+</article>
+
+<article class="card" id="i3">
+<h3>3. Practice profile saved per recording</h3>
+<div class="chips"><span class="chip">Axis: Saved stems and song identity</span><span class="chip">Confidence 70%</span><span class="chip">Complexity Medium</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>Widen the saved-stems index from <code>hash -&gt; jobId</code> to a small record per file: job, offset or anchors (idea 1), named mix scenes such as "Play along" and "Compare", last loop, tempo. Reopening the same file restores the alignment and the mix. The file's content hash is the key, so there is no library to browse. Later extensions: flag shaky bars and resurface them, or share the settings as a file with no audio.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src/stems/saved-stems.ts:14-52</code> types the index as <code>Record&lt;string,string&gt;</code>; <code>:36-44</code> guards "so a finished separation is never lost to an index error"; <code>src/app/App.tsx:151-168</code> shows stems inherit live settings on activation and nothing is persisted. <code>external:</code> DAW scenes and per-song presets.</dd>
+<dt>Rationale</dt>
+<dd>Alignment is the costliest thing a user does by hand, and it is thrown away every session. The content-addressed key and atomic index write already exist.</dd>
+<dt>Downsides</dt>
+<dd>Needs a versioned schema and migration of existing <code>stem-index.json</code>. The record now holds more than a pointer, so a failed write costs more and the "never lose results" rule must extend to it. The spaced-resurfacing and share-file extensions stretch toward the deferred library and should wait.</dd>
+</dl>
+</article>
+
+<article class="card" id="i4">
+<h3>4. Scaffold fade: the mix changes on each loop pass</h3>
+<div class="chips"><span class="chip">Axis: Practice mixer and loop mechanics</span><span class="chip">Confidence 60%</span><span class="chip">Complexity Medium</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>Let the loop automate the mix. Options: the guitar steps down on each pass (100, 60, 25, 0%) so the recording carries the player and then leaves them alone; a held key brings it back to check an answer; a listen-then-play mode alternates a solo-guitar pass with a guitar-muted pass; optionally the speed rises a few percent per clean pass as the guitar fades. One pure per-pass gain schedule drives all of these.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src/audio/stem-mix.ts:81-83</code> wraps loops at the leader; gains are a pure function and change "without restarting playback"; <code>App.tsx:202</code> already drives rate with <code>clock?.setRate(tempoPercent / 100)</code>. <code>external:</code> the guidance hypothesis in motor learning (Salmoni, Schmidt and Winstein, 1984) and cloze fading in language learning support withdrawing help progressively. StemDeck and the other tools surveyed offer only a static mute.</dd>
+<dt>Rationale</dt>
+<dd>It turns the mixer into a trainer, a combination only an app that holds both the tab and the stems can offer.</dd>
+<dt>Downsides</dt>
+<dd>The verifier rated this weak-to-sound. The motor-learning basis is a hypothesis, not proof that players benefit. Loop-wrap events are visible only inside the leader's clock, so a callback must be added. "Clean pass" needs a manual tap, because inferring it would need input analysis.</dd>
+</dl>
+</article>
+
+<article class="card" id="i5">
+<h3>5. Export the mix as audio, or export just the loop</h3>
+<div class="chips"><span class="chip">Axis: Export and output</span><span class="chip">Confidence 70%</span><span class="chip">Complexity Low-Medium</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>Add "save this mix as audio" (the song without guitar, for a phone or a rig) that skips video and WebCodecs entirely, and a range export of the current loop or bar range for audio or video. A longer-term form repeats the range N times with the guitar stepping down (the drill form of idea 4).</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src/export/stem-audio.ts:11-13</code> already renders the mix offline into one buffer; <code>src/export/presets.ts:20</code> refuses songs over <code>MAX_EXPORT_SECONDS</code> "to keep memory in check"; <code>ExportDialog.tsx:44</code> sets <code>tooLong</code>; <code>src/export/capability.ts:23</code> says "Video export needs desktop Chrome or Edge". <code>plan.md:136</code> marks WebCodecs inside the desktop webview unverified, a risk that sits only on the video path.</dd>
+<dt>Rationale</dt>
+<dd>It delivers the headline output without the plan's biggest unverified assumption, and range export lifts the long-song refusal for the part players practice. The verifier rated audio export sound and the cheapest delivery.</dd>
+<dt>Downsides</dt>
+<dd>Audio-only export still obeys the 360 s memory cap unless the renderer streams in blocks (a larger change, rejected below). Range export must apply the shared offset the same way playback does.</dd>
+</dl>
+</article>
+
+<article class="card" id="i6">
+<h3>6. A first run and engine that recover</h3>
+<div class="chips"><span class="chip">Axis: Separation engine and first run</span><span class="chip">Confidence 55%</span><span class="chip">Complexity Medium</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>Make the two moments every user passes through survive failure. Show real progress and an ETA where the engine can report it; make the engine health wait scale with the machine instead of a fixed 90 s; on a post-setup crash restart only the engine, once, automatically, with the log tail visible; keep synth and tab practice usable while setup runs. A stronger form pre-seeds the model cache from a resumable, hash-checked download, but only if the engine's cache location can be set without modifying it.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src-tauri/src/setup.rs:135-161</code> treats the model warm-up as a black box with no resume; <code>engine.rs:140</code> hard-codes a 90 s health wait; <code>main.rs:18-25</code> sends an <code>engine-error</code> state back through <code>engine_setup()</code>; <code>setup.rs:47-101</code> already reports FFmpeg progress and checksums. <code>external:</code> launcher-style resumable, chunk-hashed downloads.</dd>
+<dt>Rationale</dt>
+<dd>The first run is a ~700 MB install plus a model download, where a flaky connection or slow machine ends the experience before it starts.</dd>
+<dt>Downsides</dt>
+<dd>The verifier rated the strong form weak: owning the weight download changes what the "unmodified pinned engine" runs, and that tension needs a decision. The lighter, safer parts (timeout, auto-retry, restart-only-engine, progress) carry most of the value.</dd>
+</dl>
+</article>
+
+<article class="card" id="i7">
+<h3>7. Measure drift first, then remove it at the source</h3>
+<div class="chips"><span class="chip">Axis: Practice mixer and loop mechanics</span><span class="chip">Confidence 50%</span><span class="chip">Complexity Medium-High</span></div>
+<dl class="f">
+<dt>Description</dt>
+<dd>Treat the plan's own risk as a measured gate. If the 50% tempo manual check fails, bake the stems once at the chosen practice tempo with the already-bundled ffmpeg (<code>atempo</code>), play them at rate 1.0 and cache per tempo, with the live slider keeping today's path as a preview. The heavier escape hatch is one audio context with sample-accurate sources and a pitch-preserving worklet stretcher, which costs roughly 760 MB of decoded audio for a 6-minute song.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>src/audio/stem-mix.ts:6-9</code> sets <code>DRIFT_TOLERANCE_SECONDS = 0.04</code> and <code>RESYNC_MS = 20</code>; <code>:73-79</code> sets each follower's rate and pitch preservation on every change; the plan's Risks section names the worklet stretch as the fallback "if unacceptable". <code>external:</code> ffmpeg <code>atempo</code> filter.</dd>
+<dt>Rationale</dt>
+<dd>Slow practice at 50-70% is the core use, and it is where the plan admits the mixer is weakest. Baking avoids tuning around the problem.</dd>
+<dt>Downsides</dt>
+<dd>Whether the drift is audible has not been measured, so this may never be needed. Baking costs disk and time on each tempo change. Included as a gated contingency, not a commitment.</dd>
+</dl>
+</article>
+</section>
+
+<section id="rejected">
+<h2>Rejection Summary</h2>
+<table>
+<thead><tr><th>#</th><th>Idea</th><th>Reason rejected</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Drift lens: onset or waveform lane under the tab, with snapping anchors</td><td>Better as a follow-up to idea 1 than as a standalone idea. Compute it in the page from the decoded stem; the verifier found no evidence the engine environment carries analysis dependencies.</td></tr>
+<tr><td>2</td><td>Wrapper "analysis lane" routes (onsets, peaks, loudness)</td><td>Basis weak: the cited <code>guard.py</code> is a secret-header and CORS gate, not a route file, and the analysis-dependency premise is unverified. Duplicates the in-page option above.</td></tr>
+<tr><td>3</td><td>Practice-first separation (separate the loop first, swap in the full song)</td><td>Real pain, but unverified that the pinned engine accepts clips and gives clean stems at clip edges; the slice must not be indexed as the file's stems. Revisit after real separation times are measured on the target CPU.</td></tr>
+<tr><td>4</td><td>Engine runs only while separating; copy stems out and play from disk</td><td>Plausible but depends on the engine's disk layout, and it overlaps the recovery work in idea 6. Folded into idea 6's lighter steps.</td></tr>
+<tr><td>5</td><td>Saved-stems storage view, FLAC transcode, LRU eviction</td><td>Too expensive relative to value for a first release; pruning of missing jobs already exists. FLAC decode in the webview is unverified.</td></tr>
+<tr><td>6</td><td>Block-streamed mix renderer to lift the 360 s cap, plus multi-track export</td><td>Large change that rests on windowed WAV decode in the webview and the unverified WebCodecs assumption. Idea 5 delivers most of the benefit with less risk.</td></tr>
+<tr><td>7</td><td>Record your own take with echo cancellation and a ghost take</td><td>Scope overrun: a new product area. No code uses <code>getUserMedia</code>, and microphone permission in the Tauri webview plus cancellation quality are unproven.</td></tr>
+<tr><td>8</td><td>"Time to first practice" bundle (practice-first separation, owned model download, lazy engine)</td><td>Bundles two weak ideas and one that strains the unmodified-engine principle. The uncontroversial part, keeping synth practice usable during setup, is kept in idea 6.</td></tr>
+<tr><td>9</td><td>Share a practice sheet as a file; spaced resurfacing of shaky bars</td><td>Kept only as later extensions of idea 3. Both stretch toward the deferred song library.</td></tr>
+<tr><td>10</td><td>Replace six media elements with one audio context outright</td><td>The plan's own larger fallback; kept only as a gated contingency inside idea 7.</td></tr>
+</tbody>
+</table>
+<p class="note">Axis coverage: every axis has at least one survivor. Verification depth: each generating agent submitted several ideas against a read budget of 5, so bases were not equally verified; the verifier spot-checked every cited line and found them present, with the exceptions noted in the rejection table.</p>
+</section>
+
+<footer class="composition-signal">Composed 2026-10-04 by ce-ideate from the focus "plan" and <code>docs/plans/2026-10-04-0945-feat-desktop-stem-separation-plan.md</code></footer>
+</main>
+</body>
+</html>
