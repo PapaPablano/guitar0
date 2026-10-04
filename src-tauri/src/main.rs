@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod engine;
+mod profiles;
 mod setup;
 
 use std::collections::HashMap;
@@ -144,13 +145,33 @@ fn stem_index_write(index: HashMap<String, String>) -> Result<(), String> {
     fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
+/// Per-recording profiles live in their own file so a profile problem can never touch the saved-stems index.
+/// A missing or unreadable file reads as empty.
+#[tauri::command]
+fn profiles_read() -> Result<serde_json::Value, String> {
+    let path = engine::Layout::locate()?.data.join("recording-profiles.json");
+    Ok(fs::read_to_string(&path).map(|text| profiles::parse_profiles(&text)).unwrap_or_else(|_| profiles::empty_file()))
+}
+
+#[tauri::command]
+fn profiles_write(profiles: serde_json::Value) -> Result<(), String> {
+    let path = engine::Layout::locate()?.data.join("recording-profiles.json");
+    let text = profiles::serialize_profiles(&profiles).ok_or_else(|| "not a profile file".to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
 fn main() {
     let state: State = Arc::new(Shared::default());
     set(&state, "starting", None, Some("Starting".to_string()));
 
     let app = tauri::Builder::default()
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write])
         .setup({
             let state = state.clone();
             move |_app| {
