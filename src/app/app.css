@@ -200,6 +200,11 @@ button[aria-pressed='true'] {
   gap: 12px;
 }
 
+.nudge {
+  display: inline-flex;
+  gap: 4px;
+}
+
 .muted {
   color: var(--muted);
 }

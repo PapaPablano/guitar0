@@ -15,6 +15,7 @@ import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
 import { OffsetSlider } from './OffsetSlider';
+import { clampOffset } from '../audio/offset-range';
 import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
@@ -440,7 +441,8 @@ export function App() {
         fileName={userClock?.file?.name ?? stems?.title ?? null}
         error={userAudioError}
         onLoad={onLoadRecording}
-        onOffsetChange={(seconds) => {
+        onOffsetChange={(raw) => {
+          const seconds = clampOffset(raw);
           userClock?.setOffset(seconds);
           stems?.clock.setOffset(seconds);
           setOffset(seconds);

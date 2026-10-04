@@ -1,4 +1,6 @@
 import { useRef } from 'react';
+import { OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../audio/offset-range';
+import { nudgeOffset, offsetControlsVisible, offsetDirectionLabel } from './offset-controls';
 
 interface OffsetSliderProps {
   /** Null when no recording is loaded. */
@@ -10,11 +12,9 @@ interface OffsetSliderProps {
   onRemove: () => void;
 }
 
-const RANGE_SECONDS = 10;
-
 export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
   const input = useRef<HTMLInputElement>(null);
-  const loaded = offsetSeconds !== null;
+  const loaded = offsetSeconds !== null && offsetControlsVisible({ hasRecording: true });
 
   return (
     <div className="audio-sync" role="group" aria-label="Your recording">
@@ -36,17 +36,31 @@ export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetC
         <>
           <span className="muted">{fileName}</span>
           <label className="field">
-            Offset {offsetSeconds.toFixed(2)} s
+            Offset {offsetSeconds.toFixed(2)} s ({offsetDirectionLabel(offsetSeconds)})
             <input
               type="range"
-              min={0}
-              max={RANGE_SECONDS}
+              min={OFFSET_MIN_SECONDS}
+              max={OFFSET_MAX_SECONDS}
               step={0.01}
               value={offsetSeconds}
               onChange={(e) => onOffsetChange(Number(e.target.value))}
               aria-label="Recording offset in seconds"
             />
           </label>
+          <span className="nudge" role="group" aria-label="Nudge offset">
+            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'coarse', -1))} aria-label="Recording 100 ms later">
+              -100 ms
+            </button>
+            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'fine', -1))} aria-label="Recording 10 ms later">
+              -10 ms
+            </button>
+            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'fine', 1))} aria-label="Recording 10 ms earlier">
+              +10 ms
+            </button>
+            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'coarse', 1))} aria-label="Recording 100 ms earlier">
+              +100 ms
+            </button>
+          </span>
           <button type="button" onClick={onRemove}>
             Use built-in sound
           </button>
