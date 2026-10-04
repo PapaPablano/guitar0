@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
 import { computeLayout, laneY, timeToX, type HighwayLayout } from './layout';
+import { drawTechniques, fretLabel } from './techniques';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
 import type { NoteEvent, Timeline } from '../model/score';
 
@@ -81,6 +82,7 @@ export function renderHighway(
   const visible = visibleNotes(notes, from, to);
   for (const note of visible) drawSustain(ctx, note, layout, theme, t);
   for (const note of visible) drawNote(ctx, note, layout, theme, t);
+  drawTechniques(ctx, visible, layout, theme, t);
 
   ctx.strokeStyle = theme.strikeline;
   ctx.lineWidth = 3;
@@ -180,7 +182,7 @@ function drawNote(
   ctx.font = `bold ${Math.round(layout.noteRadius * 1.2)}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(note.fret), x, y);
+  ctx.fillText(fretLabel(note), x, y);
 }
 
 function drawHitEffect(

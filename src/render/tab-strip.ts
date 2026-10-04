@@ -1,4 +1,5 @@
 import type { DrawContext } from './draw-context';
+import { techniqueMark } from './techniques';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
 import type { BarEvent, NoteEvent, Timeline } from '../model/score';
 
@@ -251,12 +252,19 @@ function drawBarNotes(
   for (const n of bar.notes) {
     const x = noteX(n);
     const y = layout.lineTop + (n.string - 1) * layout.lineGap;
-    const label = String(n.fret);
+    const label = n.techniques.dead ? 'x' : n.techniques.ghost ? `(${n.fret})` : String(n.fret);
     // break the string behind the number so it stays readable
     ctx.fillStyle = '#1b1e26';
     ctx.fillRect(x - 7, y - 8, 14, 16);
     ctx.fillStyle = theme.noteText === '#10131a' ? '#f1f3f5' : theme.noteText;
     ctx.fillText(label, x, y);
+    const mark = techniqueMark(n);
+    if (mark) {
+      ctx.fillStyle = theme.barLabel;
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.fillText(mark, x, y - 11);
+      ctx.font = '13px system-ui, sans-serif';
+    }
     if (!stemmed.has(n.tick)) stemmed.set(n.tick, n);
   }
   // rhythm stems under the staff: one flag per halving below a quarter note
