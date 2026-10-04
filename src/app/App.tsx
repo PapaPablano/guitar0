@@ -22,6 +22,8 @@ import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
 import { assessSupport, readSupportEnvironment } from './support';
+import { FILE_TUNING, presetById, retuneTimeline } from '../model/retune';
+import { TuningPicker } from './TuningPicker';
 import './app.css';
 
 const SOUND_FONT_URL = './soundfont/sonivox.sf3';
@@ -53,6 +55,7 @@ export function App() {
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
+  const [tuningId, setTuningId] = useState(FILE_TUNING);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
   /** Bumped whenever the session or its sound connection is replaced, so late results can be ignored. */
@@ -96,6 +99,7 @@ export function App() {
     setBottomView(initialViewState().bottomView);
     setLookahead(initialViewState().lookahead);
     setLabelMode(initialViewState().labelMode);
+    setTuningId(FILE_TUNING);
     setTempoPercent(100);
     setLoop(null);
     setLoopOn(false);
@@ -128,7 +132,12 @@ export function App() {
   }
 
   const clock: Clock | undefined = userClock ?? session?.clock;
-  const timeline = session?.timeline;
+  const sourceTimeline = session?.timeline;
+  // The tab is shown in the chosen tuning; the sound always comes from the file.
+  const timeline = useMemo(() => {
+    const preset = presetById(tuningId);
+    return sourceTimeline && preset ? retuneTimeline(sourceTimeline, trackIndex, preset.tuning) : sourceTimeline;
+  }, [sourceTimeline, trackIndex, tuningId]);
 
   // Apply the loop to the clock whenever the loop or its switch changes.
   useEffect(() => {
@@ -288,7 +297,15 @@ export function App() {
     <main className="app">
       <header className="topbar">
         <h1>{title}</h1>
-        <TrackPicker tracks={timeline.tracks} value={trackIndex} onChange={setTrackIndex} />
+        <TrackPicker
+          tracks={timeline.tracks}
+          value={trackIndex}
+          onChange={(i) => {
+            setTrackIndex(i);
+            setTuningId(FILE_TUNING);
+          }}
+        />
+        <TuningPicker track={sourceTimeline?.tracks[trackIndex]} value={tuningId} onChange={setTuningId} />
         <ViewControls
           view={bottomView}
           lookahead={lookahead}
