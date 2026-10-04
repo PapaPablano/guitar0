@@ -172,11 +172,27 @@ fn warm_models(data: &Path, python: &Path, backend: &Path, report: Report) -> Re
     let err_thread = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     // Poll the checkpoint folder beside the blocking wait so the page's one-second status poll sees movement.
     let mut best = crate::model_progress::FFMPEG_END;
+    let began = std::time::Instant::now();
+    let mut stall = crate::model_progress::StallWatch::new();
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {}
-            Err(e) => return Err(format!("could not watch model setup: {e}")),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("could not watch model setup: {e}"));
+            }
+        }
+        if stall.observe(crate::model_progress::folder_total_size(&checkpoints), began.elapsed()) {
+            // A hung download would hold setup in "setting up" forever; stop it so the page can offer a retry.
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = (out_thread.join(), err_thread.join());
+            return Err(format!(
+                "the model download stalled: nothing arrived for {} minutes. Check the connection and retry.",
+                crate::model_progress::STALL_LIMIT.as_secs() / 60
+            ));
         }
         match crate::model_progress::model_progress(
             crate::model_progress::largest_file_size(&checkpoints),
