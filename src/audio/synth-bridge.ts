@@ -1,5 +1,7 @@
 import * as alphaTab from '@coderline/alphatab';
 import { secondsToTicks, ticksToSeconds } from '../model/alphatab-adapter';
+import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
+import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import type { Clock, LoopRange } from './clock';
 
@@ -103,6 +105,31 @@ export class SynthClock implements Clock {
       this.api.playbackRange = null;
       this.api.isLooping = false;
     }
+  }
+
+  /**
+   * Renders the whole song's synth audio offline, at original tempo, for the video export.
+   * Calls `onProgress` with 0..1 as it goes.
+   */
+  async exportAudio(onProgress?: (fraction: number) => void): Promise<PcmAudio> {
+    const options = new alphaTab.synth.AudioExportOptions();
+    options.sampleRate = AUDIO_SAMPLE_RATE;
+    options.useSyncPoints = false;
+    options.masterVolume = 1;
+    options.metronomeVolume = 0;
+    const exporter = await this.api.exportAudio(options);
+    const chunks: { left: Float32Array; right: Float32Array }[] = [];
+    try {
+      for (;;) {
+        const chunk = await exporter.render(1000);
+        if (!chunk) break;
+        chunks.push(deinterleave(chunk.samples));
+        if (chunk.endTime > 0) onProgress?.(Math.min(1, chunk.currentTime / chunk.endTime));
+      }
+    } finally {
+      exporter.destroy();
+    }
+    return concatPcm(chunks, AUDIO_SAMPLE_RATE);
   }
 
   dispose(): void {

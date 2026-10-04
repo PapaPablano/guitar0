@@ -22,6 +22,12 @@ Tab Highway bundles the packages and assets below. Each keeps its own licence.
 - Licence: MIT. Copyright (c) Meta Platforms, Inc. and affiliates.
 - Source: https://github.com/facebook/react
 
+### mp4-muxer 5.2.2
+
+- Licence: MIT. Copyright (c) 2023 Vanilagy.
+- Source: https://github.com/Vanilagy/mp4-muxer
+- Writes the MP4 container for video export. The package is no longer developed; its author points to Mediabunny (MPL-2.0) as the successor.
+
 ## Assets shipped in the page
 
 ### Sonivox SoundFont (sonivox.sf3)

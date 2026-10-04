@@ -8,6 +8,8 @@ import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
+import { decodeUserRecording } from '../export/audio';
+import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
 import { OffsetSlider } from './OffsetSlider';
 import { SAMPLE_ALPHATEX } from './sample';
@@ -44,6 +46,7 @@ export function App() {
   const [userClock, setUserClock] = useState<UserAudioClock | null>(null);
   const [offset, setOffset] = useState(0);
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const lastShown = useRef(-1);
 
   function connectAudio(next: Session) {
@@ -262,6 +265,9 @@ export function App() {
       <header className="topbar">
         <h1>{title}</h1>
         <TrackPicker tracks={timeline.tracks} value={trackIndex} onChange={setTrackIndex} />
+        <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady}>
+          Export video
+        </button>
         <button
           type="button"
           onClick={() => {
@@ -338,6 +344,18 @@ export function App() {
         <p role="alert" className="error">
           {error}
         </p>
+      )}
+      {exportOpen && (
+        <ExportDialog
+          timeline={timeline}
+          trackIndex={trackIndex}
+          onClose={() => setExportOpen(false)}
+          getAudio={(onProgress) =>
+            userClock?.file
+              ? decodeUserRecording(userClock.file, userClock.offset, timeline.durationSeconds)
+              : session.clock.exportAudio(onProgress)
+          }
+        />
       )}
       <Notices />
     </main>
