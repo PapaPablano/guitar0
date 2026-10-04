@@ -90,10 +90,6 @@ export class EngineClient {
     return (await this.request(`/api/jobs/${jobId}/stems/${name}.wav`, {})).blob();
   }
 
-  stemUrl(jobId: string, name: StemName): string {
-    return `${this.options.baseUrl}/api/jobs/${jobId}/stems/${name}.wav`;
-  }
-
   private async request(path: string, init: RequestInit): Promise<Response> {
     let response: Response;
     try {
@@ -101,6 +97,8 @@ export class EngineClient {
       headers.set(SECRET_HEADER, this.options.secret);
       response = await this.fetchFn(`${this.options.baseUrl}${path}`, { ...init, headers });
     } catch {
+      // an abort during the upload is the user cancelling, not an engine that cannot be reached
+      if (init.signal?.aborted) throw new SeparationCancelled();
       throw new EngineUnavailable();
     }
     if (response.status === 404) throw new JobNotFound();

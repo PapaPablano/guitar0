@@ -2,6 +2,14 @@ import { createWebAudioChannel, StemMixClock, type StemChannel } from '../audio/
 import type { StemSources } from '../export/stem-audio';
 import { EngineClient, STEM_NAMES } from './engine-client';
 
+let sharedContext: AudioContext | null = null;
+
+/** One audio context for the page's lifetime, so repeated separations do not leak contexts. */
+export function audioContext(): AudioContext {
+  sharedContext ??= new AudioContext();
+  return sharedContext;
+}
+
 export interface LoadedStems {
   readonly clock: StemMixClock;
   readonly sources: StemSources;

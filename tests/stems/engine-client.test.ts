@@ -49,6 +49,15 @@ describe('EngineClient.separate', () => {
     expect(calls.some((c) => c.url.endsWith('/api/jobs/j1/cancel'))).toBe(true);
   });
 
+  it('treats an abort during the upload as a cancel, not an unreachable engine', async () => {
+    const controller = new AbortController();
+    const { client } = setup(() => {
+      controller.abort();
+      throw new DOMException('aborted', 'AbortError');
+    });
+    await expect(client.separate(file(), { signal: controller.signal })).rejects.toBeInstanceOf(SeparationCancelled);
+  });
+
   it('surfaces the engine message when the job errors', async () => {
     const { client } = setup((_url, init) => (init?.method === 'POST' ? json({ job_id: 'j2' }) : json({ status: 'error', progress: 0.1, error: 'Out of memory' })));
     await expect(client.separate(file(), {})).rejects.toThrow(new SeparationFailed('Out of memory'));

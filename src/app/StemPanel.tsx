@@ -4,7 +4,7 @@ import type { StemMixClock } from '../audio/stem-mix';
 import type { StemSources } from '../export/stem-audio';
 import { EngineClient, SeparationCancelled, STEM_NAMES, type StemName } from '../stems/engine-client';
 import { hashFile } from '../stems/file-hash';
-import { loadStems } from '../stems/load-stems';
+import { audioContext, loadStems } from '../stems/load-stems';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { describeEngine, readEngineStatus, startEngineSetup, type ShellEngineStatus } from './engine-state';
@@ -98,7 +98,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
         await savedStems.record(hash, jobId);
         setSavedJob(jobId);
       }
-      const context = new AudioContext();
+      const context = audioContext();
       await context.resume();
       const loaded = await loadStems(client, jobId, durationSeconds, context);
       onActivate(loaded);
