@@ -8,6 +8,7 @@ import { audioContext, loadStems } from '../stems/load-stems';
 import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
+import { readYoutubeFlag, youtubeControls } from './feature-flags';
 import { describeEngine, readEngineStatus, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
@@ -110,6 +111,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
 
   const engine = describeEngine(status);
   const control = separateControl({ engine, hasRecording: recording !== null, hasSaved: savedJob !== null, busy });
+  const youtube = youtubeControls({ enabled: readYoutubeFlag(), stemsEnabled: engine.stemsEnabled, hasResults: results !== null });
 
   /** Separates (or reuses saved stems for) a source, then plays them. */
   async function start(source: Source) {
@@ -218,7 +220,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
           )}
         </div>
       )}
-      {!active && engine.stemsEnabled && (
+      {!active && youtube.search && (
         <form className="stems-row" onSubmit={(e) => void search(e)} role="search">
           <input
             type="search"
@@ -233,7 +235,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
           <span className="muted">Imports the audio and splits it into stems. Use only audio you have the right to use.</span>
         </form>
       )}
-      {!active && results !== null && (
+      {!active && youtube.results && results !== null && (
         <ul className="search-results" aria-label="Search results">
           {results.length === 0 && <li className="muted">No results.</li>}
           {results.map((item) => {
