@@ -53,14 +53,19 @@ export function startExport(args: {
       worker.terminate();
       reject(new Error(e.message || 'The export stopped unexpectedly.'));
     };
-    const start: StartMessage = {
-      type: 'start',
-      data: serializeTimeline(args.timeline, args.trackIndex),
-      trackIndex: args.trackIndex,
-      preset: args.preset,
-      audio,
-    };
-    worker.postMessage(start, [audio.left.buffer, audio.right.buffer]);
+    try {
+      const start: StartMessage = {
+        type: 'start',
+        data: serializeTimeline(args.timeline, args.trackIndex),
+        trackIndex: args.trackIndex,
+        preset: args.preset,
+        audio,
+      };
+      worker.postMessage(start, [audio.left.buffer, audio.right.buffer]);
+    } catch (e) {
+      worker.terminate();
+      reject(e instanceof Error ? e : new Error(String(e)));
+    }
   });
 
   return {

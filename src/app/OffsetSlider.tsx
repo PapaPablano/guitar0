@@ -39,7 +39,7 @@ export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetC
             Offset {offsetSeconds.toFixed(2)} s
             <input
               type="range"
-              min={-RANGE_SECONDS}
+              min={0}
               max={RANGE_SECONDS}
               step={0.01}
               value={offsetSeconds}

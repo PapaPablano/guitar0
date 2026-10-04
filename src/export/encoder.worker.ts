@@ -82,6 +82,7 @@ async function run(msg: StartMessage): Promise<void> {
     audioEncoder.encode(data);
     data.close();
     while (audioEncoder.encodeQueueSize > 8) await sleep(1);
+    await sleep(0); // let a cancel message through
   }
 
   const total = frameCount(timeline.durationSeconds, preset.fps);
@@ -97,6 +98,7 @@ async function run(msg: StartMessage): Promise<void> {
     videoFrame.close();
     while (videoEncoder.encodeQueueSize > 8) await sleep(1);
     if (frame % 15 === 0) scope.postMessage({ type: 'progress', fraction: frame / total });
+    if (frame % 16 === 0) await sleep(0); // let a cancel message through even when the encoder keeps up
   }
 
   await videoEncoder.flush();

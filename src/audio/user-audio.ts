@@ -24,6 +24,7 @@ export class UserAudioClock implements Clock {
   private offsetSeconds = 0;
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
+  private watcher: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     readonly element: AudioLike,
@@ -57,16 +58,20 @@ export class UserAudioClock implements Clock {
       media = loop.start;
       this.element.currentTime = loop.start + this.offsetSeconds;
     }
+    // A recording longer than the tab stops with the tab instead of playing on unseen.
+    if (this.playing && media >= this.duration) this.element.pause();
     return clamp(media, 0, this.duration);
   }
 
   play(): void {
     if (this.time() >= this.duration) this.seek(this.loopRange?.start ?? 0);
     void this.element.play();
+    this.startWatcher();
   }
 
   pause(): void {
     this.element.pause();
+    this.stopWatcher();
   }
 
   seek(seconds: number): void {
@@ -84,12 +89,30 @@ export class UserAudioClock implements Clock {
     this.loopRange = normalizeLoop(range);
   }
 
-  /** Moves the recording against the tab; the recording keeps playing from where it is. */
+  /**
+   * Moves the recording against the tab; the recording keeps playing from where it is. Only a
+   * recording that starts earlier than the tab is supported, so the offset is never negative.
+   */
   setOffset(seconds: number): void {
-    this.offsetSeconds = seconds;
+    this.offsetSeconds = Math.max(0, seconds);
+  }
+
+  /** Loop wrapping and the stop at the tab end are checked on a timer too, so they hold when frames are throttled. */
+  private startWatcher(): void {
+    if (this.watcher) return;
+    this.watcher = setInterval(() => {
+      this.time();
+      if (!this.playing) this.stopWatcher();
+    }, 20);
+  }
+
+  private stopWatcher(): void {
+    if (this.watcher) clearInterval(this.watcher);
+    this.watcher = null;
   }
 
   dispose(): void {
+    this.stopWatcher();
     this.element.pause();
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
   }

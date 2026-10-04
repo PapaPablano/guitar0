@@ -35,7 +35,8 @@ export function ExportDialog({ timeline, trackIndex, getAudio, onClose }: Export
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
   const job = useRef<ExportJob | null>(null);
-  const cancelledEarly = useRef(false);
+  /** Bumped by every start and cancel; a run that is no longer current must not touch state. */
+  const runId = useRef(0);
   const preset = presetById(presetId);
   const tooLong = timeline.durationSeconds > MAX_EXPORT_SECONDS;
 
@@ -49,6 +50,14 @@ export function ExportDialog({ timeline, trackIndex, getAudio, onClose }: Export
       live = false;
     };
   }, [preset]);
+
+  // Closing the dialog abandons any export still running.
+  useEffect(() => {
+    return () => {
+      runId.current += 1;
+      job.current?.cancel();
+    };
+  }, []);
 
   // Free a finished file's URL when the dialog closes.
   useEffect(() => {
@@ -65,43 +74,45 @@ export function ExportDialog({ timeline, trackIndex, getAudio, onClose }: Export
   }
 
   async function start() {
-    cancelledEarly.current = false;
+    runId.current += 1;
+    const run = runId.current;
+    const current = () => run === runId.current;
     setPhase({ name: 'preparing', fraction: 0 });
     try {
-      const audio = await getAudio((fraction) => setPhase({ name: 'preparing', fraction }));
-      if (cancelledEarly.current) {
-        setPhase({ name: 'idle' });
-        return;
-      }
+      const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
+      if (!current()) return;
       setPhase({ name: 'exporting', fraction: 0 });
       const running = startExport({
         timeline,
         trackIndex,
         preset,
         audio,
-        onProgress: (fraction) => setPhase({ name: 'exporting', fraction }),
+        onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
       job.current = running;
       const blob = await running.result;
+      if (!current()) return;
       const url = URL.createObjectURL(blob);
       const filename = safeFilename(timeline.title);
       setPhase({ name: 'done', url, filename });
       download(url, filename);
     } catch (e) {
+      if (!current()) return;
       if (e instanceof ExportCancelled) {
         setPhase({ name: 'idle' });
       } else {
         setPhase({ name: 'failed', reason: e instanceof Error && e.message ? e.message : 'The export failed.' });
       }
     } finally {
-      job.current = null;
+      if (current()) job.current = null;
     }
   }
 
   function cancel() {
-    cancelledEarly.current = true;
+    runId.current += 1;
     job.current?.cancel();
-    if (!job.current) setPhase({ name: 'idle' });
+    job.current = null;
+    setPhase({ name: 'idle' });
   }
 
   const busy = phase.name === 'preparing' || phase.name === 'exporting';

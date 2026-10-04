@@ -67,6 +67,19 @@ describe('SynthClock', () => {
     perf.mockRestore();
   });
 
+  it('keeps the heard position steady when the tempo changes while playing', () => {
+    const perf = vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const { clock, position, state } = setup(0.04);
+    state.emit({ state: alphaTab.synth.PlayerState.Playing });
+    position.emit({ currentTick: 1920 * 4 });
+    const before = clock.time();
+    clock.setRate(0.5);
+    // the latency is taken off once, not folded into the stored position as well
+    expect(clock.time()).toBeCloseTo(4 - 0.04 * 0.5, 6);
+    expect(before).toBeCloseTo(4 - 0.04, 6);
+    perf.mockRestore();
+  });
+
   it('seeks by tick and clamps to the song', () => {
     const { clock, api } = setup();
     clock.seek(3);

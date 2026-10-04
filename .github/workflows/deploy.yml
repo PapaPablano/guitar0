@@ -27,6 +27,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Check the built site has its sound, font and scripts
+        run: |
+          test -s dist/index.html
+          test -s dist/soundfont/sonivox.sf3
+          test -s dist/font/Bravura.woff2
+          ls dist/assets/*.js > /dev/null
+          ls dist/assets/encoder.worker-*.js > /dev/null
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

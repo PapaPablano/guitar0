@@ -132,20 +132,19 @@ describe('errors', () => {
 describe('library isolation', () => {
   it('keeps alphaTab out of the renderer and the score types', () => {
     const offenders: string[] = [];
+    let scanned = 0;
     const scan = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const path = join(dir, name);
         if (statSync(path).isDirectory()) scan(path);
-        else if (/\.(ts|tsx)$/.test(name) && /alphatab/i.test(readFileSync(path, 'utf8').replace(/^\s*\/\/.*$/gm, ''))) {
-          offenders.push(path);
+        else if (/\.(ts|tsx)$/.test(name)) {
+          scanned += 1;
+          if (/alphatab/i.test(readFileSync(path, 'utf8').replace(/^\s*\/\/.*$/gm, ''))) offenders.push(path);
         }
       }
     };
-    try {
-      scan('src/render');
-    } catch {
-      // the renderer folder does not exist yet
-    }
+    scan('src/render');
+    expect(scanned).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
     expect(/alphatab/i.test(readFileSync('src/model/score.ts', 'utf8').replace(/^\s*\/\/.*$/gm, ''))).toBe(false);
   });

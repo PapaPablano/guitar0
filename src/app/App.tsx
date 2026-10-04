@@ -49,24 +49,40 @@ export function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
+  /** Bumped whenever the session or its sound connection is replaced, so late results can be ignored. */
+  const sessionToken = useRef(0);
+  const userClockRef = useRef<UserAudioClock | null>(null);
 
   function connectAudio(score: AlphaModel.Score, timelineToPlay: Timeline) {
+    sessionToken.current += 1;
+    const token = sessionToken.current;
+    const isCurrent = () => token === sessionToken.current;
     setAudio({ status: 'loading', progress: 0 });
     const synth = createSynthSession(score, timelineToPlay.durationSeconds, timelineToPlay.tempoMap, {
       soundFontUrl: SOUND_FONT_URL,
-      onProgress: (progress) => setAudio((a) => (a.status === 'loading' ? { status: 'loading', progress } : a)),
+      onProgress: (progress) => {
+        if (isCurrent()) setAudio((a) => (a.status === 'loading' ? { status: 'loading', progress } : a));
+      },
     });
     synth.ready.then(
-      () => setAudio({ status: 'ready' }),
-      (e: unknown) => setAudio({ status: 'failed', message: e instanceof Error ? e.message : 'The sound could not be loaded.' }),
+      () => isCurrent() && setAudio({ status: 'ready' }),
+      (e: unknown) =>
+        isCurrent() &&
+        setAudio({ status: 'failed', message: e instanceof Error ? e.message : 'The sound could not be loaded.' }),
     );
     return synth.clock;
   }
 
+  /** Replaces the recording clock, disposing the previous one. */
+  function replaceUserClock(next: UserAudioClock | null) {
+    userClockRef.current?.dispose();
+    userClockRef.current = next;
+    setUserClock(next);
+  }
+
   function startSession(score: AlphaModel.Score, timeline: Timeline) {
     session?.clock.dispose();
-    userClock?.dispose();
-    setUserClock(null);
+    replaceUserClock(null);
     setOffset(0);
     setUserAudioError(null);
     setSession({ timeline, score, clock: connectAudio(score, timeline) });
@@ -132,14 +148,19 @@ export function App() {
 
   async function onLoadRecording(file: File) {
     setUserAudioError(null);
+    const token = sessionToken.current;
     try {
       const next = await loadUserAudio(file, session?.timeline.durationSeconds ?? 0);
+      if (token !== sessionToken.current) {
+        // another song was opened while this recording loaded
+        next.dispose();
+        return;
+      }
       const position = clock?.time() ?? 0;
       session?.clock.pause();
-      userClock?.dispose();
       next.setRate(tempoPercent / 100);
       next.seek(position);
-      setUserClock(next);
+      replaceUserClock(next);
       setOffset(0);
     } catch (e) {
       // keep whatever was playing before
@@ -149,8 +170,7 @@ export function App() {
 
   function onRemoveRecording() {
     const position = userClock?.time() ?? 0;
-    userClock?.dispose();
-    setUserClock(null);
+    replaceUserClock(null);
     setOffset(0);
     session?.clock.seek(position);
   }
@@ -192,7 +212,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!clock || !timeline) return;
+    if (!clock || !timeline || exportOpen) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const action = interpretKey(e.key, { tag: target?.tagName ?? 'body' });
@@ -221,7 +241,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clock, timeline, loop, togglePlay]);
+  }, [clock, timeline, loop, togglePlay, exportOpen]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
@@ -265,9 +285,9 @@ export function App() {
         <button
           type="button"
           onClick={() => {
+            sessionToken.current += 1;
             session.clock.dispose();
-            userClock?.dispose();
-            setUserClock(null);
+            replaceUserClock(null);
             setSession(null);
           }}
         >

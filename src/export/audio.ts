@@ -47,8 +47,8 @@ export function fitPcm(pcm: PcmAudio, durationSeconds: number): PcmAudio {
 
 /**
  * Decodes the user's recording and places it on the tab's timeline: the recording position is the
- * tab time plus `offsetSeconds`, so a positive offset skips that much of its start and a negative
- * one inserts silence. The result is the whole song at its original tempo.
+ * tab time plus `offsetSeconds`, so the offset skips that much of its start. The offset is never
+ * negative. The result is the whole song at its original tempo.
  */
 export async function decodeUserRecording(file: File, offsetSeconds: number, durationSeconds: number): Promise<PcmAudio> {
   const bytes = await file.arrayBuffer();
@@ -58,7 +58,7 @@ export async function decodeUserRecording(file: File, offsetSeconds: number, dur
   const source = offline.createBufferSource();
   source.buffer = decoded;
   source.connect(offline.destination);
-  source.start(Math.max(0, -offsetSeconds), Math.max(0, offsetSeconds));
+  source.start(0, Math.max(0, offsetSeconds));
   const rendered = await offline.startRendering();
   const left = rendered.getChannelData(0);
   const right = rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : left;

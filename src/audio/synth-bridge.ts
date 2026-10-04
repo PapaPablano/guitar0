@@ -70,11 +70,15 @@ export class SynthClock implements Clock {
     return this.loopRange;
   }
 
+  /** The synth position interpolated to now, before the output latency is taken off. */
+  private position(): number {
+    const elapsed = this.isPlaying ? performance.now() / 1000 - this.reported.at : 0;
+    return this.reported.seconds + elapsed * this.currentRate;
+  }
+
   time(): number {
-    let seconds = this.reported.seconds;
-    if (this.isPlaying) seconds += (performance.now() / 1000 - this.reported.at) * this.currentRate;
-    seconds -= this.isPlaying ? this.latency * this.currentRate : 0;
-    return clamp(seconds, 0, this.duration);
+    const heard = this.position() - (this.isPlaying ? this.latency * this.currentRate : 0);
+    return clamp(heard, 0, this.duration);
   }
 
   play(): void {
@@ -93,7 +97,7 @@ export class SynthClock implements Clock {
 
   setRate(rate: number): void {
     this.currentRate = clampRate(rate);
-    this.reported = { seconds: this.time(), at: performance.now() / 1000 };
+    this.reported = { seconds: this.position(), at: performance.now() / 1000 };
     this.api.playbackSpeed = this.currentRate;
   }
 
