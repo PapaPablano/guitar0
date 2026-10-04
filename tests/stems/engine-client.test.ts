@@ -22,7 +22,7 @@ describe('EngineClient.separate', () => {
       { status: 'separating', progress: 0.4 },
       { status: 'done', progress: 1 },
     ];
-    const { client, calls } = setup((url, init) => {
+    const { client, calls } = setup((_url, init) => {
       if (init?.method === 'POST') return json({ job_id: 'abc123' });
       return json({ job_id: 'abc123', ...states.shift() });
     });
@@ -50,12 +50,12 @@ describe('EngineClient.separate', () => {
   });
 
   it('surfaces the engine message when the job errors', async () => {
-    const { client } = setup((url, init) => (init?.method === 'POST' ? json({ job_id: 'j2' }) : json({ status: 'error', progress: 0.1, error: 'Out of memory' })));
+    const { client } = setup((_url, init) => (init?.method === 'POST' ? json({ job_id: 'j2' }) : json({ status: 'error', progress: 0.1, error: 'Out of memory' })));
     await expect(client.separate(file(), {})).rejects.toThrow(new SeparationFailed('Out of memory'));
   });
 
   it('reports a cancelled job the engine ended itself', async () => {
-    const { client } = setup((url, init) => (init?.method === 'POST' ? json({ job_id: 'j3' }) : json({ status: 'cancelled', progress: 0 })));
+    const { client } = setup((_url, init) => (init?.method === 'POST' ? json({ job_id: 'j3' }) : json({ status: 'cancelled', progress: 0 })));
     await expect(client.separate(file(), {})).rejects.toBeInstanceOf(SeparationCancelled);
   });
 
