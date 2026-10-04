@@ -11,6 +11,10 @@ Practice a Guitar Pro or MusicXML tab as a scrolling highway over a synced tab s
 
 Video export uses WebCodecs, which browsers only enable on secure pages: the deployed site (https) and `localhost` work, a plain `http://` address on a network does not. Export covers the whole song at its original tempo, up to 6 minutes; loops and tempo changes apply to practice only.
 
+## Desktop app (Windows)
+
+A Windows desktop build adds stem separation: load your recording, split it into vocals, drums, bass, guitar, piano and other on your own machine, then mute the guitar to play along, solo it to check phrasing, or mix the stems into the exported video. Separated songs are saved and reopen without re-processing. It uses a bundled copy of [StemDeck](https://github.com/stemdeckapp/stemdeck) and needs a one-time download of FFmpeg and the separation models on first launch. The web site has no stem features. See `docs/desktop-packaging.md` to build it.
+
 ## Develop
 
 ```bash
