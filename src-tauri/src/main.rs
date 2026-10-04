@@ -31,6 +31,8 @@ struct Status {
 struct Shared {
     status: Mutex<Status>,
     child: Mutex<Option<Child>>,
+    /// The engine while it is still starting, so closing the app during a slow start kills it.
+    starting: Mutex<Option<Child>>,
     working: Mutex<bool>,
     allowance: Mutex<recovery::RestartAllowance>,
 }
@@ -71,7 +73,7 @@ fn bootstrap(state: State, run_setup: bool) {
             }
         }
         set(&state, "starting", None, Some("Starting the stem engine".to_string()));
-        let started = engine::start(&layout)?;
+        let started = engine::start(&layout, &state.starting)?;
         *state.child.lock().unwrap() = Some(started.child);
         *state.status.lock().unwrap() = Status {
             phase: "ready".to_string(),
@@ -99,7 +101,7 @@ fn restart_engine(state: State, exit_note: String) {
         *working = true;
     }
     set(&state, "restarting", None, Some("The stem engine stopped; restarting it".to_string()));
-    let result = engine::Layout::locate().and_then(|layout| engine::start(&layout));
+    let result = engine::Layout::locate().and_then(|layout| engine::start(&layout, &state.starting));
     match result {
         Ok(started) => {
             *state.child.lock().unwrap() = Some(started.child);
@@ -152,10 +154,14 @@ fn watch(state: State) {
 }
 
 fn stop(state: &State) {
-    if let Some(mut child) = state.child.lock().unwrap().take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    engine::kill_slot(&state.child);
+}
+
+/// Stops the engine for good, including one that is still starting. Used when the app exits; a user retry
+/// uses `stop` so it does not cut off a start that is already in progress.
+fn shutdown(state: &State) {
+    stop(state);
+    engine::kill_slot(&state.starting);
 }
 
 #[tauri::command]
@@ -246,7 +252,7 @@ fn main() {
     let exit_state = state.clone();
     app.run(move |_handle, event| {
         if let RunEvent::Exit = event {
-            stop(&exit_state);
+            shutdown(&exit_state);
         }
     });
 }

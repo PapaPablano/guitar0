@@ -7,6 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::recovery::HealthWait;
@@ -98,8 +99,9 @@ pub struct Started {
     pub secret: String,
 }
 
-/// Starts the engine on a free loopback port and waits until it answers as ours.
-pub fn start(layout: &Layout) -> Result<Started, String> {
+/// Starts the engine on a free loopback port and waits until it answers as ours. While it waits, the child
+/// lives in `starting`, so closing the app during a slow start can still kill it (see `kill_slot`).
+pub fn start(layout: &Layout, starting: &Mutex<Option<Child>>) -> Result<Started, String> {
     let secret = random_hex(32)?;
     let token = random_hex(16)?;
     let port = {
@@ -143,15 +145,35 @@ pub fn start(layout: &Layout) -> Result<Started, String> {
     configure_python(&mut command, &layout.python);
     hide_window(&mut command);
 
-    let mut child = command.spawn().map_err(|e| format!("could not start the engine: {e}"))?;
+    let child = command.spawn().map_err(|e| format!("could not start the engine: {e}"))?;
+    *starting.lock().unwrap() = Some(child);
     let url = format!("http://127.0.0.1:{port}");
-    match wait_for_health(&mut child, &url, &secret, &token) {
-        Ok(()) => Ok(Started { child, url, secret }),
+    match wait_for_health(starting, &url, &secret, &token) {
+        // The slot is empty only if the app shut down while the engine was starting; its child is already killed.
+        Ok(()) => match starting.lock().unwrap().take() {
+            Some(child) => Ok(Started { child, url, secret }),
+            None => Err("the app closed while the engine was starting".to_string()),
+        },
         Err(e) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_slot(starting);
             Err(with_log_tail(data, e))
         }
+    }
+}
+
+/// Kills and reaps the child in the slot, if there is one.
+pub(crate) fn kill_slot(slot: &Mutex<Option<Child>>) {
+    if let Some(mut child) = slot.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Whether the slot holds a child that is still running. An empty slot (already killed) is not alive.
+fn child_alive(slot: &Mutex<Option<Child>>) -> bool {
+    match slot.lock().unwrap().as_mut() {
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
     }
 }
 
@@ -175,14 +197,14 @@ pub(crate) fn with_log_tail(data: &Path, message: String) -> String {
 }
 
 /// Waits while the process is alive, up to the recovery ceiling, until the engine answers as ours.
-fn wait_for_health(child: &mut Child, url: &str, secret: &str, token: &str) -> Result<(), String> {
+fn wait_for_health(starting: &Mutex<Option<Child>>, url: &str, secret: &str, token: &str) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|e| e.to_string())?;
     let started = Instant::now();
     loop {
-        let alive = matches!(child.try_wait(), Ok(None));
+        let alive = child_alive(starting);
         let healthy = alive
             && client
                 .get(format!("{url}/api/health"))
@@ -197,5 +219,58 @@ fn wait_for_health(child: &mut Child, url: &str, secret: &str, token: &str) -> R
             HealthWait::CeilingReached => return Err("the engine did not start in time; see data/logs/engine.log".to_string()),
             HealthWait::Keep => std::thread::sleep(Duration::from_millis(500)),
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// A process that lives for about a minute unless killed, and one that exits at once.
+    fn long_lived() -> Child {
+        Command::new("cmd").args(["/C", "ping -n 60 127.0.0.1 >nul"]).stdout(Stdio::null()).spawn().expect("spawn cmd")
+    }
+    fn short_lived() -> Child {
+        Command::new("cmd").args(["/C", "exit 0"]).stdout(Stdio::null()).spawn().expect("spawn cmd")
+    }
+
+    #[test]
+    fn a_running_child_in_the_slot_is_alive_and_an_empty_slot_is_not() {
+        let slot = Mutex::new(Some(long_lived()));
+        assert!(child_alive(&slot));
+        kill_slot(&slot);
+        assert!(!child_alive(&slot));
+    }
+
+    /// Whether Windows still lists a process with this id.
+    fn process_listed(pid: u32) -> bool {
+        let out = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH"]).output().expect("run tasklist");
+        String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
+    }
+
+    #[test]
+    fn killing_the_slot_really_stops_a_still_starting_engine_and_empties_the_slot() {
+        let child = long_lived();
+        let pid = child.id();
+        let slot = Mutex::new(Some(child));
+        assert!(process_listed(pid), "the child should be running before the kill");
+        kill_slot(&slot);
+        assert!(slot.lock().unwrap().is_none());
+        assert!(!process_listed(pid), "the child must be gone, not merely forgotten");
+        // Killing an empty slot is harmless.
+        kill_slot(&slot);
+    }
+
+    #[test]
+    fn a_child_that_exits_is_no_longer_alive() {
+        let slot = Mutex::new(Some(short_lived()));
+        for _ in 0..50 {
+            if !child_alive(&slot) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!child_alive(&slot));
+        kill_slot(&slot);
     }
 }
