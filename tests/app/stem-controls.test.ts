@@ -90,3 +90,12 @@ describe('searchRow', () => {
     expect(r.detail).toBe('2:30:00');
   });
 });
+
+describe('R25: stem controls during setup', () => {
+  it('disables Separate with an explanation while setting up, including with an unknown progress', () => {
+    const engine = describeEngine({ phase: 'setting-up', progress: null, message: 'Downloading the separation models' });
+    const c = separateControl({ engine, hasRecording: true, hasSaved: true, busy: false });
+    expect(c).toMatchObject({ visible: true, disabled: true });
+    expect(c.note).toContain('Downloading the separation models');
+  });
+});

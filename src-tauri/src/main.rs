@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod engine;
+mod model_progress;
 mod profiles;
 mod recovery;
 mod setup;
@@ -61,7 +62,9 @@ fn bootstrap(state: State, run_setup: bool) {
             }
             set(&state, "setting-up", Some(0.0), Some("Setting up stem separation".to_string()));
             let report_state = state.clone();
-            let report = move |progress: f64, message: &str| set(&report_state, "setting-up", Some(progress), Some(message.to_string()));
+            let report = move |progress: f64, message: &str| {
+                set(&report_state, "setting-up", (progress >= 0.0).then_some(progress), Some(message.to_string()))
+            };
             if let Err(e) = setup::run(&layout.data, &layout.python, &layout.backend, &report) {
                 set(&state, "setup-failed", None, Some(e));
                 return Ok(());

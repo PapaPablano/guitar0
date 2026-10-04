@@ -9,7 +9,7 @@ import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
-import { describeEngine, readEngineStatus, startEngineSetup, type ShellEngineStatus } from './engine-state';
+import { describeEngine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
@@ -110,6 +110,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
   if (!desktop) return null;
 
   const engine = describeEngine(status);
+  const bar = setupBar(engine);
   const control = separateControl({ engine, hasRecording: recording !== null, hasSaved: savedJob !== null, busy });
   const youtube = youtubeControls({ enabled: readYoutubeFlag(), stemsEnabled: engine.stemsEnabled, hasResults: results !== null });
 
@@ -211,7 +212,8 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
               </button>
             </>
           )}
-          {engine.kind === 'setup' && engine.progress !== null && <progress value={engine.progress} max={1} aria-label="Setup progress" />}
+          {bar.kind === 'determinate' && <progress value={bar.value} max={1} aria-label="Setup progress" />}
+          {bar.kind === 'indeterminate' && <progress aria-label="Setup progress" />}
           {control.note && <span className="muted">{control.note}</span>}
           {engine.canRetry && (
             <button type="button" onClick={() => void startEngineSetup().catch((e: unknown) => setError(String(e)))}>

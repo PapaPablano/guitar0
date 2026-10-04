@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { describeEngine, type ShellEngineStatus } from '../../src/app/engine-state';
+import { describeEngine, practiceControlsEnabled, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
 
 const status = (s: Partial<ShellEngineStatus> & { phase: ShellEngineStatus['phase'] }): ShellEngineStatus => s as ShellEngineStatus;
 
 describe('describeEngine', () => {
   it('shows nothing stem-related on the web', () => {
-    expect(describeEngine(null)).toEqual({ kind: 'web', stemsEnabled: false, canRetry: false, message: '', progress: null });
+    expect(describeEngine(null)).toEqual({ kind: 'web', stemsEnabled: false, canRetry: false, busy: false, message: '', progress: null });
   });
 
   it('covers AE1: setup unfinished disables stems with an explanation and a retry', () => {
@@ -66,5 +66,43 @@ describe('describeEngine', () => {
   it('clamps progress to 0..1', () => {
     expect(describeEngine(status({ phase: 'setting-up', progress: 3 })).progress).toBe(1);
     expect(describeEngine(status({ phase: 'setting-up', progress: -1 })).progress).toBe(0);
+  });
+});
+
+describe('setupBar (R21, AE12)', () => {
+  it('is an indeterminate bar while setting up without a known progress', () => {
+    expect(setupBar(describeEngine(status({ phase: 'setting-up', progress: null as unknown as undefined })))).toEqual({ kind: 'indeterminate' });
+  });
+
+  it('is a determinate bar once progress is known, and rises with it', () => {
+    expect(setupBar(describeEngine(status({ phase: 'setting-up', progress: 0.5 })))).toEqual({ kind: 'determinate', value: 0.5 });
+    const later = setupBar(describeEngine(status({ phase: 'setting-up', progress: 0.7 })));
+    expect(later).toEqual({ kind: 'determinate', value: 0.7 });
+  });
+
+  it('shows no bar on the web, when failed, when needed, or when ready', () => {
+    for (const s of [null, status({ phase: 'setup-failed', message: 'x' }), status({ phase: 'setup-needed' }), status({ phase: 'ready' })]) {
+      expect(setupBar(describeEngine(s))).toEqual({ kind: 'none' });
+    }
+  });
+});
+
+describe('R25: setup never blocks practice', () => {
+  it('keeps tab, synth and fretboard controls enabled in every engine phase and only gates stems', () => {
+    const phases: ShellEngineStatus['phase'][] = ['setup-needed', 'setting-up', 'setup-failed', 'starting', 'restarting', 'ready', 'engine-error'];
+    for (const phase of phases) {
+      const view = describeEngine(status({ phase }));
+      expect(practiceControlsEnabled(view)).toBe(true);
+      expect(view.stemsEnabled).toBe(phase === 'ready');
+    }
+    expect(practiceControlsEnabled(describeEngine(null))).toBe(true);
+  });
+
+  it('reads the shell status and starts setup through promises, so the page never waits on setup', async () => {
+    const read = readEngineStatus();
+    const start = startEngineSetup();
+    expect(read).toBeInstanceOf(Promise);
+    expect(start).toBeInstanceOf(Promise);
+    await Promise.allSettled([read, start]); // no shell in Node: both reject, neither throws synchronously
   });
 });
