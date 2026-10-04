@@ -165,7 +165,7 @@ pub fn read_log_tail(data: &Path) -> String {
     crate::recovery::tail_lines(&String::from_utf8_lossy(&bytes), crate::recovery::TAIL_LINES)
 }
 
-fn with_log_tail(data: &Path, message: String) -> String {
+pub(crate) fn with_log_tail(data: &Path, message: String) -> String {
     let tail = read_log_tail(data);
     if tail.is_empty() {
         message

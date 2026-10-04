@@ -2,6 +2,14 @@ import { useRef } from 'react';
 import { OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../audio/offset-range';
 import { nudgeOffset, offsetControlsVisible, offsetDirectionLabel } from './offset-controls';
 
+/** Visible text, step size, direction and spoken label for each nudge button, in display order. */
+const NUDGES = [
+  ['-100 ms', 'coarse', -1, '100 ms later'],
+  ['-10 ms', 'fine', -1, '10 ms later'],
+  ['+10 ms', 'fine', 1, '10 ms earlier'],
+  ['+100 ms', 'coarse', 1, '100 ms earlier'],
+] as const;
+
 interface OffsetSliderProps {
   /** Null when no recording is loaded. */
   offsetSeconds: number | null;
@@ -48,18 +56,11 @@ export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetC
             />
           </label>
           <span className="nudge" role="group" aria-label="Nudge offset">
-            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'coarse', -1))} aria-label="Recording 100 ms later">
-              -100 ms
-            </button>
-            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'fine', -1))} aria-label="Recording 10 ms later">
-              -10 ms
-            </button>
-            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'fine', 1))} aria-label="Recording 10 ms earlier">
-              +10 ms
-            </button>
-            <button type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, 'coarse', 1))} aria-label="Recording 100 ms earlier">
-              +100 ms
-            </button>
+            {NUDGES.map(([text, size, direction, label]) => (
+              <button key={text} type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, size, direction))} aria-label={`Recording ${label}`}>
+                {text}
+              </button>
+            ))}
           </span>
           <button type="button" onClick={onRemove}>
             Use built-in sound

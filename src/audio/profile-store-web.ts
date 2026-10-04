@@ -1,11 +1,4 @@
-import {
-  PROFILE_CAP,
-  findProfile,
-  parseProfileFile,
-  withProfile,
-  type ProfileStore,
-  type RecordingProfile,
-} from './recording-profile';
+import { PROFILE_CAP, FileProfileStore } from './recording-profile';
 
 export const PROFILE_STORAGE_KEY = 'tab-highway.recording-profiles';
 
@@ -25,37 +18,25 @@ export function defaultProfileStorage(): ProfileStorage | null {
 }
 
 /** Profiles kept in browser storage as one versioned, capped JSON value. Every access is guarded (R20). */
-export class WebProfileStore implements ProfileStore {
-  constructor(
-    private readonly storage: ProfileStorage | null = defaultProfileStorage(),
-    private readonly cap: number = PROFILE_CAP,
-  ) {}
-
-  private readFile() {
-    const text = this.storage?.getItem(PROFILE_STORAGE_KEY);
-    return parseProfileFile(text ? JSON.parse(text) : null);
-  }
-
-  async load(hash: string): Promise<RecordingProfile | null> {
-    try {
-      return findProfile(this.readFile(), hash);
-    } catch {
-      return null;
-    }
-  }
-
-  async save(hash: string, profile: RecordingProfile): Promise<void> {
-    try {
-      if (!this.storage) return;
-      let file;
-      try {
-        file = this.readFile();
-      } catch {
-        file = parseProfileFile(null);
-      }
-      this.storage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(withProfile(file, hash, profile, this.cap)));
-    } catch {
-      // Saved state is a convenience; a failed save must never reach the user.
-    }
+export class WebProfileStore extends FileProfileStore {
+  constructor(storage: ProfileStorage | null = defaultProfileStorage(), cap: number = PROFILE_CAP) {
+    super(
+      {
+        // An unreadable or corrupt value reads as an empty file, so the next save replaces it.
+        read: async () => {
+          try {
+            const text = storage?.getItem(PROFILE_STORAGE_KEY);
+            return text ? JSON.parse(text) : null;
+          } catch {
+            return null;
+          }
+        },
+        write: async (file) => {
+          if (!storage) throw new Error('browser storage is unavailable');
+          storage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(file));
+        },
+      },
+      cap,
+    );
   }
 }

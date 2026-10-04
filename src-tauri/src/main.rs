@@ -141,8 +141,8 @@ fn watch(state: State) {
         if *state.working.lock().unwrap() {
             continue;
         }
-        let tail = engine::Layout::locate().map(|l| engine::read_log_tail(&l.data)).unwrap_or_default();
-        let note = if tail.is_empty() { format!("The engine exited ({status}).") } else { format!("The engine exited ({status}).\n{tail}") };
+        let exited = format!("The engine exited ({status}).");
+        let note = engine::Layout::locate().map(|l| engine::with_log_tail(&l.data, exited.clone())).unwrap_or(exited);
         let action = state.allowance.lock().unwrap().on_exit(true, false);
         match action {
             recovery::ExitAction::Restart => restart_engine(state.clone(), note),
@@ -190,13 +190,17 @@ fn stem_index_read() -> Result<HashMap<String, String>, String> {
 
 #[tauri::command]
 fn stem_index_write(index: HashMap<String, String>) -> Result<(), String> {
-    let path = index_path()?;
+    write_atomic(&index_path()?, serde_json::to_string(&index).map_err(|e| e.to_string())?)
+}
+
+/// Writes through a temporary file and a rename, so a crash never leaves a half-written file.
+fn write_atomic(path: &std::path::Path, text: String) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    fs::write(&tmp, serde_json::to_string(&index).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 /// Per-recording profiles live in their own file so a profile problem can never touch the saved-stems index.
@@ -211,12 +215,7 @@ fn profiles_read() -> Result<serde_json::Value, String> {
 fn profiles_write(profiles: serde_json::Value) -> Result<(), String> {
     let path = engine::Layout::locate()?.data.join("recording-profiles.json");
     let text = profiles::serialize_profiles(&profiles).ok_or_else(|| "not a profile file".to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    write_atomic(&path, text)
 }
 
 fn main() {
