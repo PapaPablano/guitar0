@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { StartMessage } from '../../src/export/encoder.worker';
+import { startExport } from '../../src/export/exporter';
 import { presetById } from '../../src/export/presets';
-import { serializeTimeline } from '../../src/model/serialize';
-import { HIGHWAY_SHARE, renderComposite, type BottomOptions, type CompositeContext } from '../../src/render/composite';
+import { frameLayout, renderComposite, type BottomOptions, type CompositeContext } from '../../src/render/composite';
 import { computeNeck, renderFretboard } from '../../src/render/fretboard';
 import { maxFretUsed } from '../../src/render/fretboard-steps';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
@@ -47,11 +47,7 @@ describe('composite bottom view', () => {
 
   it('puts the same fretboard dots in the frame as the live fretboard draws', () => {
     const t = 2.2;
-    const highwayHeight = Math.round(H * HIGHWAY_SHARE);
-    const gap = Math.round(H * 0.01);
-    const bottomHeight = H - (highwayHeight + gap);
-    const timelineHeight = Math.max(28, Math.round(H * 0.035));
-    const fretboardHeight = bottomHeight - timelineHeight - gap;
+    const { fretboardHeight } = frameLayout(H);
 
     const live = createRecordingContext();
     renderFretboard(live.ctx, timeline, 0, t, W, fretboardHeight, { lookahead: 4 });
@@ -68,7 +64,7 @@ describe('composite bottom view', () => {
 
   it('uses the look-ahead it is given: 1 and 6 draw different numbers of upcoming markers', () => {
     const outlined = (la: number) => {
-      const neck = computeNeck(W, H - Math.round(H * HIGHWAY_SHARE) - Math.round(H * 0.01) - 38 - Math.round(H * 0.01), 6, 8);
+      const neck = computeNeck(W, frameLayout(H).fretboardHeight, 6, 8);
       return composite(2.2, { view: 'fretboard', lookahead: la }).filter(
         (c) => c.name === 'arc' && Math.abs((c.args[2] as number) - neck.dotRadius * 0.7) < 1e-9,
       ).length;
@@ -87,15 +83,33 @@ describe('composite bottom view', () => {
 });
 
 describe('export start message', () => {
-  it('carries the bottom view and look-ahead to the worker', () => {
-    const message: StartMessage = {
-      type: 'start',
-      data: serializeTimeline(timeline, 0),
-      trackIndex: 0,
-      preset: presetById('landscape'),
-      audio: { left: new Float32Array(1), right: new Float32Array(1), sampleRate: 48000 },
-      bottom: { view: 'fretboard', lookahead: 6 },
-    };
-    expect(structuredClone({ bottom: message.bottom })).toEqual({ bottom: { view: 'fretboard', lookahead: 6 } });
+  it('sends the bottom view and look-ahead to the worker', () => {
+    const posted: unknown[] = [];
+    class FakeWorker {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(message: unknown) {
+        posted.push(message);
+      }
+      terminate() {}
+    }
+    const original = (globalThis as { Worker?: unknown }).Worker;
+    (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+    try {
+      void startExport({
+        timeline,
+        trackIndex: 0,
+        preset: presetById('landscape'),
+        audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+        bottom: { view: 'fretboard', lookahead: 6 },
+        onProgress: () => {},
+      }).result.catch(() => {});
+    } finally {
+      (globalThis as { Worker?: unknown }).Worker = original;
+    }
+    const start = posted[0] as StartMessage;
+    expect(start.type).toBe('start');
+    expect(start.bottom).toEqual({ view: 'fretboard', lookahead: 6 });
+    expect(start.preset.id).toBe('landscape');
   });
 });

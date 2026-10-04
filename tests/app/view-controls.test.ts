@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clampLookahead, initialViewState } from '../../src/app/ViewControls';
+import { initialViewState } from '../../src/app/ViewControls';
+import { clampLookahead } from '../../src/render/fretboard-steps';
 
 describe('initialViewState', () => {
   it('starts on the tab strip with a look-ahead of 4', () => {
@@ -11,7 +12,7 @@ describe('initialViewState', () => {
   });
 });
 
-describe('clampLookahead from the controls module', () => {
+describe('clampLookahead as the controls use it', () => {
   it('keeps the field between 1 and 8 and falls back to 4', () => {
     expect(clampLookahead(0)).toBe(1);
     expect(clampLookahead(12)).toBe(8);

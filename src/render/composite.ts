@@ -24,6 +24,23 @@ export interface CompositeContext extends DrawContext {
   clip(): void;
 }
 
+/** Heights of the frame's regions; the export tests use the same numbers. */
+export function frameLayout(height: number) {
+  const highwayHeight = Math.round(height * HIGHWAY_SHARE);
+  const gap = Math.round(height * 0.01);
+  const bottomTop = highwayHeight + gap;
+  const bottomHeight = height - bottomTop;
+  const timelineHeight = Math.max(28, Math.round(height * 0.035));
+  return {
+    highwayHeight,
+    gap,
+    bottomTop,
+    bottomHeight,
+    timelineHeight,
+    fretboardHeight: bottomHeight - timelineHeight - gap,
+  };
+}
+
 /**
  * Draws the whole practice screen (highway over the tab strip or the fretboard) for time `t`. The
  * video export draws every frame through this function, so a frame matches what the preview shows
@@ -40,10 +57,7 @@ export function renderComposite(
 ): void {
   const view = options.bottom?.view ?? 'tab';
   const lookahead = options.bottom?.lookahead ?? DEFAULT_LOOKAHEAD;
-  const highwayHeight = Math.round(height * HIGHWAY_SHARE);
-  const gap = Math.round(height * 0.01);
-  const bottomTop = highwayHeight + gap;
-  const bottomHeight = height - bottomTop;
+  const { highwayHeight, gap, bottomTop, bottomHeight, timelineHeight, fretboardHeight } = frameLayout(height);
 
   ctx.save();
   ctx.fillStyle = '#101216';
@@ -52,8 +66,6 @@ export function renderComposite(
   region(ctx, 0, width, highwayHeight, () => renderHighway(ctx, timeline, trackIndex, t, width, highwayHeight));
 
   if (view === 'fretboard') {
-    const timelineHeight = Math.max(28, Math.round(height * 0.035));
-    const fretboardHeight = bottomHeight - timelineHeight - gap;
     region(ctx, bottomTop, width, fretboardHeight, () =>
       renderFretboard(ctx, timeline, trackIndex, t, width, fretboardHeight, { lookahead }),
     );

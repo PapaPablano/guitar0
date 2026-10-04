@@ -5,7 +5,6 @@ import {
   labelEvery,
   MIN_LABEL_WIDTH,
   renderBarTimeline,
-  timelineBarStartSeconds,
   timelinePlayheadX,
 } from '../../src/render/bar-timeline';
 import { buildTimeline, loadAlphaTex } from '../../src/model/alphatab-adapter';
@@ -40,11 +39,6 @@ describe('bar timeline layout', () => {
     expect(barAtX(layout, W + 5)).toBeNull();
   });
 
-  it('finds the start time of a bar', () => {
-    const layout = buildBarTimeline(buildTimeline(loadAlphaTex(REPEAT_AND_TEMPO)), W, H);
-    expect(timelineBarStartSeconds(layout, 1)).toBeCloseTo(2, 6);
-    expect(timelineBarStartSeconds(layout, 9)).toBeNull();
-  });
 });
 
 describe('playhead', () => {
@@ -66,6 +60,15 @@ describe('playhead', () => {
 describe('bar numbers', () => {
   it('draws every number when bars are wide enough', () => {
     const layout = buildBarTimeline(buildTimeline(loadAlphaTex(REPEAT_AND_TEMPO)), W, H);
+    expect(labelEvery(layout)).toBe(1);
+  });
+
+  it('is not thrown off by one very short bar', () => {
+    const timeline = makeTimeline([], 2, 8);
+    // a pickup bar a fraction of the length of the others
+    const bars = timeline.bars.map((b, i) => (i === 0 ? { ...b, endSeconds: b.startSeconds + 0.05 } : b));
+    const layout = buildBarTimeline({ ...timeline, bars }, 800, H);
+    expect(layout.bars[0].width).toBeLessThan(MIN_LABEL_WIDTH);
     expect(labelEvery(layout)).toBe(1);
   });
 

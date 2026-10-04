@@ -71,11 +71,6 @@ export function barAtX(layout: BarTimelineLayout, x: number): number | null {
   return null;
 }
 
-/** Playback time at the start of a score bar's first pass. */
-export function timelineBarStartSeconds(layout: BarTimelineLayout, scoreBar: number): number | null {
-  return layout.bars.find((b) => b.scoreBar === scoreBar)?.playback.startSeconds ?? null;
-}
-
 /** X of the playhead. Across a repeat it jumps back to the repeated bar. */
 export function timelinePlayheadX(layout: BarTimelineLayout, timeline: Timeline, t: number): number {
   const played = timeline.bars[playbackBarIndexAt(timeline, t)];
@@ -87,11 +82,15 @@ export function timelinePlayheadX(layout: BarTimelineLayout, timeline: Timeline,
   return bar.x + fraction * bar.width;
 }
 
-/** Every Nth bar gets a number so the numbers never collide: N = 1 when bars are wide enough. */
+/**
+ * Every Nth bar gets a number so the numbers do not collide: N = 1 when bars are wide enough. It
+ * follows the typical (median) bar, so one short pickup bar does not hide the numbers elsewhere.
+ */
 export function labelEvery(layout: BarTimelineLayout): number {
   if (layout.bars.length === 0) return 1;
-  const narrowest = Math.min(...layout.bars.map((b) => b.width));
-  return Math.max(1, Math.ceil(MIN_LABEL_WIDTH / Math.max(1, narrowest)));
+  const widths = layout.bars.map((b) => b.width).sort((a, b) => a - b);
+  const typical = widths[Math.floor(widths.length / 2)];
+  return Math.max(1, Math.ceil(MIN_LABEL_WIDTH / Math.max(1, typical)));
 }
 
 export interface BarTimelineOptions {

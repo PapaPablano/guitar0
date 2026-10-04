@@ -48,10 +48,14 @@ export function fretLineX(neck: NeckLayout, fret: number): number {
   return neck.nutX + ((neck.boardRight - neck.nutX) * here) / full;
 }
 
-/** X of a note's dot: between its fret lines, or just left of the nut for an open string. */
+/**
+ * X of a note's dot: between its fret lines, or just left of the nut for an open string. A fret
+ * beyond the last one drawn (the neck stops at 24) sits on the last fret; its label keeps the real number.
+ */
 export function noteDotX(neck: NeckLayout, fret: number): number {
   if (fret <= 0) return neck.nutX - neck.dotRadius - 8;
-  return (fretLineX(neck, fret - 1) + fretLineX(neck, fret)) / 2;
+  const shown = Math.min(fret, neck.fretCount);
+  return (fretLineX(neck, shown - 1) + fretLineX(neck, shown)) / 2;
 }
 
 /** Y of a string; string 1 (highest pitched) is on top, as on the tab strip. */

@@ -11,7 +11,7 @@ import {
 import { playbackBarIndexAt } from '../model/bars';
 import type { Clock } from '../audio/clock';
 import type { Timeline } from '../model/score';
-import type { BottomView } from './ViewControls';
+import type { BottomView } from '../render/composite';
 
 interface StageProps {
   timeline: Timeline;
@@ -66,6 +66,11 @@ export function Stage({
   lookaheadRef.current = lookahead;
   const dragRef = useRef<{ anchorBar: number; moved: boolean } | null>(null);
 
+  // A view switch unmounts the canvas that owned any drag in progress.
+  useEffect(() => {
+    dragRef.current = null;
+  }, [bottomView]);
+
   useEffect(() => {
     let frame = 0;
     let lastBar = -1;
@@ -114,7 +119,11 @@ export function Stage({
     const width = Math.round(rect.width);
     const height = Math.round(rect.height);
     const x = e.clientX - rect.left;
-    if (bottomView === 'fretboard') return barAtX(getBarTimelineLayout(timeline, width, height), x);
+    // a drag that overshoots the edge selects the nearest end bar
+    if (bottomView === 'fretboard') {
+      const inside = Math.min(Math.max(x, 0), width - 0.001);
+      return barAtX(getBarTimelineLayout(timeline, width, height), inside);
+    }
     return scoreBarAtX(getStripLayout(timeline, trackIndex, width, height), timeline, clock.time(), x);
   }
 

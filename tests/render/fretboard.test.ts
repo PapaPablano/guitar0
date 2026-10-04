@@ -65,6 +65,20 @@ describe('neck geometry', () => {
   });
 });
 
+describe('frets beyond the neck', () => {
+  it('puts a note above the last drawn fret on the last fret, still on the board', () => {
+    const neck = neckFor(27);
+    expect(neck.fretCount).toBe(24);
+    expect(noteDotX(neck, 27)).toBe(noteDotX(neck, 24));
+    expect(noteDotX(neck, 27)).toBeLessThanOrEqual(neck.boardRight);
+  });
+
+  it('still labels the dot with the real fret number', () => {
+    const calls = draw([{ start: 1, end: 2, string: 2, fret: 27 }], 1.2);
+    expect(calls.filter((c) => c.name === 'fillText').map((c) => c.args[0])).toContain('27');
+  });
+});
+
 describe('renderFretboard', () => {
   it('draws the playing note at its string and fret', () => {
     const neck = neckFor(7);

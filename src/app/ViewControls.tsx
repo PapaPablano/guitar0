@@ -1,7 +1,6 @@
 import type { BottomView } from '../render/composite';
 import { clampLookahead, DEFAULT_LOOKAHEAD, MAX_LOOKAHEAD, MIN_LOOKAHEAD } from '../render/fretboard-steps';
 
-export { clampLookahead };
 export type { BottomView };
 
 export interface ViewState {
