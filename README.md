@@ -7,6 +7,8 @@ Practice a Guitar Pro or MusicXML tab as a scrolling highway over a synced tab s
 - Load your own recording and line it up with an offset slider.
 - Desktop Chrome and Edge also export the highway as an MP4. Other desktop browsers support practice only. Phones and tablets are not supported yet.
 
+Video export uses WebCodecs, which browsers only enable on secure pages: the deployed site (https) and `localhost` work, a plain `http://` address on a network does not. Export covers the whole song at its original tempo, up to 6 minutes; loops and tempo changes apply to practice only.
+
 ## Develop
 
 ```bash
