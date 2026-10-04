@@ -299,3 +299,38 @@ a.link-button {
 a.link-button:hover {
   border-color: var(--accent);
 }
+
+.fretboard {
+  flex: 2;
+  min-height: 0;
+}
+
+.bar-timeline {
+  flex: none;
+  height: 36px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.view-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+}
+
+.segmented button {
+  border-radius: 0;
+}
+
+.segmented button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.segmented button:last-child {
+  border-radius: 0 6px 6px 0;
+  border-left: none;
+}

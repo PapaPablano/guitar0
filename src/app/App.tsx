@@ -16,6 +16,7 @@ import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
+import { initialViewState, ViewControls, type BottomView } from './ViewControls';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
@@ -48,6 +49,8 @@ export function App() {
   const [offset, setOffset] = useState(0);
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
+  const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
   /** Bumped whenever the session or its sound connection is replaced, so late results can be ignored. */
@@ -88,6 +91,8 @@ export function App() {
     setUserAudioError(null);
     setSession({ timeline, score, clock: connectAudio(score, timeline) });
     setTrackIndex(firstPlayableTrack(timeline));
+    setBottomView(initialViewState().bottomView);
+    setLookahead(initialViewState().lookahead);
     setTempoPercent(100);
     setLoop(null);
     setLoopOn(false);
@@ -281,6 +286,7 @@ export function App() {
       <header className="topbar">
         <h1>{title}</h1>
         <TrackPicker tracks={timeline.tracks} value={trackIndex} onChange={setTrackIndex} />
+        <ViewControls view={bottomView} lookahead={lookahead} onViewChange={setBottomView} onLookaheadChange={setLookahead} />
         {songsterrLink && (
           <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
             Find on Songsterr
@@ -310,6 +316,8 @@ export function App() {
         timeline={timeline}
         trackIndex={trackIndex}
         clock={clock}
+        bottomView={bottomView}
+        lookahead={lookahead}
         loop={loopOn ? loop : null}
         onLoopChange={setLoopRange}
         onSeekBar={(bar) => {
