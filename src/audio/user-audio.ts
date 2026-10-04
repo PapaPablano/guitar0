@@ -38,6 +38,7 @@ export class UserAudioClock implements Clock {
   private leadIn: { anchorTab: number; anchorSource: number } | null = null;
   /** Tab time while paused in the silence before the recording. */
   private heldTab: number | null = null;
+  private onLoopWrap: (() => void) | null = null;
 
   constructor(
     readonly element: AudioLike,
@@ -78,6 +79,7 @@ export class UserAudioClock implements Clock {
     if (loop && this.playing && media >= loop.end) {
       media = loop.start;
       this.place(loop.start, true);
+      this.onLoopWrap?.();
     }
     // A recording longer than the tab stops with the tab instead of playing on unseen.
     if (this.playing && media >= this.duration) this.element.pause();
@@ -119,6 +121,11 @@ export class UserAudioClock implements Clock {
     this.loopRange = normalizeLoop(range);
   }
 
+  /** Called once each time playback wraps from the loop end to its start, including during the lead-in silence. */
+  setLoopWrapListener(listener: (() => void) | null): void {
+    this.onLoopWrap = listener;
+  }
+
   /**
    * Moves the recording against the tab, within the shared range; the recording keeps playing from
    * where it is, so the tab time moves instead. When nothing is playing and the recording has not
@@ -155,6 +162,7 @@ export class UserAudioClock implements Clock {
     const loop = this.loopRange;
     if (loop && tab >= loop.end) {
       this.place(loop.start, true);
+      this.onLoopWrap?.();
       return loop.start;
     }
     if (tab >= this.duration) {

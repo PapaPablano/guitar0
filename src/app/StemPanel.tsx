@@ -10,7 +10,7 @@ import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
 import { describeEngine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
-import { guitarAmount, guitarAmountLabel, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
+import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
   readonly clock: StemMixClock;
@@ -51,12 +51,27 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchItem[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice>('off');
+  const [pass, setPass] = useState(1);
   const abort = useRef<AbortController | null>(null);
   const runs = useRef(createRunGuard());
   const hashRef = useRef<string | null>(null);
   /** The newest mix, so two quick changes in a row build on each other instead of on a stale render. */
   const mixRef = useRef(mix);
   mixRef.current = mix;
+
+  /** The per-pass schedule follows the active stems; leaving them puts the base mix back. */
+  useEffect(() => {
+    if (!active) return;
+    const clock = active.clock;
+    clock.setSchedule(scheduleForChoice(scheduleChoice));
+    setPass(clock.pass);
+    const stop = clock.onPassChange(() => setPass(clock.pass));
+    return () => {
+      stop();
+      clock.setSchedule({ kind: 'off' });
+    };
+  }, [active, scheduleChoice]);
 
   useEffect(() => {
     if (!desktop) return;
@@ -279,6 +294,23 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
             <button type="button" onClick={() => change((m) => toggleStemMute(m, 'guitar'))} aria-pressed={mix.guitar.muted}>
               {mix.guitar.muted ? 'Unmute guitar' : 'Mute guitar'}
             </button>
+            <label className="pass-schedule">
+              Each loop pass
+              <select
+                value={scheduleChoice}
+                aria-label="Mix change per loop pass"
+                onChange={(e) => setScheduleChoice(e.target.value as ScheduleChoice)}
+              >
+                {SCHEDULE_CHOICES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {scheduleChoice !== 'off' && (
+              <span className="muted">{active.clock.loop ? passNote(scheduleForChoice(scheduleChoice), pass) : 'Set a loop to use this.'}</span>
+            )}
             <button type="button" onClick={() => change(() => initialMix())}>
               Reset mix
             </button>

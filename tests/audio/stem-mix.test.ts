@@ -165,3 +165,89 @@ describe('StemMixClock', () => {
     for (const c of list) expect(c.dispose).toHaveBeenCalled();
   });
 });
+
+describe('StemMixClock pass schedule', () => {
+  function setup() {
+    const ch = channels();
+    let now = 100;
+    const clock = new StemMixClock(ch.list, 60, () => now);
+    const lead = ch.list[0].element as FakeAudio;
+    const wrap = () => {
+      lead.currentTime = 8.2;
+      clock.time();
+    };
+    return { ch, clock, lead, wrap, advance: (s: number) => (now += s) };
+  }
+  const fade = { kind: 'fade-out', steps: [1, 0.6, 0.25, 0] } as const;
+
+  it('applies 100, 60, 25, 0 to the guitar gain over successive wraps', () => {
+    const { ch, clock, wrap } = setup();
+    clock.setMix(initialMix());
+    clock.setLoop({ start: 4, end: 8 });
+    clock.setSchedule(fade);
+    clock.play();
+    const seen = [ch.gains.guitar];
+    for (let i = 0; i < 4; i++) {
+      wrap();
+      seen.push(ch.gains.guitar);
+    }
+    expect(seen).toEqual([1, 0.6, 0.25, 0, 0]);
+  });
+
+  it('changing the loop range resets the pass count', () => {
+    const { ch, clock, wrap } = setup();
+    clock.setMix(initialMix());
+    clock.setLoop({ start: 4, end: 8 });
+    clock.setSchedule(fade);
+    clock.play();
+    wrap();
+    wrap();
+    expect(ch.gains.guitar).toBeCloseTo(0.25, 9);
+    clock.setLoop({ start: 2, end: 8 });
+    expect(clock.pass).toBe(1);
+    expect(ch.gains.guitar).toBe(1);
+  });
+
+  it('counts a wrap during the lead-in as a pass', () => {
+    const { ch, clock, advance } = setup();
+    clock.setMix(initialMix());
+    clock.setOffset(-5);
+    clock.setLoop({ start: 0, end: 2 });
+    clock.setSchedule(fade);
+    clock.seek(0);
+    clock.play();
+    advance(2.5);
+    clock.time();
+    expect(clock.pass).toBe(2);
+    expect(ch.gains.guitar).toBeCloseTo(0.6, 9);
+  });
+
+  it('restores the base mix when the schedule is turned off or the loop is cleared', () => {
+    const { ch, clock, wrap } = setup();
+    const base = initialMix();
+    base.guitar.volume = 0.8;
+    clock.setMix(base);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.setSchedule(fade);
+    clock.play();
+    wrap();
+    expect(ch.gains.guitar).toBeCloseTo(0.48, 9);
+    clock.setSchedule({ kind: 'off' });
+    expect(ch.gains.guitar).toBeCloseTo(0.8, 9);
+    clock.setSchedule(fade);
+    wrap();
+    clock.setLoop(null);
+    expect(ch.gains.guitar).toBeCloseTo(0.8, 9);
+  });
+
+  it('a manual mix change while scheduled becomes the new base', () => {
+    const { ch, clock } = setup();
+    clock.setLoop({ start: 4, end: 8 });
+    clock.setSchedule(fade);
+    const base = initialMix();
+    base.drums.volume = 0.5;
+    clock.setMix(base);
+    expect(ch.gains.drums).toBe(0.5);
+    expect(ch.gains.guitar).toBe(1);
+  });
+});

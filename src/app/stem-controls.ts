@@ -1,5 +1,6 @@
 import type { EngineView } from './engine-state';
 import { MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
+import { fadeStep, FADE_OUT_STEPS, type PassSchedule } from '../audio/pass-schedule';
 import type { SearchItem, StemName } from '../stems/engine-client';
 
 export interface SeparateControl {
@@ -96,4 +97,31 @@ export function searchRow(item: SearchItem): SearchRow {
     disabled: item.too_long,
     note: item.too_long ? 'Too long to import' : '',
   };
+}
+
+export type ScheduleChoice = PassSchedule['kind'];
+
+export const SCHEDULE_CHOICES: readonly { readonly value: ScheduleChoice; readonly label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'fade-out', label: 'Fade out' },
+  { value: 'listen-then-play', label: 'Listen then play' },
+];
+
+export function scheduleForChoice(choice: ScheduleChoice): PassSchedule {
+  if (choice === 'fade-out') return { kind: 'fade-out', steps: FADE_OUT_STEPS };
+  if (choice === 'listen-then-play') return { kind: 'listen-then-play' };
+  return { kind: 'off' };
+}
+
+export function scheduleChoice(schedule: PassSchedule): ScheduleChoice {
+  return schedule.kind;
+}
+
+/** What the current loop pass does to the guitar; empty when no schedule is chosen. */
+export function passNote(schedule: PassSchedule, pass: number): string {
+  if (schedule.kind === 'fade-out') return `Pass ${pass}: guitar ${guitarAmountLabel(fadeStep(schedule.steps, pass))}`;
+  if (schedule.kind === 'listen-then-play') {
+    return pass % 2 === 1 ? `Pass ${pass}: listen to the guitar` : `Pass ${pass}: you play the guitar part`;
+  }
+  return '';
 }

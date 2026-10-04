@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { describeEngine } from '../../src/app/engine-state';
-import { formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
+import { passNote, scheduleChoice, scheduleForChoice, SCHEDULE_CHOICES, formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
 import { initialMix, stemGains } from '../../src/audio/mix-gains';
 
 const ready = describeEngine({ phase: 'ready', url: 'http://127.0.0.1:1', secret: 's' });
@@ -135,5 +135,23 @@ describe('R26: guitar amount', () => {
     expect(guitarAmountLabel(0)).toBe('None');
     expect(guitarAmountLabel(0.2)).toBe('20%');
     expect(guitarAmountLabel(1)).toBe('Full');
+  });
+});
+
+describe('pass schedule choice', () => {
+  it('maps each choice to a schedule and back, with a label', () => {
+    expect(scheduleForChoice('off')).toEqual({ kind: 'off' });
+    expect(scheduleForChoice('fade-out').kind).toBe('fade-out');
+    expect(scheduleForChoice('listen-then-play').kind).toBe('listen-then-play');
+    expect(scheduleChoice(scheduleForChoice('fade-out'))).toBe('fade-out');
+    expect(SCHEDULE_CHOICES.map((c) => c.label)).toEqual(['Off', 'Fade out', 'Listen then play']);
+  });
+
+  it('describes the pass in progress', () => {
+    expect(passNote({ kind: 'off' }, 3)).toBe('');
+    expect(passNote(scheduleForChoice('fade-out'), 2)).toBe('Pass 2: guitar 60%');
+    expect(passNote(scheduleForChoice('fade-out'), 6)).toBe('Pass 6: guitar None');
+    expect(passNote(scheduleForChoice('listen-then-play'), 1)).toBe('Pass 1: listen to the guitar');
+    expect(passNote(scheduleForChoice('listen-then-play'), 2)).toBe('Pass 2: you play the guitar part');
   });
 });

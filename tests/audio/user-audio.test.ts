@@ -379,3 +379,45 @@ describe('loadUserAudio', () => {
     await expect(loadUserAudio(big, 10)).rejects.toThrow(/too large/);
   });
 });
+
+describe('UserAudioClock loop-wrap notification', () => {
+  it('fires once per wrap on the element path', () => {
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, 60);
+    let wraps = 0;
+    clock.setLoopWrapListener(() => wraps++);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.play();
+    el.currentTime = 8.2;
+    clock.time();
+    expect(wraps).toBe(1);
+    clock.time();
+    expect(wraps).toBe(1);
+  });
+
+  it('fires for a wrap that happens during the lead-in silence', () => {
+    let now = 100;
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, 60, null, null, () => now);
+    clock.setOffset(-5);
+    let wraps = 0;
+    clock.setLoopWrapListener(() => wraps++);
+    clock.setLoop({ start: 0, end: 2 });
+    clock.seek(0);
+    clock.play();
+    now += 2.5; // still before the recording starts (tab 5)
+    clock.time();
+    expect(wraps).toBe(1);
+    expect(clock.inLeadIn).toBe(true);
+  });
+
+  it('does not fire without a loop or when paused', () => {
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, 60);
+    let wraps = 0;
+    clock.setLoopWrapListener(() => wraps++);
+    el.currentTime = 9;
+    clock.time();
+    expect(wraps).toBe(0);
+  });
+});
