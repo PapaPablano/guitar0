@@ -50,7 +50,7 @@ export function fitPcm(pcm: PcmAudio, durationSeconds: number): PcmAudio {
  * tab time plus `offsetSeconds`, so the offset skips that much of its start. The offset is never
  * negative. The result is the whole song at its original tempo.
  */
-export async function decodeUserRecording(file: File, offsetSeconds: number, durationSeconds: number): Promise<PcmAudio> {
+export async function decodeUserRecording(file: Blob, offsetSeconds: number, durationSeconds: number): Promise<PcmAudio> {
   const bytes = await file.arrayBuffer();
   const length = Math.ceil(durationSeconds * AUDIO_SAMPLE_RATE);
   const offline = new OfflineAudioContext(2, length, AUDIO_SAMPLE_RATE);
