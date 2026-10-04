@@ -10,7 +10,7 @@ type Decode = (blob: Blob, offsetSeconds: number, durationSeconds: number) => Pr
 /**
  * Renders the current stem mix as export audio at the tab's original tempo. Stems are decoded one at a
  * time and summed into one buffer, so peak memory stays near one stem plus the sum. A stem with no gain
- * is not decoded at all, and a stem that cannot be decoded fails the whole export.
+ * is not decoded at all, the signed offset goes to the decoder unchanged (negative delays the stems), and a stem that cannot be decoded fails the whole export.
  */
 export async function renderStemMix(
   sources: StemSources,

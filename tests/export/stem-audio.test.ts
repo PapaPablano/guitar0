@@ -57,6 +57,29 @@ describe('renderStemMix', () => {
     }
   });
 
+  it('passes a negative (later start) offset to the decoder unchanged', async () => {
+    const decode = fakeDecode();
+    await renderStemMix(sources(), initialMix(), -1.5, D, decode);
+    expect(decode.mock.calls).toHaveLength(6);
+    for (const call of decode.mock.calls) expect(call[1]).toBe(-1.5);
+  });
+
+  it('covers AE5 and AE7: with a later start and the guitar muted the delayed sum has no guitar and silence first', async () => {
+    const mix = initialMix();
+    mix.guitar.muted = true;
+    // A fake decode that honours the signed offset the way decodeUserRecording does: one sample of silence.
+    const decode = vi.fn(async (blob: Blob, offset = 0): Promise<PcmAudio> => {
+      const name = (await blob.text()) as StemName;
+      const data = new Float32Array(4).fill(LEVEL[name]);
+      if (offset < 0) data.fill(0, 0, 1);
+      return { left: data, right: data.slice(), sampleRate: 48000 };
+    });
+    const pcm = await renderStemMix(sources(), mix, -0.00002, D, decode);
+    expect(pcm.left[0]).toBe(0);
+    expect(pcm.left[1]).toBeCloseTo(0.01 + 0.02 + 0.04 + 0.08 + 0.16, 6);
+    expect(decode.mock.calls).toHaveLength(5);
+  });
+
   it('tolerates a stem that decodes shorter than the others', async () => {
     const decode = vi.fn(async (blob: Blob): Promise<PcmAudio> => {
       const name = (await blob.text()) as StemName;
