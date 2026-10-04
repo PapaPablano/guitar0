@@ -1,4 +1,6 @@
 interface TransportProps {
+  /** True until the sound is ready: playback controls are inactive. */
+  disabled: boolean;
   playing: boolean;
   /** Tempo as a percentage of the original. */
   tempoPercent: number;
@@ -16,6 +18,7 @@ function formatTime(seconds: number): string {
 }
 
 export function Transport({
+  disabled,
   playing,
   tempoPercent,
   seconds,
@@ -27,10 +30,10 @@ export function Transport({
 }: TransportProps) {
   return (
     <div className="transport" role="group" aria-label="Transport">
-      <button type="button" onClick={onTogglePlay} aria-label={playing ? 'Pause' : 'Play'}>
+      <button type="button" onClick={onTogglePlay} disabled={disabled} aria-label={playing ? 'Pause' : 'Play'}>
         {playing ? 'Pause' : 'Play'}
       </button>
-      <button type="button" onClick={onRestart} aria-label="Restart from the beginning">
+      <button type="button" onClick={onRestart} disabled={disabled} aria-label="Restart from the beginning">
         Restart
       </button>
       <input
@@ -41,6 +44,7 @@ export function Transport({
         step={0.01}
         value={Math.min(seconds, durationSeconds)}
         onChange={(e) => onSeek(Number(e.target.value))}
+        disabled={disabled}
         aria-label="Position"
       />
       <span className="time" aria-hidden="true">
@@ -55,6 +59,7 @@ export function Transport({
           step={5}
           value={tempoPercent}
           onChange={(e) => onTempoChange(Number(e.target.value))}
+          disabled={disabled}
           aria-label="Tempo percent"
         />
       </label>

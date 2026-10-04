@@ -2,6 +2,23 @@ export interface LoopRange {
   /** Seconds of media time. */
   readonly start: number;
   readonly end: number;
+  /** Midi ticks of the same range, for clocks backed by the synth. */
+  readonly startTick?: number;
+  readonly endTick?: number;
+}
+
+/** What the app needs from a clock, whether it is timer-driven or backed by the synth. */
+export interface Clock {
+  readonly playing: boolean;
+  readonly rate: number;
+  readonly loop: LoopRange | null;
+  /** Current media time in seconds. */
+  time(): number;
+  play(): void;
+  pause(): void;
+  seek(seconds: number): void;
+  setRate(rate: number): void;
+  setLoop(range: LoopRange | null): void;
 }
 
 /**
@@ -9,7 +26,7 @@ export interface LoopRange {
  * (performance.now in tests and fallbacks, the Web Audio clock in the real player), so the same
  * logic runs under both. The clock holds the tempo rate and the loop range.
  */
-export class PlaybackClock {
+export class PlaybackClock implements Clock {
   private anchorMedia = 0;
   private anchorSource = 0;
   private isPlaying = false;

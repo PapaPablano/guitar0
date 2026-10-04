@@ -43,6 +43,8 @@ export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4): Timel
     scoreBar: i,
     startSeconds: i * barSeconds,
     endSeconds: (i + 1) * barSeconds,
+    startTick: Math.round(i * barSeconds * 1920),
+    endTick: Math.round((i + 1) * barSeconds * 1920),
     tempo: 120,
     timeSignature: { numerator: 4, denominator: 4 },
   }));

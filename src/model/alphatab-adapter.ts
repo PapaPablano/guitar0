@@ -17,6 +17,19 @@ export function ticksToSeconds(points: readonly TempoPoint[], tick: number): num
   return seconds;
 }
 
+/** Inverse of ticksToSeconds: the tick reached after `seconds` of playback. */
+export function secondsToTicks(points: readonly TempoPoint[], seconds: number): number {
+  let remaining = Math.max(0, seconds);
+  for (let i = 0; i < points.length; i++) {
+    const secondsPerTick = 60 / points[i].tempo / TICKS_PER_QUARTER;
+    const next = points[i + 1];
+    const segmentSeconds = next ? (next.tick - points[i].tick) * secondsPerTick : Infinity;
+    if (remaining <= segmentSeconds) return points[i].tick + remaining / secondsPerTick;
+    remaining -= segmentSeconds;
+  }
+  return 0;
+}
+
 export function loadScoreFromBytes(data: Uint8Array): alphaTab.model.Score {
   return alphaTab.importer.ScoreLoader.loadScoreFromBytes(data, new alphaTab.Settings());
 }
@@ -156,6 +169,8 @@ export function buildTimeline(score: alphaTab.model.Score): Timeline {
         scoreBar: masterBar.index,
         startSeconds: ticksToSeconds(tempoMap, lookupBar.start),
         endSeconds: ticksToSeconds(tempoMap, lookupBar.end),
+        startTick: lookupBar.start,
+        endTick: lookupBar.end,
         tempo: lookupBar.tempoChanges[0]?.tempo ?? 120,
         timeSignature: Object.freeze({
           numerator: masterBar.timeSignatureNumerator,

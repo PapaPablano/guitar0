@@ -7,13 +7,13 @@ import {
   type LoopBars,
 } from '../render/tab-strip';
 import { playbackBarIndexAt } from './navigation';
-import type { PlaybackClock } from '../audio/clock';
+import type { Clock } from '../audio/clock';
 import type { Timeline } from '../model/score';
 
 interface StageProps {
   timeline: Timeline;
   trackIndex: number;
-  clock: PlaybackClock;
+  clock: Clock;
   loop: LoopBars | null;
   onLoopChange: (loop: LoopBars | null) => void;
   /** Called when the strip is clicked without dragging: seek to the start of a score bar. */

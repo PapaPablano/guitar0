@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildTimeline, loadAlphaTex, loadScoreFromBytes, ticksToSeconds } from '../../src/model/alphatab-adapter';
+import { buildTimeline, loadAlphaTex, loadScoreFromBytes, secondsToTicks, ticksToSeconds } from '../../src/model/alphatab-adapter';
 import {
   MUSICXML_NO_TAB,
   MUSICXML_WITH_TAB,
@@ -148,5 +148,17 @@ describe('library isolation', () => {
     }
     expect(offenders).toEqual([]);
     expect(/alphatab/i.test(readFileSync('src/model/score.ts', 'utf8').replace(/^\s*\/\/.*$/gm, ''))).toBe(false);
+  });
+});
+
+describe('secondsToTicks', () => {
+  it('inverts ticksToSeconds across tempo points', () => {
+    const map = [
+      { tick: 0, tempo: 120 },
+      { tick: 960, tempo: 60 },
+    ];
+    for (const tick of [0, 480, 960, 1440, 4000]) {
+      expect(secondsToTicks(map, ticksToSeconds(map, tick))).toBeCloseTo(tick, 6);
+    }
   });
 });

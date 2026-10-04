@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { PlaybackClock } from '../audio/clock';
+import type { Clock } from '../audio/clock';
+import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
+import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex, loadScoreFromBytes } from '../model/alphatab-adapter';
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, type LoopBars } from '../render/tab-strip';
@@ -12,11 +14,14 @@ import { Transport } from './Transport';
 import { interpretKey, seekByBar } from './navigation';
 import './app.css';
 
-const NOW = () => performance.now() / 1000;
+const SOUND_FONT_URL = './soundfont/sonivox.sf3';
+
+type AudioState = { status: 'loading'; progress: number } | { status: 'ready' } | { status: 'failed'; message: string };
 
 interface Session {
   timeline: Timeline;
-  clock: PlaybackClock;
+  score: AlphaModel.Score;
+  clock: SynthClock;
 }
 
 function firstPlayableTrack(timeline: Timeline): number {
@@ -33,10 +38,27 @@ export function App() {
   const [loopOn, setLoopOn] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [audio, setAudio] = useState<AudioState>({ status: 'loading', progress: 0 });
   const lastShown = useRef(-1);
 
-  function startSession(timeline: Timeline) {
-    setSession({ timeline, clock: new PlaybackClock(NOW, timeline.durationSeconds) });
+  function connectAudio(next: Session) {
+    setAudio({ status: 'loading', progress: 0 });
+    const synth = createSynthSession(next.score, next.timeline.durationSeconds, next.timeline.tempoMap, {
+      soundFontUrl: SOUND_FONT_URL,
+      onProgress: (progress) => setAudio((a) => (a.status === 'loading' ? { status: 'loading', progress } : a)),
+    });
+    synth.ready.then(
+      () => setAudio({ status: 'ready' }),
+      (e: unknown) => setAudio({ status: 'failed', message: e instanceof Error ? e.message : 'The sound could not be loaded.' }),
+    );
+    return synth.clock;
+  }
+
+  function startSession(score: AlphaModel.Score, timeline: Timeline) {
+    session?.clock.dispose();
+    const draft = { timeline, score } as Session;
+    draft.clock = connectAudio(draft);
+    setSession(draft);
     setTrackIndex(firstPlayableTrack(timeline));
     setTempoPercent(100);
     setLoop(null);
@@ -50,11 +72,12 @@ export function App() {
     setLoading(true);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const timeline = buildTimeline(loadScoreFromBytes(bytes));
+      const score = loadScoreFromBytes(bytes);
+      const timeline = buildTimeline(score);
       if (timeline.notesForTrack(firstPlayableTrack(timeline)).length === 0) {
         throw new Error('That file has no playable guitar notes.');
       }
-      startSession(timeline);
+      startSession(score, timeline);
     } catch (e) {
       // keep the previous session; just report the problem
       setError(e instanceof Error && e.message ? `Could not open that file: ${e.message}` : 'Could not open that file.');
@@ -65,7 +88,8 @@ export function App() {
 
   function onSample() {
     try {
-      startSession(buildTimeline(loadAlphaTex(SAMPLE_ALPHATEX)));
+      const score = loadAlphaTex(SAMPLE_ALPHATEX);
+      startSession(score, buildTimeline(score));
     } catch {
       setError('Could not load the sample.');
     }
@@ -84,12 +108,33 @@ export function App() {
     const layout = getStripLayout(timeline, trackIndex, 1, 1);
     const first = layout.bars.find((b) => b.scoreBar === loop.startBar);
     const last = layout.bars.find((b) => b.scoreBar === loop.endBar);
-    if (first && last) clock.setLoop({ start: first.playback.startSeconds, end: last.playback.endSeconds });
+    if (first && last) {
+      clock.setLoop({
+        start: first.playback.startSeconds,
+        end: last.playback.endSeconds,
+        startTick: first.playback.startTick,
+        endTick: last.playback.endTick,
+      });
+    }
   }, [clock, timeline, trackIndex, loop, loopOn]);
 
+  // Dev-only handle so the clock can be sampled from the browser console during manual checks.
   useEffect(() => {
-    clock?.setRate(tempoPercent / 100);
-  }, [clock, tempoPercent]);
+    if (import.meta.env.DEV) (window as unknown as { __clock?: Clock }).__clock = clock;
+  }, [clock]);
+
+  const audioReady = audio.status === 'ready';
+  useEffect(() => {
+    if (audioReady) clock?.setRate(tempoPercent / 100);
+  }, [clock, tempoPercent, audioReady]);
+
+  function retryAudio() {
+    if (!session) return;
+    session.clock.dispose();
+    const next = { ...session } as Session;
+    next.clock = connectAudio(next);
+    setSession(next);
+  }
 
   const onFrame = useCallback(
     (t: number) => {
@@ -106,11 +151,11 @@ export function App() {
   );
 
   const togglePlay = useCallback(() => {
-    if (!clock) return;
+    if (!clock || !audioReady) return;
     if (clock.playing) clock.pause();
     else clock.play();
     setPlaying(clock.playing);
-  }, [clock]);
+  }, [clock, audioReady]);
 
   const setLoopRange = useCallback((next: LoopBars | null) => {
     setLoop(next);
@@ -170,7 +215,13 @@ export function App() {
       <header className="topbar">
         <h1>{title}</h1>
         <TrackPicker tracks={timeline.tracks} value={trackIndex} onChange={setTrackIndex} />
-        <button type="button" onClick={() => setSession(null)}>
+        <button
+          type="button"
+          onClick={() => {
+            clock.dispose();
+            setSession(null);
+          }}
+        >
           Open another file
         </button>
       </header>
@@ -192,7 +243,21 @@ export function App() {
         }}
         onFrame={onFrame}
       />
+      {audio.status === 'loading' && (
+        <p role="status" className="notice">
+          Loading sound… {Math.round(audio.progress * 100)}%
+        </p>
+      )}
+      {audio.status === 'failed' && (
+        <p role="alert" className="error">
+          The sound could not be loaded ({audio.message}).{' '}
+          <button type="button" onClick={retryAudio}>
+            Retry
+          </button>
+        </p>
+      )}
       <Transport
+        disabled={!audioReady}
         playing={playing}
         tempoPercent={tempoPercent}
         seconds={seconds}

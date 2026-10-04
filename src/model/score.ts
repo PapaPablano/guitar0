@@ -43,6 +43,9 @@ export interface BarEvent {
   readonly scoreBar: number;
   readonly startSeconds: number;
   readonly endSeconds: number;
+  /** Midi ticks of the played bar, used to hand a loop range to the synth. */
+  readonly startTick: number;
+  readonly endTick: number;
   readonly tempo: number;
   readonly timeSignature: { readonly numerator: number; readonly denominator: number };
 }
