@@ -16,6 +16,13 @@ import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
 import { OffsetSlider } from './OffsetSlider';
 import { clampOffset } from '../audio/offset-range';
+import { PROFILE_VERSION, type ProfileStore } from '../audio/recording-profile';
+import { WebProfileStore } from '../audio/profile-store-web';
+import { shellProfileStore } from '../stems/profile-store-shell';
+import { hashFile } from '../stems/file-hash';
+import { createRunGuard } from '../stems/run-guard';
+import { isDesktop } from './desktop';
+import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
@@ -76,6 +83,77 @@ export function App() {
   /** The newest settings, for activateStems, which a separation calls minutes after it was started. */
   const live = useRef({ offset: 0, tempoPercent: 100, mix: initialMix(), userClock: null as UserAudioClock | null, session: null as Session | null });
 
+  /** Where per-recording offset and mix are remembered: a shell file on the desktop, browser storage on the web. */
+  const profileStore = useMemo<ProfileStore>(() => (isDesktop() ? shellProfileStore : new WebProfileStore()), []);
+  /** Names the recording whose profile lookup is in flight; any newer load or removal makes it stale. */
+  const profileRuns = useRef(createRunGuard());
+  /** Content hash of the loaded recording, once known; null means nothing is restored or saved for it. */
+  const profileHash = useRef<string | null>(null);
+  /** True once the user has moved the offset since this recording loaded (KTD12). */
+  const offsetMoved = useRef(false);
+  /** The mix to remember with the offset; desktop only, set by a restore or a user change. */
+  const profileMix = useRef<MixState | undefined>(undefined);
+  const profileSaver = useRef<ReturnType<typeof createDebouncer<{ hash: string; offset: number; mix?: MixState }>> | null>(null);
+  if (!profileSaver.current) {
+    profileSaver.current = createDebouncer(DEBOUNCE_MS, ({ hash, offset, mix }) => {
+      void profileStore.save(hash, mix ? { version: PROFILE_VERSION, offset, mix } : { version: PROFILE_VERSION, offset });
+    });
+  }
+
+  /** Queues a save of the current offset (and desktop mix) for the loaded recording. Loop and tempo are never saved (R19). */
+  function scheduleProfileSave(offsetSeconds: number) {
+    const hash = profileHash.current;
+    if (hash) profileSaver.current?.push({ hash, offset: offsetSeconds, mix: profileMix.current });
+  }
+
+  // Do not lose the last change when the page closes.
+  useEffect(() => {
+    const flush = () => profileSaver.current?.flush();
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, []);
+
+  /** Forgets the loaded recording's profile state, saving any pending change for it first. */
+  function resetProfile() {
+    profileSaver.current?.flush();
+    profileRuns.current.invalidate();
+    profileHash.current = null;
+    offsetMoved.current = false;
+    profileMix.current = undefined;
+    setOffset(0);
+    setMix(initialMix());
+  }
+
+  /** Looks up the recording's profile and applies it unless the user or another load got there first (KTD12). */
+  async function restoreProfile(file: File, clockForLoad: UserAudioClock) {
+    const run = profileRuns.current.begin();
+    const { hash, profile } = await fetchProfile(() => hashFile(file), profileStore);
+    if (!profileRuns.current.isCurrent(run)) return;
+    profileHash.current = hash;
+    const plan = decideRestore(
+      { stillLoaded: userClockRef.current === clockForLoad, offsetMoved: offsetMoved.current, desktop: isDesktop() },
+      profile,
+    );
+    if (!plan) {
+      // The user moved the slider before the hash resolved: remember where they left it.
+      if (hash && offsetMoved.current) scheduleProfileSave(live.current.offset);
+      return;
+    }
+    clockForLoad.setOffset(plan.offset);
+    stemsRef.current?.clock.setOffset(plan.offset);
+    setOffset(plan.offset);
+    live.current.offset = plan.offset;
+    if (plan.mix) {
+      profileMix.current = plan.mix;
+      live.current.mix = plan.mix;
+      setMix(plan.mix);
+      stemsRef.current?.clock.setMix(plan.mix);
+    }
+  }
+
   function connectAudio(score: AlphaModel.Score, timelineToPlay: Timeline) {
     sessionToken.current += 1;
     const token = sessionToken.current;
@@ -109,7 +187,7 @@ export function App() {
   function startSession(score: AlphaModel.Score, timeline: Timeline) {
     session?.clock.dispose();
     replaceUserClock(null);
-    setOffset(0);
+    resetProfile();
     setUserAudioError(null);
     setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
     setTrackIndex(firstPlayableTrack(timeline));
@@ -218,7 +296,8 @@ export function App() {
       next.setRate(tempoPercent / 100);
       next.seek(position);
       replaceUserClock(next);
-      setOffset(0);
+      resetProfile();
+      void restoreProfile(file, next);
     } catch (e) {
       // keep whatever was playing before
       setUserAudioError(e instanceof Error ? e.message : 'That recording could not be opened.');
@@ -228,7 +307,7 @@ export function App() {
   function onRemoveRecording() {
     const position = (stems?.clock ?? userClock)?.time() ?? 0;
     replaceUserClock(null);
-    setOffset(0);
+    resetProfile();
     session?.clock.seek(position);
   }
 
@@ -446,6 +525,9 @@ export function App() {
           userClock?.setOffset(seconds);
           stems?.clock.setOffset(seconds);
           setOffset(seconds);
+          live.current.offset = seconds;
+          offsetMoved.current = true;
+          scheduleProfileSave(seconds);
         }}
         onRemove={onRemoveRecording}
       />
@@ -454,7 +536,13 @@ export function App() {
         durationSeconds={timeline.durationSeconds}
         active={stems}
         mix={mix}
-        onMixChange={setMix}
+        onMixChange={(next) => {
+          setMix(next);
+          if (isDesktop()) {
+            profileMix.current = next;
+            scheduleProfileSave(live.current.offset);
+          }
+        }}
         onActivate={activateStems}
       />
       <LoopControls
