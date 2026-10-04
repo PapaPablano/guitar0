@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeEngine, practiceControlsEnabled, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
+import { describeEngine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
 
 const status = (s: Partial<ShellEngineStatus> & { phase: ShellEngineStatus['phase'] }): ShellEngineStatus => s as ShellEngineStatus;
 
@@ -88,14 +88,12 @@ describe('setupBar (R21, AE12)', () => {
 });
 
 describe('R25: setup never blocks practice', () => {
-  it('keeps tab, synth and fretboard controls enabled in every engine phase and only gates stems', () => {
+  it('only the stem controls depend on the engine: they are enabled in the ready phase and nowhere else', () => {
     const phases: ShellEngineStatus['phase'][] = ['setup-needed', 'setting-up', 'setup-failed', 'starting', 'restarting', 'ready', 'engine-error'];
     for (const phase of phases) {
       const view = describeEngine(status({ phase }));
-      expect(practiceControlsEnabled(view)).toBe(true);
       expect(view.stemsEnabled).toBe(phase === 'ready');
     }
-    expect(practiceControlsEnabled(describeEngine(null))).toBe(true);
   });
 
   it('reads the shell status and starts setup through promises, so the page never waits on setup', async () => {

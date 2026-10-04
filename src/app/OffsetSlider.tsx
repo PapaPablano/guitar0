@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../audio/offset-range';
-import { nudgeOffset, offsetControlsVisible, offsetDirectionLabel } from './offset-controls';
+import { nudgeOffset, offsetDirectionLabel } from './offset-controls';
 
 /** Visible text, step size, direction and spoken label for each nudge button, in display order. */
 const NUDGES = [
@@ -22,7 +22,8 @@ interface OffsetSliderProps {
 
 export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
   const input = useRef<HTMLInputElement>(null);
-  const loaded = offsetSeconds !== null && offsetControlsVisible({ hasRecording: true });
+  // The offset controls follow the recording alone: not the desktop bridge, not stems (AE10).
+  const loaded = offsetSeconds !== null;
 
   return (
     <div className="audio-sync" role="group" aria-label="Your recording">

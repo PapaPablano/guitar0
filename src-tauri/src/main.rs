@@ -204,11 +204,16 @@ fn write_atomic(path: &std::path::Path, text: String) -> Result<(), String> {
 }
 
 /// Per-recording profiles live in their own file so a profile problem can never touch the saved-stems index.
-/// A missing or unreadable file reads as empty.
+/// A missing file, or text that is not a profile file, reads as empty. Any other read error (a lock, a permission)
+/// is an error, so the page skips the save instead of overwriting every saved profile.
 #[tauri::command]
 fn profiles_read() -> Result<serde_json::Value, String> {
     let path = engine::Layout::locate()?.data.join("recording-profiles.json");
-    Ok(fs::read_to_string(&path).map(|text| profiles::parse_profiles(&text)).unwrap_or_else(|_| profiles::empty_file()))
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(profiles::parse_profiles(&text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(profiles::empty_file()),
+        Err(e) => Err(format!("could not read the saved recording profiles: {e}")),
+    }
 }
 
 #[tauri::command]

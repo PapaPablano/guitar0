@@ -54,11 +54,6 @@ export function setupBar(view: EngineView): SetupBar {
   return view.progress === null ? { kind: 'indeterminate' } : { kind: 'determinate', value: view.progress };
 }
 
-/** R25: setup and engine trouble only ever gate the stem controls. Synth, tab and fretboard practice stay on. */
-export function practiceControlsEnabled(_view: EngineView): boolean {
-  return true;
-}
-
 export function readEngineStatus(): Promise<ShellEngineStatus> {
   return invokeShell<ShellEngineStatus>('engine_status');
 }

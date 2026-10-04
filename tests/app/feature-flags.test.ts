@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readYoutubeFlag, youtubeControls } from '../../src/app/feature-flags';
 
 describe('youtube flag', () => {
-  it('defaults to off when the build defines nothing', () => {
-    expect(readYoutubeFlag()).toBe(false);
+  it('is off unless the build defines exactly true', () => {
+    expect(readYoutubeFlag(undefined)).toBe(false);
+    expect(readYoutubeFlag(false)).toBe(false);
+    expect(readYoutubeFlag('true')).toBe(false);
+    expect(readYoutubeFlag(true)).toBe(true);
   });
 
   it('off: no search input, results or import control, even with results and a ready engine', () => {

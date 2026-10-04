@@ -16,7 +16,3 @@ export function offsetDirectionLabel(offsetSeconds: number): string {
   return offsetSeconds < 0 ? 'recording starts later' : 'recording starts earlier';
 }
 
-/** The offset controls follow the recording alone: not the desktop bridge, not stems. */
-export function offsetControlsVisible(state: { hasRecording: boolean }): boolean {
-  return state.hasRecording;
-}

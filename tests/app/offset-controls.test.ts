@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nudgeOffset, offsetControlsVisible, offsetDirectionLabel } from '../../src/app/offset-controls';
+import { nudgeOffset, offsetDirectionLabel } from '../../src/app/offset-controls';
 import { NUDGE_COARSE_SECONDS, NUDGE_FINE_SECONDS, OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../../src/audio/offset-range';
 
 describe('nudgeOffset', () => {
@@ -42,12 +42,5 @@ describe('offsetDirectionLabel', () => {
   it('states zero distinctly', () => {
     expect(offsetDirectionLabel(0)).toBe('in sync with the tab');
     expect(offsetDirectionLabel(0.004)).toBe('in sync with the tab');
-  });
-});
-
-describe('offsetControlsVisible', () => {
-  it('covers AE10: shown whenever a recording is loaded, regardless of bridge or stems', () => {
-    expect(offsetControlsVisible({ hasRecording: true })).toBe(true);
-    expect(offsetControlsVisible({ hasRecording: false })).toBe(false);
   });
 });

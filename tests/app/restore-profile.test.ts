@@ -32,15 +32,23 @@ describe('fetchProfile', () => {
 });
 
 describe('decideRestore', () => {
-  const ok = { stillLoaded: true, offsetMoved: false, desktop: false };
+  const ok = { stillLoaded: true, offsetMoved: false, mixMoved: false, desktop: false };
   it('applies the offset when nothing changed', () => {
     expect(decideRestore(ok, profile(-2))).toEqual({ offset: -2 });
   });
   it('restores only offset and mix; loop and tempo have no place in the plan (AE9)', () => {
     expect(Object.keys(decideRestore({ ...ok, desktop: true }, profile(1, true))!).sort()).toEqual(['mix', 'offset']);
   });
-  it('discards when the user moved the offset first', () => {
+  it('discards the offset when the user moved it first, and keeps a stored mix on desktop', () => {
     expect(decideRestore({ ...ok, offsetMoved: true }, profile(3))).toBeNull();
+    const plan = decideRestore({ ...ok, offsetMoved: true, desktop: true }, profile(3, true));
+    expect(plan).toEqual({ mix: profile(3, true).mix });
+  });
+  it('discards the mix when the user changed it first, and keeps the stored offset', () => {
+    expect(decideRestore({ ...ok, mixMoved: true, desktop: true }, profile(3, true))).toEqual({ offset: 3 });
+  });
+  it('discards everything when the user changed both first', () => {
+    expect(decideRestore({ ...ok, offsetMoved: true, mixMoved: true, desktop: true }, profile(3, true))).toBeNull();
   });
   it('discards when another recording is now loaded', () => {
     expect(decideRestore({ ...ok, stillLoaded: false }, profile(3))).toBeNull();

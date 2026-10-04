@@ -121,17 +121,28 @@ export class UserAudioClock implements Clock {
 
   /**
    * Moves the recording against the tab, within the shared range; the recording keeps playing from
-   * where it is, so the tab time moves instead.
+   * where it is, so the tab time moves instead. When nothing is playing and the recording has not
+   * started, there is no position to keep, so the playhead stays where it is.
    */
   setOffset(seconds: number): void {
     const next = clampOffset(seconds);
-    if (this.leadIn || this.heldTab !== null) {
-      // The recording is still before its start: keep that position, move the tab against it.
-      const recording = this.time() + this.offsetSeconds;
-      const tab = Math.max(0, recording - next);
+    if (this.leadIn) {
+      // Reading the lead-in can hand over to the element, so look at the state again afterwards.
+      const recording = this.leadInTime() + this.offsetSeconds;
+      if (this.leadIn) {
+        // Still before the recording's start: keep that position, move the tab against it.
+        this.offsetSeconds = next;
+        this.leadIn = { anchorTab: Math.max(0, recording - next), anchorSource: this.source() };
+        return;
+      }
+      // The element has taken over (or the tab ended): only the offset changes.
       this.offsetSeconds = next;
-      if (this.leadIn) this.leadIn = { anchorTab: tab, anchorSource: this.source() };
-      else this.heldTab = tab;
+      return;
+    }
+    if (this.heldTab !== null || (this.element.paused && this.element.currentTime === 0)) {
+      const tab = this.time();
+      this.offsetSeconds = next;
+      this.place(tab, false);
       return;
     }
     this.offsetSeconds = next;

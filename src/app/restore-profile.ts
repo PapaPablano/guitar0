@@ -24,20 +24,23 @@ export async function fetchProfile(
 
 /** What a restore changes. Loop range and tempo are deliberately not here (R19). */
 export interface RestorePlan {
-  offset: number;
+  offset?: number;
   mix?: MixState;
 }
 
 /**
- * Whether a looked-up profile should be applied (KTD12): only if the same recording is still the loaded one and the
- * user has not touched the offset since it loaded. The mix is restored on the desktop only (R18).
+ * Which parts of a looked-up profile to apply (KTD12): only if the same recording is still the loaded one, and each
+ * part only if the user has not changed it since the recording loaded. The mix is restored on the desktop only (R18).
  */
 export function decideRestore(
-  ctx: { stillLoaded: boolean; offsetMoved: boolean; desktop: boolean },
+  ctx: { stillLoaded: boolean; offsetMoved: boolean; mixMoved: boolean; desktop: boolean },
   profile: RecordingProfile | null,
 ): RestorePlan | null {
-  if (!profile || !ctx.stillLoaded || ctx.offsetMoved) return null;
-  return ctx.desktop && profile.mix ? { offset: profile.offset, mix: profile.mix } : { offset: profile.offset };
+  if (!profile || !ctx.stillLoaded) return null;
+  const plan: RestorePlan = {};
+  if (!ctx.offsetMoved) plan.offset = profile.offset;
+  if (ctx.desktop && profile.mix && !ctx.mixMoved) plan.mix = profile.mix;
+  return plan.offset === undefined && plan.mix === undefined ? null : plan;
 }
 
 export interface DebounceTimers {

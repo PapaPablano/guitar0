@@ -91,6 +91,8 @@ export function App() {
   const profileHash = useRef<string | null>(null);
   /** True once the user has moved the offset since this recording loaded (KTD12). */
   const offsetMoved = useRef(false);
+  /** True once the user has changed the mix since this recording loaded; a restore then leaves the mix alone. */
+  const mixMoved = useRef(false);
   /** The mix to remember with the offset; desktop only, set by a restore or a user change. */
   const profileMix = useRef<MixState | undefined>(undefined);
   const profileSaver = useRef<ReturnType<typeof createDebouncer<{ hash: string; offset: number; mix?: MixState }>> | null>(null);
@@ -122,6 +124,7 @@ export function App() {
     profileRuns.current.invalidate();
     profileHash.current = null;
     offsetMoved.current = false;
+    mixMoved.current = false;
     profileMix.current = undefined;
     setOffset(0);
     setMix(initialMix());
@@ -134,23 +137,29 @@ export function App() {
     if (!profileRuns.current.isCurrent(run)) return;
     profileHash.current = hash;
     const plan = decideRestore(
-      { stillLoaded: userClockRef.current === clockForLoad, offsetMoved: offsetMoved.current, desktop: isDesktop() },
+      {
+        stillLoaded: userClockRef.current === clockForLoad,
+        offsetMoved: offsetMoved.current,
+        mixMoved: mixMoved.current,
+        desktop: isDesktop(),
+      },
       profile,
     );
-    if (!plan) {
-      // The user moved the slider before the hash resolved: remember where they left it.
-      if (hash && offsetMoved.current) scheduleProfileSave(live.current.offset);
-      return;
+    if (plan?.offset !== undefined) {
+      clockForLoad.setOffset(plan.offset);
+      stemsRef.current?.clock.setOffset(plan.offset);
+      setOffset(plan.offset);
+      live.current.offset = plan.offset;
     }
-    clockForLoad.setOffset(plan.offset);
-    stemsRef.current?.clock.setOffset(plan.offset);
-    setOffset(plan.offset);
-    live.current.offset = plan.offset;
-    if (plan.mix) {
+    if (plan?.mix) {
       profileMix.current = plan.mix;
       live.current.mix = plan.mix;
       setMix(plan.mix);
       stemsRef.current?.clock.setMix(plan.mix);
+    }
+    // Something the user changed before the hash resolved: remember it, alongside whatever was restored.
+    if (hash && userClockRef.current === clockForLoad && (offsetMoved.current || mixMoved.current)) {
+      scheduleProfileSave(live.current.offset);
     }
   }
 
@@ -538,6 +547,7 @@ export function App() {
         mix={mix}
         onMixChange={(next) => {
           setMix(next);
+          mixMoved.current = true;
           if (isDesktop()) {
             profileMix.current = next;
             scheduleProfileSave(live.current.offset);

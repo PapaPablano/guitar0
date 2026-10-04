@@ -299,6 +299,40 @@ describe('UserAudioClock lead-in', () => {
     expect(el.paused).toBe(false);
   });
 
+  it('keeps the playhead when a negative offset is applied to a paused clock whose recording has not started', () => {
+    const { el, clock, advance } = setup(0);
+    clock.setOffset(-1.5);
+    expect(clock.time()).toBe(0);
+    clock.play();
+    expect(clock.inLeadIn).toBe(true);
+    advance(1.5);
+    expect(clock.time()).toBeCloseTo(1.5, 9);
+    expect(el.paused).toBe(false);
+  });
+
+  it('keeps the playhead while the offset is dragged further negative before playing', () => {
+    const { clock } = setup(-1);
+    clock.seek(0);
+    clock.setOffset(-2);
+    expect(clock.time()).toBe(0);
+    clock.setOffset(-3);
+    expect(clock.time()).toBe(0);
+  });
+
+  it('keeps tracking the element when the offset changes at the instant the lead-in has handed over', () => {
+    const { el, clock, advance } = setup(-1.5);
+    clock.seek(0);
+    clock.play();
+    // The time source runs past the end of the lead-in before anything reads the clock.
+    advance(2);
+    clock.setOffset(-1);
+    expect(clock.inLeadIn).toBe(false);
+    expect(el.paused).toBe(false);
+    // The element is running, so tab time follows it; it must not be frozen at a held value.
+    el.currentTime = 3;
+    expect(clock.time()).toBeCloseTo(4, 9);
+  });
+
   it('a recording shorter than the tab stops and does not restart the lead-in', async () => {
     vi.useFakeTimers();
     const { el, clock, advance } = setup(-1, 60);
