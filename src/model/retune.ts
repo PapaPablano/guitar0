@@ -32,10 +32,10 @@ export function sameTuning(a: readonly number[], b: readonly number[]): boolean 
   return a.length === b.length && a.every((m, i) => m === b[i]);
 }
 
-/** Presets a track can be shown in: six-string tracks only, and not the tuning it already has. */
+/** Presets a track can be shown in: those with its string count, standard first. */
 export function presetsForTrack(track: TrackInfo | undefined): readonly TuningPreset[] {
   if (!track || track.isPercussion) return [];
-  return TUNING_PRESETS.filter((p) => p.tuning.length === track.tuning.length && !sameTuning(p.tuning, track.tuning));
+  return TUNING_PRESETS.filter((p) => p.tuning.length === track.tuning.length);
 }
 
 /** The string (1 = highest) and fret for a pitch, nearest to `prefer`, avoiding `taken`; null if none fits. */
