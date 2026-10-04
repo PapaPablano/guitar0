@@ -1,4 +1,5 @@
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
+import { clampOffset } from './offset-range';
 
 /** Largest recording the page will accept. The file is streamed, not decoded, but export reads it whole. */
 export const MAX_AUDIO_BYTES = 400 * 1024 * 1024;
@@ -15,9 +16,17 @@ export interface AudioLike {
   pause(): void;
 }
 
+/** Seconds from a monotonic clock; the lead-in advances tab time from it. */
+export type TimeSource = () => number;
+
+const performanceSource: TimeSource = () => performance.now() / 1000;
+
 /**
  * A Clock backed by the user's own recording. Media time is the position in the tab; the recording
- * position is that time plus `offset`, so a positive offset means the recording has extra lead-in.
+ * position is that time plus `offset`, so a positive offset means the recording has extra lead-in and
+ * a negative one means it starts after the tab. A media element cannot sit before zero, so while the
+ * recording position is negative the element waits at zero and the clock advances tab time itself
+ * from `source`, then starts the element when the recording begins.
  * Tempo changes use the browser's pitch-preserving time stretch.
  */
 export class UserAudioClock implements Clock {
@@ -25,18 +34,29 @@ export class UserAudioClock implements Clock {
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
   private watcher: ReturnType<typeof setInterval> | null = null;
+  /** Set while playing in the silence before the recording: tab time at `anchorSource`. */
+  private leadIn: { anchorTab: number; anchorSource: number } | null = null;
+  /** Tab time while paused in the silence before the recording. */
+  private heldTab: number | null = null;
+  private onLoopWrap: (() => void) | null = null;
 
   constructor(
     readonly element: AudioLike,
     private readonly duration: number,
     readonly file: File | null = null,
     private readonly objectUrl: string | null = null,
+    private readonly source: TimeSource = performanceSource,
   ) {
     element.preservesPitch = true;
   }
 
   get playing(): boolean {
-    return !this.element.paused && !this.element.ended;
+    return this.leadIn !== null || (!this.element.paused && !this.element.ended);
+  }
+
+  /** True while the clock is counting the silence before the recording and the element is not running. */
+  get inLeadIn(): boolean {
+    return this.leadIn !== null;
   }
 
   get rate(): number {
@@ -52,11 +72,14 @@ export class UserAudioClock implements Clock {
   }
 
   time(): number {
+    if (this.leadIn) return this.leadInTime();
+    if (this.heldTab !== null) return this.heldTab;
     let media = this.element.currentTime - this.offsetSeconds;
     const loop = this.loopRange;
     if (loop && this.playing && media >= loop.end) {
       media = loop.start;
-      this.element.currentTime = loop.start + this.offsetSeconds;
+      this.place(loop.start, true);
+      this.onLoopWrap?.();
     }
     // A recording longer than the tab stops with the tab instead of playing on unseen.
     if (this.playing && media >= this.duration) this.element.pause();
@@ -65,21 +88,30 @@ export class UserAudioClock implements Clock {
 
   play(): void {
     if (this.time() >= this.duration) this.seek(this.loopRange?.start ?? 0);
-    void this.element.play();
+    if (this.playing) {
+      this.startWatcher();
+      return;
+    }
+    this.place(this.time(), true);
     this.startWatcher();
   }
 
   pause(): void {
+    if (this.leadIn) {
+      this.heldTab = this.leadInTime();
+      this.leadIn = null;
+    }
     this.element.pause();
     this.stopWatcher();
   }
 
   seek(seconds: number): void {
-    const media = clamp(seconds, 0, this.duration);
-    this.element.currentTime = Math.max(0, media + this.offsetSeconds);
+    this.place(clamp(seconds, 0, this.duration), this.playing);
   }
 
   setRate(rate: number): void {
+    // The lead-in counts tab time at the old rate up to now, then continues at the new one.
+    if (this.leadIn) this.leadIn = { anchorTab: this.leadInTime(), anchorSource: this.source() };
     this.currentRate = clampRate(rate, 0.25);
     this.element.playbackRate = this.currentRate;
     this.element.preservesPitch = true;
@@ -89,12 +121,87 @@ export class UserAudioClock implements Clock {
     this.loopRange = normalizeLoop(range);
   }
 
+  /** Called once each time playback wraps from the loop end to its start, including during the lead-in silence. */
+  setLoopWrapListener(listener: (() => void) | null): void {
+    this.onLoopWrap = listener;
+  }
+
   /**
-   * Moves the recording against the tab; the recording keeps playing from where it is. Only a
-   * recording that starts earlier than the tab is supported, so the offset is never negative.
+   * Moves the recording against the tab, within the shared range; the recording keeps playing from
+   * where it is, so the tab time moves instead. When nothing is playing and the recording has not
+   * started, there is no position to keep, so the playhead stays where it is.
    */
   setOffset(seconds: number): void {
-    this.offsetSeconds = Math.max(0, seconds);
+    const next = clampOffset(seconds);
+    if (this.leadIn) {
+      // Reading the lead-in can hand over to the element, so look at the state again afterwards.
+      const recording = this.leadInTime() + this.offsetSeconds;
+      if (this.leadIn) {
+        // Still before the recording's start: keep that position, move the tab against it.
+        this.offsetSeconds = next;
+        this.leadIn = { anchorTab: Math.max(0, recording - next), anchorSource: this.source() };
+        return;
+      }
+      // The element has taken over (or the tab ended): only the offset changes.
+      this.offsetSeconds = next;
+      return;
+    }
+    if (this.heldTab !== null || (this.element.paused && this.element.currentTime === 0)) {
+      const tab = this.time();
+      this.offsetSeconds = next;
+      this.place(tab, false);
+      return;
+    }
+    this.offsetSeconds = next;
+  }
+
+  /** Tab time during the lead-in; ends the lead-in when the recording begins or the tab ends. */
+  private leadInTime(): number {
+    const lead = this.leadIn!;
+    let tab = lead.anchorTab + (this.source() - lead.anchorSource) * this.currentRate;
+    const loop = this.loopRange;
+    if (loop && tab >= loop.end) {
+      this.place(loop.start, true);
+      this.onLoopWrap?.();
+      return loop.start;
+    }
+    if (tab >= this.duration) {
+      this.leadIn = null;
+      this.heldTab = this.duration;
+      this.element.pause();
+      return this.duration;
+    }
+    if (tab + this.offsetSeconds >= 0) {
+      // Hand over to the element at the overshoot, so tab time neither jumps nor steps back.
+      this.place(tab, true);
+      tab = this.element.currentTime - this.offsetSeconds;
+    }
+    return clamp(tab, 0, this.duration);
+  }
+
+  /**
+   * Puts the tab at `tab`. Before the recording starts the element waits at zero (counting the lead-in
+   * when playing); otherwise the element goes to its position and runs if playback is on. The element
+   * is never given a negative position.
+   */
+  private place(tab: number, playing: boolean): void {
+    const recording = tab + this.offsetSeconds;
+    if (recording < 0) {
+      if (!this.element.paused) this.element.pause();
+      this.element.currentTime = 0;
+      if (playing) {
+        this.leadIn = { anchorTab: tab, anchorSource: this.source() };
+        this.heldTab = null;
+      } else {
+        this.leadIn = null;
+        this.heldTab = tab;
+      }
+      return;
+    }
+    this.leadIn = null;
+    this.heldTab = null;
+    this.element.currentTime = recording;
+    if (playing && this.element.paused) void this.element.play();
   }
 
   /** Loop wrapping and the stop at the tab end are checked on a timer too, so they hold when frames are throttled. */
@@ -113,6 +220,7 @@ export class UserAudioClock implements Clock {
 
   dispose(): void {
     this.stopWatcher();
+    this.leadIn = null;
     this.element.pause();
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
   }

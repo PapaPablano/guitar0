@@ -1,4 +1,14 @@
 import { useRef } from 'react';
+import { OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../audio/offset-range';
+import { nudgeOffset, offsetDirectionLabel } from './offset-controls';
+
+/** Visible text, step size, direction and spoken label for each nudge button, in display order. */
+const NUDGES = [
+  ['-100 ms', 'coarse', -1, '100 ms later'],
+  ['-10 ms', 'fine', -1, '10 ms later'],
+  ['+10 ms', 'fine', 1, '10 ms earlier'],
+  ['+100 ms', 'coarse', 1, '100 ms earlier'],
+] as const;
 
 interface OffsetSliderProps {
   /** Null when no recording is loaded. */
@@ -10,10 +20,9 @@ interface OffsetSliderProps {
   onRemove: () => void;
 }
 
-const RANGE_SECONDS = 10;
-
 export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
   const input = useRef<HTMLInputElement>(null);
+  // The offset controls follow the recording alone: not the desktop bridge, not stems (AE10).
   const loaded = offsetSeconds !== null;
 
   return (
@@ -36,17 +45,24 @@ export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetC
         <>
           <span className="muted">{fileName}</span>
           <label className="field">
-            Offset {offsetSeconds.toFixed(2)} s
+            Offset {offsetSeconds.toFixed(2)} s ({offsetDirectionLabel(offsetSeconds)})
             <input
               type="range"
-              min={0}
-              max={RANGE_SECONDS}
+              min={OFFSET_MIN_SECONDS}
+              max={OFFSET_MAX_SECONDS}
               step={0.01}
               value={offsetSeconds}
               onChange={(e) => onOffsetChange(Number(e.target.value))}
               aria-label="Recording offset in seconds"
             />
           </label>
+          <span className="nudge" role="group" aria-label="Nudge offset">
+            {NUDGES.map(([text, size, direction, label]) => (
+              <button key={text} type="button" onClick={() => onOffsetChange(nudgeOffset(offsetSeconds, size, direction))} aria-label={`Recording ${label}`}>
+                {text}
+              </button>
+            ))}
+          </span>
           <button type="button" onClick={onRemove}>
             Use built-in sound
           </button>

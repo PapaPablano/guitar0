@@ -56,10 +56,15 @@ describe('retuneTimeline', () => {
 });
 
 describe('presetsForTrack', () => {
-  it('omits the tuning the track already has and needs a matching string count', () => {
+  it('lists standard first, even for a file already in standard, and needs a matching string count', () => {
     const base = makeTimeline([]);
-    expect(presetsForTrack(base.tracks[0]).map((p) => p.id)).not.toContain('standard');
-    expect(presetsForTrack(base.tracks[0])).not.toHaveLength(0);
+    expect(presetsForTrack(base.tracks[0])[0].id).toBe('standard');
+    expect(presetsForTrack({ ...base.tracks[0], tuning: HALF_DOWN })[0].id).toBe('standard');
     expect(presetsForTrack({ ...base.tracks[0], tuning: [43, 38, 33, 28] })).toEqual([]);
+  });
+
+  it('keeps showing a track as it is when its own tuning is chosen', () => {
+    const src = halfDown([{ start: 0, end: 1, string: 2, fret: 3 }]);
+    expect(retuneTimeline(src, 0, HALF_DOWN)).toBe(src);
   });
 });

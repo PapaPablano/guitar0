@@ -5,3 +5,10 @@ dist/
 test-results/
 playwright-report/
 public/
+
+# Desktop build output
+src-tauri/target/
+src-tauri/gen/
+dist-desktop/
+__pycache__/
+.pytest_cache/
