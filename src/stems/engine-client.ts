@@ -62,7 +62,7 @@ export class EngineClient {
         await this.cancel(jobId);
         throw new SeparationCancelled();
       }
-      const state = (await (await this.request(`/api/jobs/${jobId}`, { signal: undefined })).json()) as JobState;
+      const state = (await (await this.request(`/api/jobs/${jobId}`, {})).json()) as JobState;
       onProgress?.(state.progress ?? 0);
       if (state.status === 'done') return jobId;
       if (state.status === 'cancelled') throw new SeparationCancelled();

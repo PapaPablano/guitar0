@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{Manager, RunEvent};
+use tauri::RunEvent;
 
 #[derive(Clone, Serialize, Default)]
 struct Status {

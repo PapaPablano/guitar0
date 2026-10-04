@@ -1,4 +1,4 @@
-import { normalizeLoop, type Clock, type LoopRange } from './clock';
+import type { Clock, LoopRange } from './clock';
 import { stemGains, type MixState } from './mix-gains';
 import { UserAudioClock, type AudioLike } from './user-audio';
 import type { StemName } from '../stems/engine-client';
@@ -79,7 +79,7 @@ export class StemMixClock implements Clock {
   }
 
   setLoop(range: LoopRange | null): void {
-    this.leader.setLoop(normalizeLoop(range));
+    this.leader.setLoop(range);
   }
 
   /** The recording moves against the tab; every stem keeps playing from where it is. */

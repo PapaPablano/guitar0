@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { initialMix, type MixState } from '../audio/mix-gains';
+import type { MixState } from '../audio/mix-gains';
 import type { StemMixClock } from '../audio/stem-mix';
 import type { StemSources } from '../export/stem-audio';
 import { EngineClient, SeparationCancelled, STEM_NAMES, type StemName } from '../stems/engine-client';
@@ -179,5 +179,3 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
     </div>
   );
 }
-
-export { initialMix };
