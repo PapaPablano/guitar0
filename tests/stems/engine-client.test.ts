@@ -155,3 +155,15 @@ describe('EngineClient search and URL import', () => {
     expect(calls.some((c) => c.url.endsWith('/api/jobs/yt2/cancel'))).toBe(true);
   });
 });
+
+describe('EngineClient.jobExists with unavailable stems', () => {
+  it('treats a done job whose stems are gone (status unavailable) as not existing', async () => {
+    const { client } = setup(() => json({ status: 'unavailable' }));
+    await expect(client.jobExists('j')).resolves.toBe(false);
+  });
+
+  it('gives a missing item a message the user can read', async () => {
+    const { client } = setup(() => json({ detail: 'job not found' }, 404));
+    await expect(client.fetchStem('j', 'guitar')).rejects.toThrow(/no longer available/i);
+  });
+});

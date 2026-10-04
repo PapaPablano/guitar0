@@ -72,6 +72,8 @@ export function App() {
   const sessionToken = useRef(0);
   const userClockRef = useRef<UserAudioClock | null>(null);
   const stemsRef = useRef<ActiveStems | null>(null);
+  /** The newest settings, for activateStems, which a separation calls minutes after it was started. */
+  const live = useRef({ offset: 0, tempoPercent: 100, mix: initialMix(), userClock: null as UserAudioClock | null, session: null as Session | null });
 
   function connectAudio(score: AlphaModel.Score, timelineToPlay: Timeline) {
     sessionToken.current += 1;
@@ -147,6 +149,7 @@ export function App() {
 
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
   function activateStems(next: ActiveStems | null) {
+    const { offset, tempoPercent, mix, userClock, session } = live.current;
     const current = stemsRef.current;
     const position = current?.clock.time() ?? userClock?.time() ?? session?.clock.time() ?? 0;
     current?.clock.dispose();
@@ -163,6 +166,8 @@ export function App() {
       (userClock ?? session?.clock)?.seek(position);
     }
   }
+
+  live.current = { offset, tempoPercent, mix, userClock, session };
 
   const clock: Clock | undefined = stems?.clock ?? userClock ?? session?.clock;
   const sourceTimeline = session?.timeline;

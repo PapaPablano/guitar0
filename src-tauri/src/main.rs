@@ -125,8 +125,11 @@ fn index_path() -> Result<std::path::PathBuf, String> {
 fn stem_index_read() -> Result<HashMap<String, String>, String> {
     let path = index_path()?;
     match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("the saved-stems index is unreadable: {e}")),
-        Err(_) => Ok(HashMap::new()),
+        Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
+        // Only a missing file is an empty index. Any other error (a lock, a permission) must not read as
+        // empty, or the next save would overwrite every saved mapping.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(e) => Err(format!("could not read the saved-stems index: {e}")),
     }
 }
 

@@ -57,3 +57,47 @@ describe('SavedStems', () => {
     expect(store.data).toEqual({});
   });
 });
+
+describe('SavedStems failure handling', () => {
+  const failing = (): StemIndexStore => ({
+    read: async () => {
+      throw new Error('locked');
+    },
+    write: async () => {
+      throw new Error('locked');
+    },
+  });
+
+  it('treats an unreadable index as not saved instead of failing', async () => {
+    await expect(new SavedStems(failing()).find('h', async () => true)).resolves.toBeNull();
+  });
+
+  it('treats an engine that cannot be asked as not saved', async () => {
+    const saved = new SavedStems(memoryStore({ h: 'job' }));
+    await expect(
+      saved.find('h', async () => {
+        throw new Error('engine down');
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('tryRecord reports failure without throwing and never overwrites an unreadable index', async () => {
+    const writes: Record<string, string>[] = [];
+    const store: StemIndexStore = {
+      read: async () => {
+        throw new Error('locked');
+      },
+      write: async (index) => {
+        writes.push(index);
+      },
+    };
+    await expect(new SavedStems(store).tryRecord('h', 'job')).resolves.toBe(false);
+    expect(writes).toEqual([]);
+  });
+
+  it('tryRecord returns true when it saved', async () => {
+    const store = memoryStore();
+    await expect(new SavedStems(store).tryRecord('h', 'job')).resolves.toBe(true);
+    expect(store.data).toEqual({ h: 'job' });
+  });
+});

@@ -120,10 +120,11 @@ export class EngineClient {
     await this.request(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
   }
 
+  /** True when the job is there and its stems are still on disk (the engine reports a done job with missing stems as "unavailable"). */
   async jobExists(jobId: string): Promise<boolean> {
     try {
-      await this.request(`/api/jobs/${jobId}`, {});
-      return true;
+      const state = (await (await this.request(`/api/jobs/${jobId}`, {})).json()) as JobState;
+      return state.status !== 'unavailable';
     } catch (e) {
       if (e instanceof JobNotFound) return false;
       throw e;
@@ -152,7 +153,11 @@ export class EngineClient {
   }
 }
 
-class JobNotFound extends Error {}
+class JobNotFound extends Error {
+  constructor() {
+    super('That item is no longer available on the engine. Separate it again.');
+  }
+}
 
 async function describe(response: Response): Promise<string> {
   try {

@@ -15,15 +15,32 @@ export const shellStemIndex: StemIndexStore = {
 export class SavedStems {
   constructor(private readonly store: StemIndexStore) {}
 
-  /** The saved job for this hash, or null. An entry whose job no longer exists is removed. */
+  /**
+   * The saved job for this hash, or null. An entry whose job no longer exists is removed. Any failure
+   * (an unreadable index, an engine that cannot be asked) means "not saved", so separating still works.
+   */
   async find(hash: string, jobExists: (jobId: string) => Promise<boolean>): Promise<string | null> {
-    const index = await this.store.read();
-    const jobId = index[hash];
-    if (!jobId) return null;
-    if (await jobExists(jobId)) return jobId;
-    delete index[hash];
-    await this.store.write(index);
-    return null;
+    try {
+      const index = await this.store.read();
+      const jobId = index[hash];
+      if (!jobId) return null;
+      if (await jobExists(jobId)) return jobId;
+      delete index[hash];
+      await this.store.write(index);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Like record, but reports failure instead of throwing, so a finished separation is never lost to an index error. */
+  async tryRecord(hash: string, jobId: string): Promise<boolean> {
+    try {
+      await this.record(hash, jobId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Call only after a job reports done, so a cancelled or failed run leaves nothing behind. */

@@ -5,6 +5,7 @@ import type { StemSources } from '../export/stem-audio';
 import { EngineClient, SeparationCancelled, STEM_NAMES, type SearchItem, type StemName } from '../stems/engine-client';
 import { hashFile } from '../stems/file-hash';
 import { audioContext, loadStems } from '../stems/load-stems';
+import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { describeEngine, readEngineStatus, startEngineSetup, type ShellEngineStatus } from './engine-state';
@@ -50,6 +51,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
   const [results, setResults] = useState<SearchItem[] | null>(null);
   const [searching, setSearching] = useState(false);
   const abort = useRef<AbortController | null>(null);
+  const runs = useRef(createRunGuard());
   const hashRef = useRef<string | null>(null);
   /** The newest mix, so two quick changes in a row build on each other instead of on a stale render. */
   const mixRef = useRef(mix);
@@ -95,6 +97,15 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
     };
   }, [recording, client]);
 
+  // A separation that finishes after the song or recording changed, or after the panel went away, must not apply.
+  useEffect(() => {
+    const guard = runs.current;
+    return () => {
+      guard.invalidate();
+      abort.current?.abort();
+    };
+  }, [recording, durationSeconds]);
+
   if (!desktop) return null;
 
   const engine = describeEngine(status);
@@ -109,6 +120,8 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
     setProgress(0);
     const controller = new AbortController();
     abort.current = controller;
+    const run = runs.current.begin();
+    const stale = () => !runs.current.isCurrent(run) || controller.signal.aborted;
     try {
       const key = await source.key();
       let jobId = await savedStems.find(key, (id) => client.jobExists(id));
@@ -117,18 +130,27 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
         const made = await source.separate(client, setProgress, controller.signal);
         jobId = made.jobId;
         title = made.title ?? title;
-        await savedStems.record(key, jobId);
-        setSavedJob(jobId);
+        // The stems exist now, so remember them even if the result is no longer wanted.
+        if (!(await savedStems.tryRecord(key, jobId))) setError('The stems were made but could not be saved for next time.');
+        else setSavedJob(jobId);
       }
+      if (stale()) return;
       const context = audioContext();
       await context.resume();
       const loaded = await loadStems(client, jobId, durationSeconds, context);
+      if (stale()) {
+        loaded.clock.dispose();
+        return;
+      }
       onActivate({ ...loaded, title });
     } catch (e) {
       if (!(e instanceof SeparationCancelled)) setError(e instanceof Error ? e.message : 'Separation failed.');
     } finally {
-      abort.current = null;
-      setBusy(false);
+      // Only the latest separation owns the busy state; an older, superseded one must not clear a newer one's.
+      if (abort.current === controller) {
+        abort.current = null;
+        setBusy(false);
+      }
     }
   }
 
