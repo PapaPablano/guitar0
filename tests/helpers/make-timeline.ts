@@ -58,6 +58,7 @@ export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4): Timel
   };
   return {
     title: 'test',
+    artist: '',
     tracks: [track],
     bars: barEvents,
     tempoMap: [{ tick: 0, tempo: 120 }],

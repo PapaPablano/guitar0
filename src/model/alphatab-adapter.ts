@@ -233,6 +233,7 @@ export function buildTimeline(score: alphaTab.model.Score): Timeline {
 
   return Object.freeze({
     title: score.title,
+    artist: score.artist,
     tracks: Object.freeze(tracks),
     bars: Object.freeze(bars),
     tempoMap: Object.freeze(tempoMap),

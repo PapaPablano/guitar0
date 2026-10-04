@@ -4,6 +4,7 @@ Practice a Guitar Pro or MusicXML tab as a scrolling highway over a synced tab s
 
 - Drop a `.gp3`–`.gpx` or MusicXML file, or try the bundled sample riff.
 - Play with the built-in sound, slow it down, and loop bars (drag across bars on the strip, or use the bar fields).
+- Search Songsterr from the start screen, or jump to it from a loaded tab. This only opens their site in a new tab; the app makes no requests to Songsterr and never touches their tab files.
 - Load your own recording and line it up with an offset slider.
 - Desktop Chrome and Edge also export the highway as an MP4. Other desktop browsers support practice only. Phones and tablets are not supported yet.
 

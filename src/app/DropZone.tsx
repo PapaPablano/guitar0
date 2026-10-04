@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { songsterrSearchUrl } from './songsterr';
 
 interface DropZoneProps {
   onFile: (file: File) => void;
@@ -10,6 +11,8 @@ interface DropZoneProps {
 export function DropZone({ onFile, onSample, error, loading }: DropZoneProps) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchUrl = songsterrSearchUrl(query);
 
   return (
     <section
@@ -37,6 +40,28 @@ export function DropZone({ onFile, onSample, error, loading }: DropZoneProps) {
           Try the sample riff
         </button>
       </div>
+      <form
+        className="song-search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (searchUrl) window.open(searchUrl, '_blank', 'noopener,noreferrer');
+        }}
+      >
+        <label className="field">
+          Looking for a tab?
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Song or artist"
+            aria-label="Search Songsterr for a song or artist"
+          />
+        </label>
+        <button type="submit" disabled={!searchUrl}>
+          Search Songsterr
+        </button>
+        <p className="hint">Opens Songsterr in a new tab. Download a Guitar Pro file there, then drop it here.</p>
+      </form>
       <input
         ref={input}
         type="file"

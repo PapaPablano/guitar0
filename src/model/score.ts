@@ -68,6 +68,8 @@ export interface TempoPoint {
 
 export interface Timeline {
   readonly title: string;
+  /** Empty when the file names no artist. */
+  readonly artist: string;
   readonly tracks: readonly TrackInfo[];
   readonly bars: readonly BarEvent[];
   readonly tempoMap: readonly TempoPoint[];

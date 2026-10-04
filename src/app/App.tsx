@@ -18,6 +18,7 @@ import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
+import { songsterrLinkForSong } from './songsterr';
 import { assessSupport, readSupportEnvironment } from './support';
 import './app.css';
 
@@ -245,6 +246,7 @@ export function App() {
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
+  const songsterrLink = timeline ? songsterrLinkForSong(timeline.title, timeline.artist) : null;
 
   if (!support.canPractice) {
     return (
@@ -279,6 +281,11 @@ export function App() {
       <header className="topbar">
         <h1>{title}</h1>
         <TrackPicker tracks={timeline.tracks} value={trackIndex} onChange={setTrackIndex} />
+        {songsterrLink && (
+          <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
+            Find on Songsterr
+          </a>
+        )}
         <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady}>
           Export video
         </button>

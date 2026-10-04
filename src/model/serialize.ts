@@ -3,6 +3,7 @@ import type { BarEvent, NoteEvent, TempoPoint, Timeline, TrackInfo } from './sco
 /** A Timeline reduced to plain data, so it can be sent to a worker (a Timeline holds a function). */
 export interface TimelineData {
   readonly title: string;
+  readonly artist: string;
   readonly tracks: readonly TrackInfo[];
   readonly bars: readonly BarEvent[];
   readonly tempoMap: readonly TempoPoint[];
@@ -16,6 +17,7 @@ export interface TimelineData {
 export function serializeTimeline(timeline: Timeline, trackIndex: number): TimelineData {
   return {
     title: timeline.title,
+    artist: timeline.artist,
     tracks: timeline.tracks,
     bars: timeline.bars,
     tempoMap: timeline.tempoMap,
@@ -28,6 +30,7 @@ export function serializeTimeline(timeline: Timeline, trackIndex: number): Timel
 export function hydrateTimeline(data: TimelineData): Timeline {
   return {
     title: data.title,
+    artist: data.artist,
     tracks: data.tracks,
     bars: data.bars,
     tempoMap: data.tempoMap,

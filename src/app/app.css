@@ -264,3 +264,38 @@ button.link {
 .dialog progress {
   width: 100%;
 }
+
+.song-search {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.song-search .hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.song-search input[type='search'] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+a.link-button {
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  text-decoration: none;
+}
+
+a.link-button:hover {
+  border-color: var(--accent);
+}
