@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Where FFmpeg's step ends and the model download begins on the overall setup bar.
 pub const FFMPEG_END: f64 = 0.5;
@@ -14,6 +15,10 @@ pub const MODEL_END: f64 = 0.95;
 /// `app.pipeline.warmup` fetches through demucs (about 55 MB). If it is wrong the bar still moves and caps at
 /// `MODEL_END`; if the cache layout differs from this, the result falls back to indeterminate.
 pub const KNOWN_MODEL_BYTES: u64 = 55 * 1024 * 1024;
+
+/// How long the checkpoint folder may stay exactly the same size before the download counts as hung. Generous on
+/// purpose: the warm-up imports its Python stack silently before the first byte arrives, and a slow link may crawl.
+pub const STALL_LIMIT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, PartialEq)]
 pub enum ModelProgress {
@@ -54,6 +59,35 @@ pub fn largest_file_size(dir: &Path) -> Option<u64> {
         .filter(|m| m.is_file())
         .map(|m| m.len())
         .max()
+}
+
+/// Total size of every file in the folder, or `None` when it is missing or unreadable. Unlike the largest file,
+/// it moves whenever any download in the folder grows, which is what a stall check needs.
+pub fn folder_total_size(dir: &Path) -> Option<u64> {
+    let entries = fs::read_dir(dir).ok()?;
+    Some(entries.filter_map(|e| e.ok()).filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum())
+}
+
+/// Notices a download that has stopped moving. Feed it the folder's total size and the time since setup began; it
+/// reports a stall once the size has not changed for `STALL_LIMIT`. Pure, so the timing is testable without a clock.
+pub struct StallWatch {
+    last_total: Option<u64>,
+    last_change: Duration,
+}
+
+impl StallWatch {
+    pub fn new() -> Self {
+        StallWatch { last_total: None, last_change: Duration::ZERO }
+    }
+
+    /// Records the folder's total size at `now`; true when it has not changed for the limit.
+    pub fn observe(&mut self, total: Option<u64>, now: Duration) -> bool {
+        if total != self.last_total {
+            self.last_total = total;
+            self.last_change = now;
+        }
+        now.saturating_sub(self.last_change) >= STALL_LIMIT
+    }
 }
 
 /// Removes leftover partial downloads so a retry starts from zero and the bar does not start at the old size.
@@ -126,5 +160,57 @@ mod tests {
         assert!(is_partial_name("tmpk3j2h1"));
         assert!(!is_partial_name("5c90dfd2-34c22ccb.th"));
         assert!(!is_partial_name("tmp.th"));
+    }
+
+    use std::time::Duration;
+
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    #[test]
+    fn a_download_that_stops_growing_is_stalled_only_after_the_limit() {
+        let mut watch = StallWatch::new();
+        assert!(!watch.observe(Some(100), secs(0)));
+        // The same size for just under the limit is not yet a stall.
+        assert!(!watch.observe(Some(100), STALL_LIMIT - secs(1)));
+        assert!(watch.observe(Some(100), STALL_LIMIT));
+    }
+
+    #[test]
+    fn any_change_in_the_folder_resets_the_clock() {
+        let mut watch = StallWatch::new();
+        assert!(!watch.observe(Some(100), secs(0)));
+        assert!(!watch.observe(Some(150), STALL_LIMIT - secs(10)));
+        // The clock restarted at the change, so the limit counts from there, not from the start.
+        assert!(!watch.observe(Some(150), STALL_LIMIT * 2 - secs(11)));
+        assert!(watch.observe(Some(150), STALL_LIMIT * 2 - secs(10)));
+    }
+
+    #[test]
+    fn a_folder_that_never_appears_stalls_from_the_start_and_the_first_file_counts_as_progress() {
+        let mut watch = StallWatch::new();
+        assert!(!watch.observe(None, secs(10)));
+        assert!(!watch.observe(Some(0), secs(20)));
+        assert!(watch.observe(Some(0), secs(20) + STALL_LIMIT));
+        let mut silent = StallWatch::new();
+        assert!(silent.observe(None, STALL_LIMIT));
+    }
+
+    #[test]
+    fn folder_total_size_adds_every_file_so_a_second_smaller_download_counts() {
+        let dir = std::env::temp_dir().join(format!("tabhighway-mp-total-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(folder_total_size(&dir), None);
+        fs::create_dir_all(&dir).unwrap();
+        assert_eq!(folder_total_size(&dir), Some(0));
+        fs::write(dir.join("big.th"), vec![0u8; 500]).unwrap();
+        fs::write(dir.join("tmpab12cd"), vec![0u8; 20]).unwrap();
+        assert_eq!(folder_total_size(&dir), Some(520));
+        // The largest file is unchanged while the second download grows, but the total moves.
+        fs::write(dir.join("tmpab12cd"), vec![0u8; 80]).unwrap();
+        assert_eq!(largest_file_size(&dir), Some(500));
+        assert_eq!(folder_total_size(&dir), Some(580));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
