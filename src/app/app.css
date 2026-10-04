@@ -208,3 +208,26 @@ button[aria-pressed='true'] {
   font-size: 0.85rem;
   flex-basis: 100%;
 }
+
+.footer {
+  margin-top: auto;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.notices {
+  max-height: 40vh;
+  overflow: auto;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}

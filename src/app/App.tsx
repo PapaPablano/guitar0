@@ -3,17 +3,20 @@ import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import type { model as AlphaModel } from '@coderline/alphatab';
-import { buildTimeline, loadAlphaTex, loadScoreFromBytes } from '../model/alphatab-adapter';
+import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
+import { Notices } from './Notices';
 import { OffsetSlider } from './OffsetSlider';
 import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
 import { interpretKey, seekByBar } from './navigation';
+import { firstPlayableTrack, openTabBytes } from './open-file';
+import { assessSupport, readSupportEnvironment } from './support';
 import './app.css';
 
 const SOUND_FONT_URL = './soundfont/sonivox.sf3';
@@ -24,10 +27,6 @@ interface Session {
   timeline: Timeline;
   score: AlphaModel.Score;
   clock: SynthClock;
-}
-
-function firstPlayableTrack(timeline: Timeline): number {
-  return timeline.tracks.find((t) => !t.isPercussion)?.index ?? 0;
 }
 
 export function App() {
@@ -41,6 +40,7 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [audio, setAudio] = useState<AudioState>({ status: 'loading', progress: 0 });
+  const support = useMemo(() => assessSupport(readSupportEnvironment()), []);
   const [userClock, setUserClock] = useState<UserAudioClock | null>(null);
   const [offset, setOffset] = useState(0);
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
@@ -80,16 +80,11 @@ export function App() {
   async function onFile(file: File) {
     setLoading(true);
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const score = loadScoreFromBytes(bytes);
-      const timeline = buildTimeline(score);
-      if (timeline.notesForTrack(firstPlayableTrack(timeline)).length === 0) {
-        throw new Error('That file has no playable guitar notes.');
-      }
+      const { score, timeline } = openTabBytes(new Uint8Array(await file.arrayBuffer()));
       startSession(score, timeline);
     } catch (e) {
       // keep the previous session; just report the problem
-      setError(e instanceof Error && e.message ? `Could not open that file: ${e.message}` : 'Could not open that file.');
+      setError(e instanceof Error && e.message ? e.message : 'Could not open that file.');
     } finally {
       setLoading(false);
     }
@@ -234,10 +229,28 @@ export function App() {
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = useMemo(() => timeline?.title || 'Untitled', [timeline]);
 
+  if (!support.canPractice) {
+    return (
+      <main className="app">
+        <section className="dropzone" role="alert">
+          <h1>Tab Highway</h1>
+          <p className="error">{support.notice}</p>
+        </section>
+        <Notices />
+      </main>
+    );
+  }
+
   if (!session || !clock || !timeline) {
     return (
       <main className="app">
+        {support.notice && (
+          <p className="notice" role="status">
+            {support.notice}
+          </p>
+        )}
         <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} />
+        <Notices />
       </main>
     );
   }
@@ -326,6 +339,7 @@ export function App() {
           {error}
         </p>
       )}
+      <Notices />
     </main>
   );
 }
