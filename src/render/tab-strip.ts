@@ -1,0 +1,280 @@
+import type { DrawContext } from './draw-context';
+import { DEFAULT_THEME, type HighwayTheme } from './theme';
+import type { BarEvent, NoteEvent, Timeline } from '../model/score';
+
+/** Horizontal pixels per second of music in the strip, with a floor so short bars stay readable. */
+const STRIP_PX_PER_SECOND = 70;
+const MIN_BAR_WIDTH = 90;
+const CURSOR_FRACTION = 0.3;
+
+export interface StripBar {
+  readonly scoreBar: number;
+  /** X in strip space (the whole score laid out left to right in score order). */
+  readonly x: number;
+  readonly width: number;
+  /** The first time this bar is played; repeats reuse its notes. */
+  readonly playback: BarEvent;
+  readonly repeatStart: boolean;
+  readonly repeatEnd: boolean;
+  readonly notes: readonly NoteEvent[];
+}
+
+export interface StripLayout {
+  readonly bars: readonly StripBar[];
+  readonly totalWidth: number;
+  readonly width: number;
+  readonly height: number;
+  readonly stringCount: number;
+  readonly lineTop: number;
+  readonly lineGap: number;
+  readonly cursorX: number;
+}
+
+export interface LoopBars {
+  /** Inclusive score-bar range. */
+  readonly startBar: number;
+  readonly endBar: number;
+}
+
+export interface TabStripOptions {
+  readonly theme?: HighwayTheme;
+  readonly loop?: LoopBars | null;
+}
+
+const layoutCache = new WeakMap<Timeline, Map<string, StripLayout>>();
+
+export function getStripLayout(timeline: Timeline, trackIndex: number, width: number, height: number): StripLayout {
+  let byKey = layoutCache.get(timeline);
+  if (!byKey) {
+    byKey = new Map();
+    layoutCache.set(timeline, byKey);
+  }
+  const key = `${trackIndex}:${width}:${height}`;
+  let layout = byKey.get(key);
+  if (!layout) {
+    layout = buildStripLayout(timeline, trackIndex, width, height);
+    byKey.set(key, layout);
+  }
+  return layout;
+}
+
+export function buildStripLayout(timeline: Timeline, trackIndex: number, width: number, height: number): StripLayout {
+  const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
+  const lineTop = height * 0.22;
+  const lineGap = (height * 0.42) / Math.max(1, stringCount - 1);
+
+  // First playback occurrence of each score bar, and where playback jumps backwards (repeats).
+  const firstPlayback = new Map<number, BarEvent>();
+  const repeatEnds = new Set<number>();
+  const repeatStarts = new Set<number>();
+  timeline.bars.forEach((bar, i) => {
+    if (!firstPlayback.has(bar.scoreBar)) firstPlayback.set(bar.scoreBar, bar);
+    const next = timeline.bars[i + 1];
+    if (next && next.scoreBar <= bar.scoreBar) {
+      repeatEnds.add(bar.scoreBar);
+      repeatStarts.add(next.scoreBar);
+    }
+  });
+
+  const notes = timeline.notesForTrack(trackIndex);
+  const notesByPlaybackBar = new Map<number, NoteEvent[]>();
+  for (const n of notes) {
+    const list = notesByPlaybackBar.get(n.playbackBar) ?? [];
+    list.push(n);
+    notesByPlaybackBar.set(n.playbackBar, list);
+  }
+
+  const bars: StripBar[] = [];
+  let x = 0;
+  for (let scoreBar = 0; scoreBar < timeline.scoreBarCount; scoreBar++) {
+    const playback = firstPlayback.get(scoreBar);
+    if (!playback) continue;
+    const seconds = playback.endSeconds - playback.startSeconds;
+    const barWidth = Math.max(MIN_BAR_WIDTH, seconds * STRIP_PX_PER_SECOND);
+    bars.push({
+      scoreBar,
+      x,
+      width: barWidth,
+      playback,
+      repeatStart: repeatStarts.has(scoreBar),
+      repeatEnd: repeatEnds.has(scoreBar),
+      notes: notesByPlaybackBar.get(playback.playbackIndex) ?? [],
+    });
+    x += barWidth;
+  }
+
+  return {
+    bars,
+    totalWidth: x,
+    width,
+    height,
+    stringCount,
+    lineTop,
+    lineGap,
+    cursorX: width * CURSOR_FRACTION,
+  };
+}
+
+/** Index of the played bar containing time `t`, or the last bar when `t` is past the end. */
+function playbackBarAt(timeline: Timeline, t: number): BarEvent | undefined {
+  const bars = timeline.bars;
+  let lo = 0;
+  let hi = bars.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (bars[mid].startSeconds <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return bars[lo];
+}
+
+/** X of the playhead in strip space. Across a repeat this jumps back to the repeated bar. */
+export function playheadStripX(layout: StripLayout, timeline: Timeline, t: number): number {
+  const played = playbackBarAt(timeline, t);
+  if (!played) return 0;
+  const bar = layout.bars.find((b) => b.scoreBar === played.scoreBar);
+  if (!bar) return 0;
+  const seconds = played.endSeconds - played.startSeconds;
+  const fraction = seconds > 0 ? Math.min(1, Math.max(0, (t - played.startSeconds) / seconds)) : 0;
+  return bar.x + fraction * bar.width;
+}
+
+/** Strip-space x shown at the left edge of the canvas when the playhead is at `t`. */
+export function stripScrollX(layout: StripLayout, timeline: Timeline, t: number): number {
+  return playheadStripX(layout, timeline, t) - layout.cursorX;
+}
+
+/** Score bar under a canvas x position, or null when the position is outside the score. */
+export function scoreBarAtX(layout: StripLayout, timeline: Timeline, t: number, canvasX: number): number | null {
+  const stripX = canvasX + stripScrollX(layout, timeline, t);
+  for (const bar of layout.bars) {
+    if (stripX >= bar.x && stripX < bar.x + bar.width) return bar.scoreBar;
+  }
+  return null;
+}
+
+/** Playback time at the start of a score bar's first pass. */
+export function scoreBarStartSeconds(layout: StripLayout, scoreBar: number): number | null {
+  return layout.bars.find((b) => b.scoreBar === scoreBar)?.playback.startSeconds ?? null;
+}
+
+/** Draws the tab strip: staff lines, bars, fret numbers, rhythm stems and the cursor. */
+export function renderTabStrip(
+  ctx: DrawContext,
+  timeline: Timeline,
+  trackIndex: number,
+  t: number,
+  width: number,
+  height: number,
+  options: TabStripOptions = {},
+): void {
+  const theme = options.theme ?? DEFAULT_THEME;
+  const layout = getStripLayout(timeline, trackIndex, width, height);
+  const scroll = stripScrollX(layout, timeline, t);
+  const bottom = layout.lineTop + layout.lineGap * (layout.stringCount - 1);
+
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#1b1e26';
+  ctx.fillRect(0, 0, width, height);
+
+  const visible = layout.bars.filter((b) => b.x + b.width - scroll >= 0 && b.x - scroll <= width);
+
+  const loop = options.loop;
+  if (loop) {
+    const first = layout.bars.find((b) => b.scoreBar === loop.startBar);
+    const last = layout.bars.find((b) => b.scoreBar === loop.endBar);
+    if (first && last) {
+      ctx.fillStyle = 'rgba(77, 171, 247, 0.22)';
+      ctx.fillRect(first.x - scroll, 0, last.x + last.width - first.x, height);
+    }
+  }
+
+  ctx.strokeStyle = theme.laneLine;
+  ctx.lineWidth = 1;
+  for (let s = 0; s < layout.stringCount; s++) {
+    const y = layout.lineTop + s * layout.lineGap;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.font = '12px system-ui, sans-serif';
+  for (const bar of visible) {
+    const x = bar.x - scroll;
+    ctx.strokeStyle = bar.repeatStart ? theme.strikeline : theme.laneLine;
+    ctx.lineWidth = bar.repeatStart ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x, layout.lineTop);
+    ctx.lineTo(x, bottom);
+    ctx.stroke();
+    if (bar.repeatEnd) {
+      ctx.strokeStyle = theme.strikeline;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + bar.width, layout.lineTop);
+      ctx.lineTo(x + bar.width, bottom);
+      ctx.stroke();
+    }
+    ctx.fillStyle = theme.barLabel;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(String(bar.scoreBar + 1), x + 4, layout.lineTop - 6);
+    drawBarNotes(ctx, bar, layout, theme, scroll, bottom);
+  }
+
+  // cursor
+  ctx.strokeStyle = '#ffd43b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(layout.cursorX, layout.lineTop - 14);
+  ctx.lineTo(layout.cursorX, bottom + 30);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBarNotes(
+  ctx: DrawContext,
+  bar: StripBar,
+  layout: StripLayout,
+  theme: HighwayTheme,
+  scroll: number,
+  staffBottom: number,
+): void {
+  const seconds = bar.playback.endSeconds - bar.playback.startSeconds;
+  const noteX = (n: NoteEvent) => bar.x - scroll + ((n.startSeconds - bar.playback.startSeconds) / seconds) * bar.width + 8;
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const stemmed = new Map<number, NoteEvent>();
+  for (const n of bar.notes) {
+    const x = noteX(n);
+    const y = layout.lineTop + (n.string - 1) * layout.lineGap;
+    const label = String(n.fret);
+    // break the string behind the number so it stays readable
+    ctx.fillStyle = '#1b1e26';
+    ctx.fillRect(x - 7, y - 8, 14, 16);
+    ctx.fillStyle = theme.noteText === '#10131a' ? '#f1f3f5' : theme.noteText;
+    ctx.fillText(label, x, y);
+    if (!stemmed.has(n.tick)) stemmed.set(n.tick, n);
+  }
+  // rhythm stems under the staff: one flag per halving below a quarter note
+  ctx.strokeStyle = theme.barLabel;
+  ctx.lineWidth = 1;
+  for (const n of stemmed.values()) {
+    if (n.durationTicks >= 3840) continue;
+    const x = noteX(n);
+    ctx.beginPath();
+    ctx.moveTo(x, staffBottom + 8);
+    ctx.lineTo(x, staffBottom + 24);
+    ctx.stroke();
+    const flags = n.durationTicks >= 960 ? 0 : Math.round(Math.log2(960 / n.durationTicks));
+    for (let f = 0; f < Math.min(flags, 3); f++) {
+      ctx.beginPath();
+      ctx.moveTo(x, staffBottom + 24 - f * 4);
+      ctx.lineTo(x + 6, staffBottom + 20 - f * 4);
+      ctx.stroke();
+    }
+  }
+}
