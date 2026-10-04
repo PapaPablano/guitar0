@@ -9,9 +9,12 @@ import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording } from '../export/audio';
+import { renderStemMix } from '../export/stem-audio';
+import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
 import { OffsetSlider } from './OffsetSlider';
+import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
@@ -50,6 +53,8 @@ export function App() {
   const support = useMemo(() => assessSupport(readSupportEnvironment()), []);
   const [userClock, setUserClock] = useState<UserAudioClock | null>(null);
   const [offset, setOffset] = useState(0);
+  const [stems, setStems] = useState<ActiveStems | null>(null);
+  const [mix, setMix] = useState<MixState>(() => initialMix());
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
@@ -61,6 +66,7 @@ export function App() {
   /** Bumped whenever the session or its sound connection is replaced, so late results can be ignored. */
   const sessionToken = useRef(0);
   const userClockRef = useRef<UserAudioClock | null>(null);
+  const stemsRef = useRef<ActiveStems | null>(null);
 
   function connectAudio(score: AlphaModel.Score, timelineToPlay: Timeline) {
     sessionToken.current += 1;
@@ -84,6 +90,9 @@ export function App() {
 
   /** Replaces the recording clock, disposing the previous one. */
   function replaceUserClock(next: UserAudioClock | null) {
+    stemsRef.current?.clock.dispose();
+    stemsRef.current = null;
+    setStems(null);
     userClockRef.current?.dispose();
     userClockRef.current = next;
     setUserClock(next);
@@ -131,7 +140,25 @@ export function App() {
     }
   }
 
-  const clock: Clock | undefined = userClock ?? session?.clock;
+  /** Switches between playing the stem mix and the plain recording, keeping the position. */
+  function activateStems(next: ActiveStems | null) {
+    const current = stemsRef.current;
+    const position = current?.clock.time() ?? userClock?.time() ?? 0;
+    current?.clock.dispose();
+    stemsRef.current = next;
+    setStems(next);
+    if (next) {
+      userClock?.pause();
+      next.clock.setRate(tempoPercent / 100);
+      next.clock.setOffset(offset);
+      next.clock.setMix(mix);
+      next.clock.seek(position);
+    } else {
+      userClock?.seek(position);
+    }
+  }
+
+  const clock: Clock | undefined = stems?.clock ?? userClock ?? session?.clock;
   const sourceTimeline = session?.timeline;
   // The tab is shown in the chosen tuning; the sound always comes from the file.
   const timeline = useMemo(() => {
@@ -386,9 +413,18 @@ export function App() {
         onLoad={onLoadRecording}
         onOffsetChange={(seconds) => {
           userClock?.setOffset(seconds);
+          stems?.clock.setOffset(seconds);
           setOffset(seconds);
         }}
         onRemove={onRemoveRecording}
+      />
+      <StemPanel
+        recording={userClock?.file ?? null}
+        durationSeconds={timeline.durationSeconds}
+        active={stems}
+        mix={mix}
+        onMixChange={setMix}
+        onActivate={activateStems}
       />
       <LoopControls
         barCount={barCount}
@@ -409,7 +445,9 @@ export function App() {
           bottom={{ view: bottomView, lookahead, labelMode }}
           onClose={() => setExportOpen(false)}
           getAudio={(onProgress) =>
-            userClock?.file
+            stems
+              ? renderStemMix(stems.sources, mix, stems.clock.offset, timeline.durationSeconds)
+              : userClock?.file
               ? decodeUserRecording(userClock.file, userClock.offset, timeline.durationSeconds)
               : session.clock.exportAudio(onProgress)
           }

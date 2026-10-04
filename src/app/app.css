@@ -335,3 +335,31 @@ a.link-button:hover {
   border-radius: 0 6px 6px 0;
   border-left: none;
 }
+
+.stems {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stems:empty {
+  display: none;
+}
+
+.stems-row,
+.stem-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.stem-name {
+  width: 5.5rem;
+  text-transform: capitalize;
+}
+
+.stem-row button[aria-pressed='true'] {
+  background: var(--accent);
+  color: #0b1220;
+}
