@@ -26,7 +26,7 @@ impl Layout {
                 .to_path_buf(),
         };
         Ok(Layout {
-            data: root.join("data"),
+            data: env::var("TABHIGHWAY_DATA").map(PathBuf::from).unwrap_or_else(|_| root.join("data")),
             python: root.join("python").join("Scripts").join("python.exe"),
             backend: root.join("backend"),
             wrapper: root.join("engine"),

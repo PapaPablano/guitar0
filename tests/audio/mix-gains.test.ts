@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialMix, stemGains, type MixState } from '../../src/audio/mix-gains';
+import { initialMix, MAX_STEM_VOLUME, stemGains, type MixState } from '../../src/audio/mix-gains';
 
 function mix(patch: Partial<Record<keyof MixState, Partial<MixState['vocals']>>>): MixState {
   const base = initialMix();
@@ -41,9 +41,11 @@ describe('stemGains', () => {
     expect(g.bass).toBe(1);
   });
 
-  it('clamps volume into 0..1', () => {
-    const g = stemGains(mix({ drums: { volume: 3 }, bass: { volume: -1 } }));
-    expect(g.drums).toBe(1);
+  it('lets a stem be boosted to double its level, and no further', () => {
+    const g = stemGains(mix({ guitar: { volume: 1.5 }, drums: { volume: 3 }, bass: { volume: -1 } }));
+    expect(g.guitar).toBe(1.5);
+    expect(g.drums).toBe(MAX_STEM_VOLUME);
+    expect(MAX_STEM_VOLUME).toBe(2);
     expect(g.bass).toBe(0);
   });
 });

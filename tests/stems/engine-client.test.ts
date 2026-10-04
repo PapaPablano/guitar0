@@ -103,3 +103,55 @@ describe('EngineClient other calls', () => {
     await expect(client.jobExists('gone')).resolves.toBe(false);
   });
 });
+
+describe('EngineClient search and URL import', () => {
+  it('searches YouTube and returns the results', async () => {
+    const items = [{ url: 'https://www.youtube.com/watch?v=abc', title: 'Song', duration: 200, uploader: 'Band', thumbnail: null, too_long: false }];
+    const { client, calls } = setup(() => json({ items, max_duration_sec: 600 }));
+    await expect(client.search('some song')).resolves.toEqual(items);
+    expect(calls[0].url).toBe('http://127.0.0.1:5000/api/search');
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({ query: 'some song', source: 'youtube', kind: 'track' });
+    expect(new Headers(calls[0].init?.headers).get('X-TabHighway-Secret')).toBe('sekrit');
+  });
+
+  it('does not search for a query shorter than two characters', async () => {
+    const { client, calls } = setup(() => json({ items: [] }));
+    await expect(client.search(' a ')).resolves.toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('reports a search failure with the engine message', async () => {
+    const { client } = setup(() => json({ detail: 'Could not reach that service' }, 502));
+    await expect(client.search('some song')).rejects.toThrow('Could not reach that service');
+  });
+
+  it('imports a link: posts the URL, follows the job, and returns the id and title', async () => {
+    const states = [
+      { status: 'downloading', progress: 0.1, title: 'Song' },
+      { status: 'done', progress: 1, title: 'Song' },
+    ];
+    const { client, calls } = setup((_url, init) => (init?.method === 'POST' ? json({ job_id: 'yt1' }) : json({ job_id: 'yt1', ...states.shift() })));
+    const seen: number[] = [];
+    const result = await client.separateUrl('https://www.youtube.com/watch?v=abc', { onProgress: (p) => seen.push(p) });
+    expect(result).toEqual({ jobId: 'yt1', title: 'Song' });
+    expect(seen).toEqual([0.1, 1]);
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ url: 'https://www.youtube.com/watch?v=abc', stems: [...STEM_NAMES] });
+  });
+
+  it('surfaces why a link was refused', async () => {
+    const { client } = setup(() => json({ detail: 'unsupported host: example.com' }, 422));
+    await expect(client.separateUrl('https://example.com/x', {})).rejects.toThrow('unsupported host: example.com');
+  });
+
+  it('cancelling an import asks the engine to cancel', async () => {
+    const controller = new AbortController();
+    const { client, calls } = setup((url, init) => {
+      if (init?.method === 'POST' && url.endsWith('/api/jobs')) return json({ job_id: 'yt2' });
+      if (init?.method === 'POST') return json({ status: 'cancelled' });
+      controller.abort();
+      return json({ status: 'downloading', progress: 0.2 });
+    });
+    await expect(client.separateUrl('https://www.youtube.com/watch?v=abc', { signal: controller.signal })).rejects.toBeInstanceOf(SeparationCancelled);
+    expect(calls.some((c) => c.url.endsWith('/api/jobs/yt2/cancel'))).toBe(true);
+  });
+});

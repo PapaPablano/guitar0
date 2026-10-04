@@ -14,7 +14,10 @@ export function initialMix(): MixState {
   return mix;
 }
 
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+/** A stem can be turned up to double its original level (+6 dB). 1 is the original level. */
+export const MAX_STEM_VOLUME = 2;
+
+const clampVolume = (v: number) => Math.min(MAX_STEM_VOLUME, Math.max(0, v));
 
 /**
  * The gain each stem plays at. A stem is silent when muted, or when any stem is soloed and this one is
@@ -25,7 +28,7 @@ export function stemGains(mix: MixState): Record<StemName, number> {
   const gains = {} as Record<StemName, number>;
   for (const name of STEM_NAMES) {
     const s = mix[name];
-    gains[name] = s.muted || (anySolo && !s.solo) ? 0 : clamp01(s.volume);
+    gains[name] = s.muted || (anySolo && !s.solo) ? 0 : clampVolume(s.volume);
   }
   return gains;
 }

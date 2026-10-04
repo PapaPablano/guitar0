@@ -34,7 +34,21 @@ interface JobState {
   status: string;
   progress?: number;
   error?: string | null;
+  title?: string | null;
 }
+
+/** One YouTube search result, as the engine reports it. */
+export interface SearchItem {
+  readonly url: string;
+  readonly title: string;
+  readonly duration: number | null;
+  readonly uploader: string | null;
+  /** Over the engine's length limit, so it cannot be imported. */
+  readonly too_long: boolean;
+}
+
+const MIN_QUERY_LENGTH = 2;
+const SEARCH_LIMIT = 8;
 
 const SECRET_HEADER = 'X-TabHighway-Secret';
 
@@ -56,7 +70,37 @@ export class EngineClient {
     form.append('stems', JSON.stringify(STEM_NAMES));
     const created = await this.request('/api/jobs', { method: 'POST', body: form, signal });
     const { job_id: jobId } = (await created.json()) as { job_id: string };
+    await this.follow(jobId, onProgress, signal);
+    return jobId;
+  }
 
+  /** Searches YouTube through the engine. A query shorter than two characters finds nothing. */
+  async search(query: string): Promise<SearchItem[]> {
+    const text = query.trim();
+    if (text.length < MIN_QUERY_LENGTH) return [];
+    const response = await this.request('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: text, source: 'youtube', kind: 'track', limit: SEARCH_LIMIT }),
+    });
+    return ((await response.json()) as { items: SearchItem[] }).items;
+  }
+
+  /** Has the engine download a link's audio and separate it; resolves with the job id and the title. */
+  async separateUrl(url: string, { onProgress, signal }: SeparateOptions): Promise<{ jobId: string; title: string }> {
+    const created = await this.request('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, stems: STEM_NAMES }),
+      signal,
+    });
+    const { job_id: jobId } = (await created.json()) as { job_id: string };
+    const state = await this.follow(jobId, onProgress, signal);
+    return { jobId, title: state.title || 'Imported audio' };
+  }
+
+  /** Follows a job until it is done; cancels it if `signal` aborts. */
+  private async follow(jobId: string, onProgress: SeparateOptions['onProgress'], signal: AbortSignal | undefined): Promise<JobState> {
     for (;;) {
       if (signal?.aborted) {
         await this.cancel(jobId);
@@ -64,7 +108,7 @@ export class EngineClient {
       }
       const state = (await (await this.request(`/api/jobs/${jobId}`, {})).json()) as JobState;
       onProgress?.(state.progress ?? 0);
-      if (state.status === 'done') return jobId;
+      if (state.status === 'done') return state;
       if (state.status === 'cancelled') throw new SeparationCancelled();
       if (state.status === 'error') throw new SeparationFailed(state.error || 'Separation failed.');
       if (signal?.aborted) continue;

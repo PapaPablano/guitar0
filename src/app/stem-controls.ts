@@ -1,6 +1,6 @@
 import type { EngineView } from './engine-state';
-import type { MixState } from '../audio/mix-gains';
-import type { StemName } from '../stems/engine-client';
+import { MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
+import type { SearchItem, StemName } from '../stems/engine-client';
 
 export interface SeparateControl {
   readonly visible: boolean;
@@ -36,6 +36,40 @@ export function toggleStemSolo(mix: MixState, name: StemName): MixState {
 
 export function setStemVolume(mix: MixState, name: StemName, volume: number): MixState {
   const next = clone(mix);
-  next[name].volume = Math.min(1, Math.max(0, volume));
+  next[name].volume = Math.min(MAX_STEM_VOLUME, Math.max(0, volume));
   return next;
+}
+
+/** A stem's level as a percentage; 100% is the original level. */
+export function volumeLabel(volume: number): string {
+  return `${Math.round(volume * 100)}%`;
+}
+
+/** 3:05, or 1:02:05 for an hour or more; empty when the length is unknown. */
+export function formatDuration(seconds: number | null): string {
+  if (seconds === null) return '';
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const two = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
+}
+
+export interface SearchRow {
+  readonly title: string;
+  readonly detail: string;
+  readonly disabled: boolean;
+  readonly note: string;
+}
+
+/** What one search result shows. A result over the engine's length limit cannot be imported. */
+export function searchRow(item: SearchItem): SearchRow {
+  const detail = [item.uploader, formatDuration(item.duration)].filter(Boolean).join(' · ');
+  return {
+    title: item.title,
+    detail,
+    disabled: item.too_long,
+    note: item.too_long ? 'Too long to import' : '',
+  };
 }

@@ -148,18 +148,19 @@ export function App() {
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
   function activateStems(next: ActiveStems | null) {
     const current = stemsRef.current;
-    const position = current?.clock.time() ?? userClock?.time() ?? 0;
+    const position = current?.clock.time() ?? userClock?.time() ?? session?.clock.time() ?? 0;
     current?.clock.dispose();
     stemsRef.current = next;
     setStems(next);
     if (next) {
       userClock?.pause();
+      session?.clock.pause();
       next.clock.setRate(tempoPercent / 100);
       next.clock.setOffset(offset);
       next.clock.setMix(mix);
       next.clock.seek(position);
     } else {
-      userClock?.seek(position);
+      (userClock ?? session?.clock)?.seek(position);
     }
   }
 
@@ -191,7 +192,7 @@ export function App() {
     }
   }, [clock, timeline, trackIndex, loop, loopOn]);
 
-  const audioReady = audio.status === 'ready' || userClock !== null;
+  const audioReady = audio.status === 'ready' || userClock !== null || stems !== null;
   useEffect(() => {
     if (audioReady) clock?.setRate(tempoPercent / 100);
   }, [clock, tempoPercent, audioReady]);
@@ -219,7 +220,7 @@ export function App() {
   }
 
   function onRemoveRecording() {
-    const position = userClock?.time() ?? 0;
+    const position = (stems?.clock ?? userClock)?.time() ?? 0;
     replaceUserClock(null);
     setOffset(0);
     session?.clock.seek(position);
@@ -430,8 +431,8 @@ export function App() {
         onSeek={(s) => clock.seek(s)}
       />
       <OffsetSlider
-        offsetSeconds={userClock ? offset : null}
-        fileName={userClock?.file?.name ?? null}
+        offsetSeconds={userClock || stems ? offset : null}
+        fileName={userClock?.file?.name ?? stems?.title ?? null}
         error={userAudioError}
         onLoad={onLoadRecording}
         onOffsetChange={(seconds) => {

@@ -1,18 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MixState } from '../audio/mix-gains';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { initialMix, MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
 import type { StemMixClock } from '../audio/stem-mix';
 import type { StemSources } from '../export/stem-audio';
-import { EngineClient, SeparationCancelled, STEM_NAMES, type StemName } from '../stems/engine-client';
+import { EngineClient, SeparationCancelled, STEM_NAMES, type SearchItem, type StemName } from '../stems/engine-client';
 import { hashFile } from '../stems/file-hash';
 import { audioContext, loadStems } from '../stems/load-stems';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { describeEngine, readEngineStatus, startEngineSetup, type ShellEngineStatus } from './engine-state';
-import { separateControl, setStemVolume, toggleStemMute, toggleStemSolo } from './stem-controls';
+import { searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
   readonly clock: StemMixClock;
   readonly sources: StemSources;
+  /** What the stems came from: the recording's file name or the video's title. */
+  readonly title: string;
 }
 
 interface StemPanelProps {
@@ -27,14 +29,26 @@ interface StemPanelProps {
 const STATUS_POLL_MS = 1000;
 const savedStems = new SavedStems(shellStemIndex);
 
-/** Separate-and-mix controls. Renders nothing outside the desktop app. */
+/** Where a separation's stems come from, and how to produce them when they are not saved yet. */
+interface Source {
+  /** Key in the saved-stems index. */
+  key: () => Promise<string>;
+  title: string;
+  separate: (client: EngineClient, onProgress: (p: number) => void, signal: AbortSignal) => Promise<{ jobId: string; title?: string }>;
+}
+
+/** Search, separate and mix controls. Renders nothing outside the desktop app. */
 export function StemPanel({ recording, durationSeconds, active, mix, onMixChange, onActivate }: StemPanelProps) {
   const desktop = isDesktop();
   const [status, setStatus] = useState<ShellEngineStatus | null>(null);
   const [savedJob, setSavedJob] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState('');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchItem[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const abort = useRef<AbortController | null>(null);
   const hashRef = useRef<string | null>(null);
   /** The newest mix, so two quick changes in a row build on each other instead of on a stale render. */
@@ -86,30 +100,67 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
   const engine = describeEngine(status);
   const control = separateControl({ engine, hasRecording: recording !== null, hasSaved: savedJob !== null, busy });
 
-  async function run() {
-    if (!recording || !client) return;
+  /** Separates (or reuses saved stems for) a source, then plays them. */
+  async function start(source: Source) {
+    if (!client) return;
     setError(null);
     setBusy(true);
+    setBusyLabel(source.title);
     setProgress(0);
     const controller = new AbortController();
     abort.current = controller;
     try {
-      let jobId = savedJob;
+      const key = await source.key();
+      let jobId = await savedStems.find(key, (id) => client.jobExists(id));
+      let title = source.title;
       if (!jobId) {
-        jobId = await client.separate(recording, { onProgress: setProgress, signal: controller.signal });
-        const hash = hashRef.current ?? (await hashFile(recording));
-        await savedStems.record(hash, jobId);
+        const made = await source.separate(client, setProgress, controller.signal);
+        jobId = made.jobId;
+        title = made.title ?? title;
+        await savedStems.record(key, jobId);
         setSavedJob(jobId);
       }
       const context = audioContext();
       await context.resume();
       const loaded = await loadStems(client, jobId, durationSeconds, context);
-      onActivate(loaded);
+      onActivate({ ...loaded, title });
     } catch (e) {
       if (!(e instanceof SeparationCancelled)) setError(e instanceof Error ? e.message : 'Separation failed.');
     } finally {
       abort.current = null;
       setBusy(false);
+    }
+  }
+
+  function separateRecording() {
+    if (!recording) return;
+    void start({
+      key: async () => hashRef.current ?? (hashRef.current = await hashFile(recording)),
+      title: recording.name,
+      separate: async (c, onProgress, signal) => ({ jobId: await c.separate(recording, { onProgress, signal }) }),
+    });
+  }
+
+  function importResult(item: SearchItem) {
+    void start({
+      key: async () => `url:${item.url}`,
+      title: item.title,
+      separate: (c, onProgress, signal) => c.separateUrl(item.url, { onProgress, signal }),
+    });
+  }
+
+  async function search(e: FormEvent) {
+    e.preventDefault();
+    if (!client) return;
+    setError(null);
+    setSearching(true);
+    try {
+      setResults(await client.search(query));
+    } catch (err) {
+      setResults(null);
+      setError(err instanceof Error ? err.message : 'The search failed.');
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -124,12 +175,13 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
     <div className="stems" role="group" aria-label="Stems">
       {!active && control.visible && (
         <div className="stems-row">
-          <button type="button" disabled={control.disabled} onClick={() => void run()}>
+          <button type="button" disabled={control.disabled} onClick={separateRecording}>
             {control.label}
           </button>
           {busy && (
             <>
               <progress value={progress} max={1} aria-label="Separation progress" />
+              <span className="muted">{busyLabel}</span>
               <button type="button" onClick={() => abort.current?.abort()}>
                 Cancel
               </button>
@@ -144,6 +196,38 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
           )}
         </div>
       )}
+      {!active && engine.stemsEnabled && (
+        <form className="stems-row" onSubmit={(e) => void search(e)} role="search">
+          <input
+            type="search"
+            value={query}
+            placeholder="Search YouTube for a song"
+            aria-label="Search YouTube for a song"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button type="submit" disabled={busy || searching || query.trim().length < 2}>
+            {searching ? 'Searching…' : 'Search'}
+          </button>
+          <span className="muted">Imports the audio and splits it into stems. Use only audio you have the right to use.</span>
+        </form>
+      )}
+      {!active && results !== null && (
+        <ul className="search-results" aria-label="Search results">
+          {results.length === 0 && <li className="muted">No results.</li>}
+          {results.map((item) => {
+            const row = searchRow(item);
+            return (
+              <li key={item.url}>
+                <button type="button" disabled={busy || row.disabled} onClick={() => importResult(item)}>
+                  Use
+                </button>
+                <span className="result-title">{row.title}</span>
+                <span className="muted">{[row.detail, row.note].filter(Boolean).join(' · ')}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
@@ -152,11 +236,15 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
       {active && (
         <div className="stem-mixer">
           <div className="stems-row">
+            <span className="muted">{active.title}</span>
             <button type="button" onClick={() => change((m) => toggleStemMute(m, 'guitar'))} aria-pressed={mix.guitar.muted}>
               {mix.guitar.muted ? 'Unmute guitar' : 'Mute guitar'}
             </button>
+            <button type="button" onClick={() => change(() => initialMix())}>
+              Reset mix
+            </button>
             <button type="button" onClick={() => onActivate(null)}>
-              Back to the plain recording
+              {recording ? 'Back to the plain recording' : 'Close stems'}
             </button>
           </div>
           {STEM_NAMES.map((name: StemName) => (
@@ -165,12 +253,15 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
               <input
                 type="range"
                 min={0}
-                max={1}
+                max={MAX_STEM_VOLUME}
                 step={0.01}
                 value={mix[name].volume}
                 aria-label={`${name} volume`}
+                title="Double-click to reset to 100%"
                 onChange={(e) => change((m) => setStemVolume(m, name, Number(e.target.value)))}
+                onDoubleClick={() => change((m) => setStemVolume(m, name, 1))}
               />
+              <span className="stem-level">{volumeLabel(mix[name].volume)}</span>
               <button type="button" aria-pressed={mix[name].muted} onClick={() => change((m) => toggleStemMute(m, name))}>
                 M
               </button>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { describeEngine } from '../../src/app/engine-state';
-import { separateControl, setStemVolume, toggleStemMute, toggleStemSolo } from '../../src/app/stem-controls';
+import { formatDuration, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
 import { initialMix } from '../../src/audio/mix-gains';
 
 const ready = describeEngine({ phase: 'ready', url: 'http://127.0.0.1:1', secret: 's' });
@@ -53,6 +53,40 @@ describe('mix changes', () => {
     const v = setStemVolume(initialMix(), 'piano', 0.3);
     expect(v.piano.volume).toBe(0.3);
     expect(v.other.volume).toBe(1);
-    expect(setStemVolume(initialMix(), 'piano', 5).piano.volume).toBe(1);
+    expect(setStemVolume(initialMix(), 'piano', 1.4).piano.volume).toBe(1.4);
+    expect(setStemVolume(initialMix(), 'piano', 5).piano.volume).toBe(2);
+    expect(setStemVolume(initialMix(), 'piano', -3).piano.volume).toBe(0);
+  });
+});
+
+describe('volumeLabel', () => {
+  it('shows a percentage, with 100% as the original level', () => {
+    expect(volumeLabel(1)).toBe('100%');
+    expect(volumeLabel(0)).toBe('0%');
+    expect(volumeLabel(1.5)).toBe('150%');
+    expect(volumeLabel(0.333)).toBe('33%');
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats minutes, hours and unknown lengths', () => {
+    expect(formatDuration(185)).toBe('3:05');
+    expect(formatDuration(3725)).toBe('1:02:05');
+    expect(formatDuration(59.6)).toBe('1:00');
+    expect(formatDuration(null)).toBe('');
+  });
+});
+
+describe('searchRow', () => {
+  it('shows title, uploader and length', () => {
+    const r = searchRow({ url: 'u', title: 'Song', duration: 200, uploader: 'Band', too_long: false });
+    expect(r).toEqual({ title: 'Song', detail: 'Band · 3:20', disabled: false, note: '' });
+  });
+
+  it('disables a result over the engine length limit and says why', () => {
+    const r = searchRow({ url: 'u', title: 'Mix', duration: 9000, uploader: null, too_long: true });
+    expect(r.disabled).toBe(true);
+    expect(r.note).toMatch(/too long/i);
+    expect(r.detail).toBe('2:30:00');
   });
 });

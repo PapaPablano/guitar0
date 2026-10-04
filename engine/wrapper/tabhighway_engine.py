@@ -14,6 +14,9 @@ import os
 from app.main import app as stemdeck_app  # the pinned StemDeck release, unmodified
 
 from guard import guard
+from ytdlp_fix import restore_youtube_search
+
+restore_youtube_search()
 
 _origins = [o.strip() for o in os.environ.get("TABHIGHWAY_ORIGINS", "http://tauri.localhost").split(",") if o.strip()]
 

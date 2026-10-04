@@ -15,14 +15,14 @@ execution: code
 
 - **Objective:** Someone practicing a tab on Windows can split their own recording of the song into stems on their own machine, then play along with the tab over a custom mix of those stems, including in exported video.
 - **Means:** Tab Highway also ships as a desktop app that carries a pinned StemDeck engine (`C:\Users\ericm\stemdeck`, Apache-2.0) inside its package (KTD1).
-- **Product authority:** This plan owns the desktop shell, separation of a local file, saved stems, the stem mixer, and stems in video export. YouTube import, a song library, and BPM auto-alignment are not active scope. The Product Contract wins on product behavior; Key Technical Decisions win on mechanism.
+- **Product authority:** This plan owns the desktop shell, separation of a local file or a YouTube search result, saved stems, the stem mixer, and stems in video export. A song library and BPM auto-alignment are not active scope. The Product Contract wins on product behavior; Key Technical Decisions win on mechanism.
 - **Execution profile:** Code. Windows only. Tail: `ce-work` implements, `ce-code-review` reviews, the user runs the manual Windows pass in the Verification Contract.
 - **Stop conditions:** Stop and ask if the pinned StemDeck engine cannot be started without modifying its code, or if stems cannot be kept in sync under tempo change (see Risks).
 - **Open blockers:** None.
 
 ## Product Contract
 
-**Product Contract preservation:** changed: R3, AE1, the engine-delivery Key Decision, and the Goal Capsule Means. The user chose to ship the engine inside the package after research showed StemDeck's Windows build bundles its Python runtime and downloads only FFmpeg and the model on first launch. No other requirement changed. A Windows-only first-run engine download would have required building a runtime-pack pipeline StemDeck has only for macOS.
+**Product Contract preservation:** changed: R3, AE1, the engine-delivery Key Decision, and the Goal Capsule Means; later added R11 and AE6, widened R7's volume range, and moved YouTube from deferred to in scope (the audio-source Key Decision). The user chose to ship the engine inside the package after research showed StemDeck's Windows build bundles its Python runtime and downloads only FFmpeg and the model on first launch. No other requirement changed. A Windows-only first-run engine download would have required building a runtime-pack pipeline StemDeck has only for macOS.
 
 ### Summary
 
@@ -42,9 +42,6 @@ This plan covers the desktop app with separation, saved stems, the stem mixer, a
   - Depends on: saved stems from this plan.
 - BPM and beat analysis for automatic alignment of the recording to the tab
   - Can proceed independently of: this plan, which keeps the manual offset slider.
-- YouTube import as a source for separation
-  - Depends on: separation of a local file from this plan.
-  - Still to decide: whether the app should include a downloader at all.
 - macOS and Linux desktop builds
   - Depends on: this plan's engine packaging and shell.
 - NVIDIA (GPU) Windows build
@@ -55,7 +52,7 @@ This plan covers the desktop app with separation, saved stems, the stem mixer, a
 - **Desktop app, web site kept, one codebase.** Stem features appear only in the desktop build; the web site is unchanged. (session-settled: user-directed — chosen over replacing the web site: keeps the zero-install practice and export path.) Governs R1, R2.
 - **Engine ships inside the package, CPU build first.** The package carries StemDeck's Python runtime; first launch fetches only FFmpeg and the Demucs model. (session-settled: user-directed — chosen over a Windows first-launch runtime download: StemDeck's Windows build already works this way, and the download path exists only on macOS.) Governs R3.
 - **Windows only for v1.** (session-settled: user-approved — macOS and Linux deferred: Windows is the platform that can be tested now.) Governs R1.
-- **Local files only as the audio source.** Separation starts from the file the user loads as their recording. (session-settled: user-directed — YouTube moved to a later plan when the scope was set to one area.) Governs R4.
+- **Two audio sources: a local file, or a YouTube search result.** (session-settled: user-directed — YouTube moved into scope after first being deferred: finding a song without leaving the app is wanted.) Governs R4, R11.
 - **Alignment stays on the manual offset.** One offset applies to the whole stem set, as it does to a recording today. Governs R8.
 
 ### Requirements
@@ -70,11 +67,12 @@ This plan covers the desktop app with separation, saved stems, the stem mixer, a
 
 - R4. The user can separate their loaded local recording into vocals, drums, bass, guitar, piano and other stems.
 - R5. Separation shows progress and can be cancelled, leaving no partial result.
+- R11. The user can search YouTube from the app and import a result's audio, which is separated into stems. Over-length results are shown but cannot be imported. Stems from an import play with the tab, use the same offset control, appear in the export, and are saved by link like a file's are by content.
 - R6. A separated song is saved on disk and reopens with its stems without re-separating. Saved stems are matched by the audio file, so the same song loaded from a different file separates again.
 
 **Stem mixer**
 
-- R7. The user can set volume, mute and solo for each stem during playback, and the mix responds immediately.
+- R7. The user can set volume (0 to 200%, with 100% the original level), mute and solo for each stem during playback, and the mix responds immediately.
 - R8. The stems play together in sync with the tab, follow tempo changes and bar loops, and share one alignment offset with the same slider the recording uses today.
 - R9. With the guitar stem muted or lowered, the user hears the rest of the band as a backing track; with only the guitar soloed, they hear the original guitar against the tab.
 
@@ -106,13 +104,14 @@ This plan covers the desktop app with separation, saved stems, the stem mixer, a
 - AE2. **Covers R5.** Given separation in progress, when the user cancels, no stems for that file are saved and the recording plays as before.
 - AE3. **Covers R6.** Given a song separated earlier, when the user loads the identical file again, saved stems are offered. When they load a different file of the same song, it separates again.
 - AE4. **Covers R8.** Given a stem mix playing, when the user slows the tempo or loops a bar range, all stems follow together and the pitch is preserved.
+- AE6. **Covers R11.** Given a search result longer than the engine's limit, when results appear, it is listed as too long to import and cannot be used; a shorter result imports and opens in the mixer.
 - AE5. **Covers R10.** Given a stem mix with the guitar muted, when the user exports a video, the video's audio has no guitar.
 
 ### Scope Boundaries
 
 **Deferred for later**
 
-- YouTube import, a song library, and BPM or beat analysis for automatic alignment.
+- A song library, and BPM or beat analysis for automatic alignment.
 - macOS and Linux builds, and an NVIDIA (GPU) Windows build.
 - A Python-free native separation engine and a first-launch runtime download.
 
@@ -132,6 +131,7 @@ This plan covers the desktop app with separation, saved stems, the stem mixer, a
 - Verified: the app plays one recording through one audio element with one offset (`src/audio/user-audio.ts`), and export decodes one recording (`src/export/audio.ts`, `src/app/App.tsx`). No desktop shell exists in the repo today.
 - Verified: StemDeck's Windows build is a portable folder with the Python runtime inside; only FFmpeg and the model are fetched on first launch (`desktop/src-tauri/src/main.rs`, `packaging/windows/README-WINDOWS.txt` in the StemDeck repo).
 - Verified: the StemDeck backend serves no cross-origin headers, so a page served from another origin cannot call it directly (KTD3).
+- Verified: the pinned release's pruned yt-dlp leaves out the YouTube search extractor, so its search fails; the wrapper restores it (`engine/wrapper/ytdlp_fix.py`). A later release may fix this, and the restore then does nothing.
 - Assumption: the desktop webview supports the WebCodecs video export the web build uses. Unverified; U1 checks it first.
 - Assumption: a CPU-only machine separates a song in a tolerable time. StemDeck documents speed as hardware-dependent.
 
