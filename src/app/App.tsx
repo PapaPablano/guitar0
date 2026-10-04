@@ -10,7 +10,8 @@ import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording } from '../export/audio';
-import { renderStemMix } from '../export/stem-audio';
+import { slicePcm } from '../export/audio-file';
+import { decodeRecordingWindow, renderStemMix, renderStemMixRange } from '../export/stem-audio';
 import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
@@ -284,6 +285,14 @@ export function App() {
       });
     }
   }, [clock, timeline, trackIndex, loop, loopOn]);
+
+  const exportLoopRange = useMemo(() => {
+    if (!timeline || !loop) return null;
+    const layout = getStripLayout(timeline, trackIndex, 1, 1);
+    const first = stripBarFor(layout, loop.startBar);
+    const last = stripBarFor(layout, loop.endBar);
+    return first && last ? { startSeconds: first.playback.startSeconds, endSeconds: last.playback.endSeconds } : null;
+  }, [timeline, trackIndex, loop]);
 
   const audioReady = audio.status === 'ready' || userClock !== null || stems !== null;
   useEffect(() => {
@@ -573,8 +582,15 @@ export function App() {
           trackIndex={trackIndex}
           bottom={{ view: bottomView, lookahead, labelMode }}
           onClose={() => setExportOpen(false)}
-          getAudio={(onProgress) =>
-            stems
+          loopRange={exportLoopRange}
+          getAudio={(onProgress, range) =>
+            range
+              ? stems
+                ? renderStemMixRange(stems.sources, mix, stems.clock.offset, range)
+                : userClock?.file
+                ? decodeRecordingWindow(userClock.file, userClock.offset, range.startSeconds, range.durationSeconds)
+                : session.clock.exportAudio(onProgress).then((pcm) => slicePcm(pcm, range.startSeconds, range.durationSeconds))
+              : stems
               ? renderStemMix(stems.sources, mix, stems.clock.offset, timeline.durationSeconds)
               : userClock?.file
               ? decodeUserRecording(userClock.file, userClock.offset, timeline.durationSeconds)

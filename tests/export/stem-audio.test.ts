@@ -111,3 +111,48 @@ describe('renderStemMix', () => {
     expect(pcm.left[0]).toBe(1);
   });
 });
+
+import { renderStemMixRange, windowPlacement } from '../../src/export/stem-audio';
+
+describe('windowPlacement', () => {
+  it('applies the offset as playback does: recording position = tab time + offset', () => {
+    expect(windowPlacement(2, 10, 5)).toEqual({ delaySeconds: 0, startSeconds: 12, audible: true });
+    expect(windowPlacement(-3, 10, 5)).toEqual({ delaySeconds: 0, startSeconds: 7, audible: true });
+  });
+
+  it('puts silence first when a negative offset reaches past the window start', () => {
+    expect(windowPlacement(-1.5, 0, 5)).toEqual({ delaySeconds: 1.5, startSeconds: 0, audible: true });
+    expect(windowPlacement(-30, 0, 5)).toEqual({ delaySeconds: 30, startSeconds: 0, audible: false });
+  });
+
+  it('clamps the offset to the shared range', () => {
+    expect(windowPlacement(-100, 40, 5).startSeconds).toBe(10);
+  });
+});
+
+describe('renderStemMixRange', () => {
+  it('renders only the window and passes start and offset to the decoder', async () => {
+    const calls: [number, number, number][] = [];
+    const decode = async (blob: Blob, offset: number, start: number, duration: number): Promise<PcmAudio> => {
+      calls.push([offset, start, duration]);
+      const name = (await blob.text()) as StemName;
+      const n = Math.ceil(duration * 48000);
+      const d = new Float32Array(n).fill(LEVEL[name]);
+      return { left: d, right: d.slice(), sampleRate: 48000 };
+    };
+    const mix = initialMix();
+    mix.guitar.muted = true;
+    const pcm = await renderStemMixRange(sources(), mix, 1.5, { startSeconds: 10, durationSeconds: 4 / 48000 }, decode);
+    expect(pcm.left.length).toBe(4);
+    expect(pcm.left[0]).toBeCloseTo(0.01 + 0.02 + 0.04 + 0.08 + 0.16, 6);
+    expect(calls).toHaveLength(5);
+    expect(calls.every(([o, s, d]) => o === 1.5 && s === 10 && d === 4 / 48000)).toBe(true);
+  });
+
+  it('fails the whole export when a stem cannot be decoded', async () => {
+    const decode = async (): Promise<PcmAudio> => {
+      throw new Error('bad');
+    };
+    await expect(renderStemMixRange(sources(), initialMix(), 0, { startSeconds: 0, durationSeconds: D }, decode)).rejects.toThrow(/stem could not be read/);
+  });
+});

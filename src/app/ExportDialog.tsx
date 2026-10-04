@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PcmAudio } from '../export/audio';
+import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../export/audio-file';
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { estimateMegabytes, MAX_EXPORT_SECONDS, PRESETS, presetById, type ExportPreset } from '../export/presets';
@@ -19,7 +20,9 @@ interface ExportDialogProps {
   /** The bottom view and look-ahead in use when the dialog opened; the video shows the same. */
   bottom: BottomOptions;
   /** Produces the whole song's audio at original tempo: the synth mix or the user's recording. */
-  getAudio: (onProgress: (fraction: number) => void) => Promise<PcmAudio>;
+  getAudio: (onProgress: (fraction: number) => void, range?: { startSeconds: number; durationSeconds: number }) => Promise<PcmAudio>;
+  /** The loop's span in tab seconds, when a loop is set; offered for the audio export. */
+  loopRange?: TimeRange | null;
   onClose: () => void;
 }
 
@@ -33,9 +36,10 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, bottom, getAudio, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange = null, onClose }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
+  const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
   const job = useRef<ExportJob | null>(null);
   /** Bumped by every start and cancel; a run that is no longer current must not touch state. */
@@ -74,6 +78,33 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, onClose }
     a.href = url;
     a.download = filename;
     a.click();
+  }
+
+  async function saveAudio() {
+    runId.current += 1;
+    const run = runId.current;
+    const current = () => run === runId.current;
+    const useLoop = loopOnly && loopRange !== null;
+    const plan = planAudioExport(timeline.durationSeconds, useLoop ? loopRange : null);
+    if (!plan.ok) {
+      setPhase({ name: 'failed', reason: plan.reason });
+      return;
+    }
+    setPhase({ name: 'preparing', fraction: 0 });
+    try {
+      const audio = await getAudio(
+        (fraction) => current() && setPhase({ name: 'preparing', fraction }),
+        useLoop ? { startSeconds: plan.startSeconds, durationSeconds: plan.durationSeconds } : undefined,
+      );
+      if (!current()) return;
+      const url = URL.createObjectURL(new Blob([encodeWav(audio)], { type: 'audio/wav' }));
+      const filename = audioFilename(timeline.title, useLoop);
+      setPhase({ name: 'done', url, filename });
+      download(url, filename);
+    } catch (e) {
+      if (!current()) return;
+      setPhase({ name: 'failed', reason: e instanceof Error && e.message ? e.message : 'The export failed.' });
+    }
   }
 
   async function start() {
@@ -149,6 +180,12 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, onClose }
                   {Math.max(1, Math.round(estimateMegabytes(preset, timeline.durationSeconds)))} MB. Loops and tempo changes
                   are not applied.
                 </p>
+                {loopRange && (
+                  <label className="field">
+                    <input type="checkbox" checked={loopOnly} onChange={(e) => setLoopOnly(e.target.checked)} /> Only the
+                    looped section (audio file)
+                  </label>
+                )}
                 {tooLong && (
                   <p role="alert" className="error">
                     This song is {formatDuration(timeline.durationSeconds)} long. Export is limited to{' '}
@@ -191,6 +228,11 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, onClose }
               disabled={!support || !support.supported || tooLong}
             >
               Start export
+            </button>
+          )}
+          {phase.name === 'idle' && (
+            <button type="button" onClick={() => void saveAudio()}>
+              Save audio (WAV)
             </button>
           )}
           {phase.name === 'failed' && (
