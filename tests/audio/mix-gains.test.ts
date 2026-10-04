@@ -48,4 +48,10 @@ describe('stemGains', () => {
     expect(MAX_STEM_VOLUME).toBe(2);
     expect(g.bass).toBe(0);
   });
+
+  it('covers R26: a ghost-level guitar volume is the guitar gain, others unchanged', () => {
+    const g = stemGains(mix({ guitar: { volume: 0.2 } }));
+    expect(g.guitar).toBe(0.2);
+    expect([g.vocals, g.drums, g.bass, g.piano, g.other]).toEqual([1, 1, 1, 1, 1]);
+  });
 });

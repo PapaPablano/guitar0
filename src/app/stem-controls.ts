@@ -40,6 +40,30 @@ export function setStemVolume(mix: MixState, name: StemName, volume: number): Mi
   return next;
 }
 
+/**
+ * The guitar amount is the guitar stem's own volume, shown as the headline control from none (0) to full (1).
+ * Playback and the export both read it through stemGains, so they always blend the same.
+ */
+export function guitarAmount(mix: MixState): number {
+  return mix.guitar.muted ? 0 : Math.min(1, mix.guitar.volume);
+}
+
+/**
+ * Sets the guitar amount (clamped to 0..1) as the guitar's volume. Raising it above 0 unmutes the guitar so the
+ * control is never stuck silent; solo and the other stems are untouched.
+ */
+export function setGuitarAmount(mix: MixState, amount: number): MixState {
+  const next = setStemVolume(mix, 'guitar', Math.min(1, Math.max(0, amount)));
+  if (next.guitar.volume > 0) next.guitar.muted = false;
+  return next;
+}
+
+export function guitarAmountLabel(amount: number): string {
+  if (amount <= 0) return 'None';
+  if (amount >= 1) return 'Full';
+  return volumeLabel(amount);
+}
+
 /** A stem's level as a percentage; 100% is the original level. */
 export function volumeLabel(volume: number): string {
   return `${Math.round(volume * 100)}%`;

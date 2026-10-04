@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeEngine } from '../../src/app/engine-state';
-import { formatDuration, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
-import { initialMix } from '../../src/audio/mix-gains';
+import { formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
+import { initialMix, stemGains } from '../../src/audio/mix-gains';
 
 const ready = describeEngine({ phase: 'ready', url: 'http://127.0.0.1:1', secret: 's' });
 
@@ -97,5 +97,43 @@ describe('R25: stem controls during setup', () => {
     const c = separateControl({ engine, hasRecording: true, hasSaved: true, busy: false });
     expect(c).toMatchObject({ visible: true, disabled: true });
     expect(c.note).toContain('Downloading the separation models');
+  });
+});
+
+describe('R26: guitar amount', () => {
+  it('20% gives the guitar gain 0.2 and leaves the other stems unchanged', () => {
+    const before = initialMix();
+    const after = setGuitarAmount(before, 0.2);
+    const g = stemGains(after);
+    expect(g.guitar).toBe(0.2);
+    expect({ ...g, guitar: 0 }).toEqual({ ...stemGains(before), guitar: 0 });
+    expect(after.drums).toEqual(before.drums);
+    expect(before.guitar.volume).toBe(1);
+    expect(guitarAmount(after)).toBe(0.2);
+  });
+
+  it('amount 0 equals the muted-guitar mix (AE5)', () => {
+    const zero = stemGains(setGuitarAmount(initialMix(), 0));
+    expect(zero).toEqual(stemGains(toggleStemMute(initialMix(), 'guitar')));
+  });
+
+  it('clamps to 0..1 and moving off zero unmutes the guitar', () => {
+    expect(setGuitarAmount(initialMix(), 3).guitar.volume).toBe(1);
+    expect(setGuitarAmount(initialMix(), -1).guitar.volume).toBe(0);
+    const muted = toggleStemMute(initialMix(), 'guitar');
+    expect(setGuitarAmount(muted, 0.2).guitar.muted).toBe(false);
+    expect(setGuitarAmount(muted, 0).guitar.muted).toBe(true);
+  });
+
+  it('leaves solo untouched and reads a muted or boosted guitar as its audible amount', () => {
+    expect(setGuitarAmount(toggleStemSolo(initialMix(), 'guitar'), 0.2).guitar.solo).toBe(true);
+    expect(guitarAmount(toggleStemMute(initialMix(), 'guitar'))).toBe(0);
+    expect(guitarAmount(setStemVolume(initialMix(), 'guitar', 1.5))).toBe(1);
+  });
+
+  it('labels the amount', () => {
+    expect(guitarAmountLabel(0)).toBe('None');
+    expect(guitarAmountLabel(0.2)).toBe('20%');
+    expect(guitarAmountLabel(1)).toBe('Full');
   });
 });

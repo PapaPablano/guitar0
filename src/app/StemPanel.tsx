@@ -10,7 +10,7 @@ import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
 import { describeEngine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
-import { searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
+import { guitarAmount, guitarAmountLabel, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
   readonly clock: StemMixClock;
@@ -263,6 +263,19 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
         <div className="stem-mixer">
           <div className="stems-row">
             <span className="muted">{active.title}</span>
+            <label className="guitar-amount">
+              Guitar amount
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={guitarAmount(mix)}
+                aria-label="Guitar amount"
+                onChange={(e) => change((m) => setGuitarAmount(m, Number(e.target.value)))}
+              />
+              <span className="stem-level">{guitarAmountLabel(guitarAmount(mix))}</span>
+            </label>
             <button type="button" onClick={() => change((m) => toggleStemMute(m, 'guitar'))} aria-pressed={mix.guitar.muted}>
               {mix.guitar.muted ? 'Unmute guitar' : 'Mute guitar'}
             </button>
