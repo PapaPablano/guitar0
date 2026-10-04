@@ -21,6 +21,17 @@ describe('passMix', () => {
     expect(mix.drums.volume).toBe(0.5);
   });
 
+  it('a listen pass is audible even when the base guitar amount is none', () => {
+    const base = initialMix();
+    base.guitar.volume = 0;
+    const listen = passMix(base, alternate, 1);
+    expect(stemGains(listen).guitar).toBe(1);
+    expect(stemGains(listen).drums).toBe(0);
+    // The play pass is unaffected, and the base is not changed.
+    expect(stemGains(passMix(base, alternate, 2)).guitar).toBe(0);
+    expect(base.guitar.volume).toBe(0);
+  });
+
   it('keeps a muted base guitar muted', () => {
     const base = initialMix();
     base.guitar.muted = true;

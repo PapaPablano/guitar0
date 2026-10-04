@@ -411,11 +411,23 @@ describe('UserAudioClock loop-wrap notification', () => {
     expect(clock.inLeadIn).toBe(true);
   });
 
-  it('does not fire without a loop or when paused', () => {
+  it('does not fire without a loop', () => {
     const el = fakeAudio();
     const clock = new UserAudioClock(el, 60);
     let wraps = 0;
     clock.setLoopWrapListener(() => wraps++);
+    clock.play();
+    el.currentTime = 9;
+    clock.time();
+    expect(wraps).toBe(0);
+  });
+
+  it('does not fire while paused, even past the loop end', () => {
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, 60);
+    let wraps = 0;
+    clock.setLoopWrapListener(() => wraps++);
+    clock.setLoop({ start: 4, end: 8 });
     el.currentTime = 9;
     clock.time();
     expect(wraps).toBe(0);

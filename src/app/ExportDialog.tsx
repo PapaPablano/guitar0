@@ -44,6 +44,8 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
   const job = useRef<ExportJob | null>(null);
   /** Bumped by every start and cancel; a run that is no longer current must not touch state. */
   const runId = useRef(0);
+  /** Which export ran last, so Retry repeats that one and not the other. */
+  const lastKind = useRef<'audio' | 'video'>('video');
   const preset = presetById(presetId);
   const tooLong = timeline.durationSeconds > MAX_EXPORT_SECONDS;
 
@@ -81,6 +83,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
   }
 
   async function saveAudio() {
+    lastKind.current = 'audio';
     runId.current += 1;
     const run = runId.current;
     const current = () => run === runId.current;
@@ -108,6 +111,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
   }
 
   async function start() {
+    lastKind.current = 'video';
     runId.current += 1;
     const run = runId.current;
     const current = () => run === runId.current;
@@ -236,7 +240,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
             </button>
           )}
           {phase.name === 'failed' && (
-            <button type="button" onClick={() => void start()}>
+            <button type="button" onClick={() => void (lastKind.current === 'audio' ? saveAudio() : start())}>
               Retry
             </button>
           )}

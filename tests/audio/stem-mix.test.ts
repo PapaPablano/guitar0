@@ -240,6 +240,18 @@ describe('StemMixClock pass schedule', () => {
     expect(ch.gains.guitar).toBeCloseTo(0.8, 9);
   });
 
+  it('clearing the loop under a listen-then-play schedule restores every stem, not just the guitar', () => {
+    const { ch, clock } = setup();
+    clock.setMix(initialMix());
+    clock.setLoop({ start: 4, end: 8 });
+    clock.setSchedule({ kind: 'listen-then-play' });
+    // Pass 1 is a guitar-only pass, so the drums are silent.
+    expect(ch.gains.drums).toBe(0);
+    clock.setLoop(null);
+    expect(ch.gains.drums).toBe(1);
+    expect(ch.gains.guitar).toBe(1);
+  });
+
   it('a manual mix change while scheduled becomes the new base', () => {
     const { ch, clock } = setup();
     clock.setLoop({ start: 4, end: 8 });

@@ -35,6 +35,8 @@ export function passMix(base: MixState, schedule: PassSchedule, pass: number): M
     if (listen) {
       next.guitar.solo = true;
       next.guitar.muted = false;
+      // A guitar set to none would make the listen pass silent, so it plays at full level for this pass.
+      if (next.guitar.volume === 0) next.guitar.volume = 1;
     } else {
       next.guitar.muted = true;
     }
