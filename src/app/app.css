@@ -191,3 +191,20 @@ button[aria-pressed='true'] {
   gap: 12px;
   margin-top: 20px;
 }
+
+.audio-sync {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.note {
+  margin: 0;
+  font-size: 0.85rem;
+  flex-basis: 100%;
+}

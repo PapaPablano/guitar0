@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
+import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex, loadScoreFromBytes } from '../model/alphatab-adapter';
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
+import { OffsetSlider } from './OffsetSlider';
 import { SAMPLE_ALPHATEX } from './sample';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
@@ -39,6 +41,9 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [audio, setAudio] = useState<AudioState>({ status: 'loading', progress: 0 });
+  const [userClock, setUserClock] = useState<UserAudioClock | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [userAudioError, setUserAudioError] = useState<string | null>(null);
   const lastShown = useRef(-1);
 
   function connectAudio(next: Session) {
@@ -56,6 +61,10 @@ export function App() {
 
   function startSession(score: AlphaModel.Score, timeline: Timeline) {
     session?.clock.dispose();
+    userClock?.dispose();
+    setUserClock(null);
+    setOffset(0);
+    setUserAudioError(null);
     const draft = { timeline, score } as Session;
     draft.clock = connectAudio(draft);
     setSession(draft);
@@ -95,7 +104,7 @@ export function App() {
     }
   }
 
-  const clock = session?.clock;
+  const clock: Clock | undefined = userClock ?? session?.clock;
   const timeline = session?.timeline;
 
   // Apply the loop to the clock whenever the loop or its switch changes.
@@ -123,10 +132,35 @@ export function App() {
     if (import.meta.env.DEV) (window as unknown as { __clock?: Clock }).__clock = clock;
   }, [clock]);
 
-  const audioReady = audio.status === 'ready';
+  const audioReady = audio.status === 'ready' || userClock !== null;
   useEffect(() => {
     if (audioReady) clock?.setRate(tempoPercent / 100);
   }, [clock, tempoPercent, audioReady]);
+
+  async function onLoadRecording(file: File) {
+    setUserAudioError(null);
+    try {
+      const next = await loadUserAudio(file, session?.timeline.durationSeconds ?? 0);
+      const position = clock?.time() ?? 0;
+      session?.clock.pause();
+      userClock?.dispose();
+      next.setRate(tempoPercent / 100);
+      next.seek(position);
+      setUserClock(next);
+      setOffset(0);
+    } catch (e) {
+      // keep whatever was playing before
+      setUserAudioError(e instanceof Error ? e.message : 'That recording could not be opened.');
+    }
+  }
+
+  function onRemoveRecording() {
+    const position = userClock?.time() ?? 0;
+    userClock?.dispose();
+    setUserClock(null);
+    setOffset(0);
+    session?.clock.seek(position);
+  }
 
   function retryAudio() {
     if (!session) return;
@@ -218,7 +252,9 @@ export function App() {
         <button
           type="button"
           onClick={() => {
-            clock.dispose();
+            session.clock.dispose();
+            userClock?.dispose();
+            setUserClock(null);
             setSession(null);
           }}
         >
@@ -266,6 +302,17 @@ export function App() {
         onRestart={() => clock.seek(0)}
         onTempoChange={setTempoPercent}
         onSeek={(s) => clock.seek(s)}
+      />
+      <OffsetSlider
+        offsetSeconds={userClock ? offset : null}
+        fileName={userClock?.file?.name ?? null}
+        error={userAudioError}
+        onLoad={onLoadRecording}
+        onOffsetChange={(seconds) => {
+          userClock?.setOffset(seconds);
+          setOffset(seconds);
+        }}
+        onRemove={onRemoveRecording}
       />
       <LoopControls
         barCount={barCount}
