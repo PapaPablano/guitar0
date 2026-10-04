@@ -43,6 +43,26 @@ describe('describeEngine', () => {
     expect(d.stemsEnabled).toBe(false);
   });
 
+  it('covers AE11: a restarting engine is its own view, neither a stuck spinner nor a failure', () => {
+    const d = describeEngine(status({ phase: 'restarting', message: 'The stem engine stopped; restarting it' }));
+    expect(d.kind).toBe('restarting');
+    expect(d.stemsEnabled).toBe(false);
+    expect(d.canRetry).toBe(false);
+    expect(d.progress).toBeNull();
+    expect(d.message).toContain('restarting');
+  });
+
+  it('has a default message when restarting without one', () => {
+    expect(describeEngine(status({ phase: 'restarting' })).message).toMatch(/restart/i);
+  });
+
+  it('keeps the log tail in the message when the engine fails again', () => {
+    const d = describeEngine(status({ phase: 'engine-error', message: 'The engine exited (code 1).\nImportError: no module named torch' }));
+    expect(d.kind).toBe('blocked');
+    expect(d.canRetry).toBe(true);
+    expect(d.message).toContain('ImportError: no module named torch');
+  });
+
   it('clamps progress to 0..1', () => {
     expect(describeEngine(status({ phase: 'setting-up', progress: 3 })).progress).toBe(1);
     expect(describeEngine(status({ phase: 'setting-up', progress: -1 })).progress).toBe(0);

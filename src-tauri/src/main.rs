@@ -4,20 +4,21 @@
 
 mod engine;
 mod profiles;
+mod recovery;
 mod setup;
 
 use std::collections::HashMap;
 use std::fs;
 use std::process::Child;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::RunEvent;
 
 #[derive(Clone, Serialize, Default)]
 struct Status {
-    /// setup-needed | setting-up | setup-failed | starting | ready | engine-error
+    /// setup-needed | setting-up | setup-failed | starting | restarting | ready | engine-error
     phase: String,
     progress: Option<f64>,
     message: Option<String>,
@@ -30,6 +31,7 @@ struct Shared {
     status: Mutex<Status>,
     child: Mutex<Option<Child>>,
     working: Mutex<bool>,
+    allowance: Mutex<recovery::RestartAllowance>,
 }
 
 type State = Arc<Shared>;
@@ -83,17 +85,65 @@ fn bootstrap(state: State, run_setup: bool) {
     *state.working.lock().unwrap() = false;
 }
 
-/// Flags the engine as stopped if its process ends on its own.
+/// Restarts the engine once after an unexpected exit, without setup. Takes the same one-run-at-a-time guard as
+/// `bootstrap`, so it yields to a user retry that is already running.
+fn restart_engine(state: State, exit_note: String) {
+    {
+        let mut working = state.working.lock().unwrap();
+        if *working {
+            return;
+        }
+        *working = true;
+    }
+    set(&state, "restarting", None, Some("The stem engine stopped; restarting it".to_string()));
+    let result = engine::Layout::locate().and_then(|layout| engine::start(&layout));
+    match result {
+        Ok(started) => {
+            *state.child.lock().unwrap() = Some(started.child);
+            *state.status.lock().unwrap() =
+                Status { phase: "ready".to_string(), progress: None, message: None, url: Some(started.url), secret: Some(started.secret) };
+        }
+        Err(e) => set(&state, "engine-error", None, Some(format!("{exit_note}\nThe automatic restart failed: {e}"))),
+    }
+    *state.working.lock().unwrap() = false;
+}
+
+/// Handles the engine process ending on its own: one automatic restart per healthy period, otherwise an error
+/// with the log tail. A user stop or retry takes the child away first, so it is never seen here.
 fn watch(state: State) {
+    let mut ready_since: Option<Instant> = None;
     loop {
         std::thread::sleep(Duration::from_secs(2));
-        let mut child = state.child.lock().unwrap();
-        if let Some(c) = child.as_mut() {
-            if let Ok(Some(status)) = c.try_wait() {
-                *child = None;
-                drop(child);
-                set(&state, "engine-error", None, Some(format!("The engine exited ({status}).")));
+        let exited = {
+            let mut child = state.child.lock().unwrap();
+            match child.as_mut().map(|c| c.try_wait()) {
+                Some(Ok(Some(status))) => {
+                    *child = None;
+                    Some(status)
+                }
+                Some(_) => None,
+                None => {
+                    ready_since = None;
+                    continue;
+                }
             }
+        };
+        let Some(status) = exited else {
+            let since = *ready_since.get_or_insert_with(Instant::now);
+            state.allowance.lock().unwrap().on_healthy_for(since.elapsed());
+            continue;
+        };
+        ready_since = None;
+        // If a user retry is running, it owns the status; leave it alone.
+        if *state.working.lock().unwrap() {
+            continue;
+        }
+        let tail = engine::Layout::locate().map(|l| engine::read_log_tail(&l.data)).unwrap_or_default();
+        let note = if tail.is_empty() { format!("The engine exited ({status}).") } else { format!("The engine exited ({status}).\n{tail}") };
+        let action = state.allowance.lock().unwrap().on_exit(true, false);
+        match action {
+            recovery::ExitAction::Restart => restart_engine(state.clone(), note),
+            recovery::ExitAction::GiveUp => set(&state, "engine-error", None, Some(note)),
         }
     }
 }
@@ -114,6 +164,7 @@ fn engine_status(state: tauri::State<State>) -> Status {
 #[tauri::command]
 fn engine_setup(state: tauri::State<State>) {
     let state: State = state.inner().clone();
+    state.allowance.lock().unwrap().on_user_retry();
     stop(&state);
     std::thread::spawn(move || bootstrap(state, true));
 }

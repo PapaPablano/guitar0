@@ -3,10 +3,13 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+use crate::recovery::HealthWait;
 
 pub struct Layout {
     pub data: PathBuf,
@@ -107,7 +110,12 @@ pub fn start(layout: &Layout) -> Result<Started, String> {
     for dir in ["logs", "stems", "cache", "models"] {
         let _ = fs::create_dir_all(data.join(dir));
     }
-    let log = fs::File::create(data.join("logs").join("engine.log")).map_err(|e| format!("cannot write the engine log: {e}"))?;
+    let log_path = data.join("logs").join("engine.log");
+    if fs::metadata(&log_path).map(|m| crate::recovery::should_rotate(m.len())).unwrap_or(false) {
+        let _ = fs::rename(&log_path, data.join("logs").join("engine.log.1"));
+    }
+    let mut log = fs::OpenOptions::new().create(true).append(true).open(&log_path).map_err(|e| format!("cannot write the engine log: {e}"))?;
+    let _ = writeln!(log, "--- engine start ---");
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
 
     let mut pythonpath = vec![layout.wrapper.clone(), layout.backend.clone()];
@@ -137,37 +145,57 @@ pub fn start(layout: &Layout) -> Result<Started, String> {
 
     let mut child = command.spawn().map_err(|e| format!("could not start the engine: {e}"))?;
     let url = format!("http://127.0.0.1:{port}");
-    match wait_for_health(&mut child, &url, &secret, &token, Duration::from_secs(90)) {
+    match wait_for_health(&mut child, &url, &secret, &token) {
         Ok(()) => Ok(Started { child, url, secret }),
         Err(e) => {
             let _ = child.kill();
             let _ = child.wait();
-            Err(e)
+            Err(with_log_tail(data, e))
         }
     }
 }
 
-fn wait_for_health(child: &mut Child, url: &str, secret: &str, token: &str, limit: Duration) -> Result<(), String> {
+/// The last lines of the engine log, for showing why the engine failed. Empty if there is no log.
+pub fn read_log_tail(data: &Path) -> String {
+    let Ok(mut file) = fs::File::open(data.join("logs").join("engine.log")) else { return String::new() };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(len.saturating_sub(16 * 1024)));
+    let mut bytes = Vec::new();
+    let _ = file.read_to_end(&mut bytes);
+    crate::recovery::tail_lines(&String::from_utf8_lossy(&bytes), crate::recovery::TAIL_LINES)
+}
+
+fn with_log_tail(data: &Path, message: String) -> String {
+    let tail = read_log_tail(data);
+    if tail.is_empty() {
+        message
+    } else {
+        format!("{message}\n{tail}")
+    }
+}
+
+/// Waits while the process is alive, up to the recovery ceiling, until the engine answers as ours.
+fn wait_for_health(child: &mut Child, url: &str, secret: &str, token: &str) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|e| e.to_string())?;
     let started = Instant::now();
-    while started.elapsed() < limit {
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!("the engine exited while starting ({status}); see data/logs/engine.log"));
+    loop {
+        let alive = matches!(child.try_wait(), Ok(None));
+        let healthy = alive
+            && client
+                .get(format!("{url}/api/health"))
+                .header("X-TabHighway-Secret", secret)
+                .send()
+                .and_then(|r| r.json::<serde_json::Value>())
+                .map(|body| body.get("instance").and_then(|v| v.as_str()) == Some(token))
+                .unwrap_or(false);
+        match crate::recovery::health_decision(started.elapsed(), alive, healthy) {
+            HealthWait::Ready => return Ok(()),
+            HealthWait::Exited => return Err("the engine exited while starting; see data/logs/engine.log".to_string()),
+            HealthWait::CeilingReached => return Err("the engine did not start in time; see data/logs/engine.log".to_string()),
+            HealthWait::Keep => std::thread::sleep(Duration::from_millis(500)),
         }
-        let answer = client
-            .get(format!("{url}/api/health"))
-            .header("X-TabHighway-Secret", secret)
-            .send()
-            .and_then(|r| r.json::<serde_json::Value>());
-        if let Ok(body) = answer {
-            if body.get("instance").and_then(|v| v.as_str()) == Some(token) {
-                return Ok(());
-            }
-        }
-        std::thread::sleep(Duration::from_millis(500));
     }
-    Err("the engine did not start in time; see data/logs/engine.log".to_string())
 }

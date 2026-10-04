@@ -2,7 +2,7 @@ import { invokeShell } from './desktop';
 
 /** What the shell reports about first-launch setup and the stem engine. */
 export interface ShellEngineStatus {
-  readonly phase: 'setup-needed' | 'setting-up' | 'setup-failed' | 'starting' | 'ready' | 'engine-error';
+  readonly phase: 'setup-needed' | 'setting-up' | 'setup-failed' | 'starting' | 'restarting' | 'ready' | 'engine-error';
   /** 0 to 1 while setting up. */
   readonly progress?: number;
   readonly message?: string;
@@ -12,7 +12,7 @@ export interface ShellEngineStatus {
 }
 
 export interface EngineView {
-  readonly kind: 'web' | 'setup' | 'ready' | 'blocked';
+  readonly kind: 'web' | 'setup' | 'restarting' | 'ready' | 'blocked';
   readonly stemsEnabled: boolean;
   readonly canRetry: boolean;
   readonly message: string;
@@ -37,6 +37,8 @@ export function describeEngine(status: ShellEngineStatus | null): EngineView {
       return { kind: 'setup', stemsEnabled: false, canRetry: true, message: `Setup did not finish. ${message}`.trim(), progress: null };
     case 'starting':
       return { kind: 'setup', stemsEnabled: false, canRetry: false, message: message || 'Starting the stem engine…', progress: null };
+    case 'restarting':
+      return { kind: 'restarting', stemsEnabled: false, canRetry: false, message: message || 'The stem engine stopped; restarting it…', progress: null };
     case 'engine-error':
       return { kind: 'blocked', stemsEnabled: false, canRetry: true, message: `The stem engine stopped. ${message}`.trim(), progress: null };
   }
