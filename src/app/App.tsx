@@ -378,6 +378,7 @@ export function App() {
         <ExportDialog
           timeline={timeline}
           trackIndex={trackIndex}
+          bottom={{ view: bottomView, lookahead }}
           onClose={() => setExportOpen(false)}
           getAudio={(onProgress) =>
             userClock?.file

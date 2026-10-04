@@ -1,6 +1,6 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 import { hydrateTimeline, type TimelineData } from '../model/serialize';
-import { renderComposite, type CompositeContext } from '../render/composite';
+import { renderComposite, type BottomOptions, type CompositeContext } from '../render/composite';
 import type { PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
 import { AUDIO_CHANNELS, frameCount, frameTime, type ExportPreset } from './presets';
@@ -11,6 +11,8 @@ export interface StartMessage {
   trackIndex: number;
   preset: ExportPreset;
   audio: PcmAudio;
+  /** The bottom view the video shows, chosen when the export started. */
+  bottom: BottomOptions;
 }
 
 export type WorkerMessage = StartMessage | { type: 'cancel' };
@@ -89,7 +91,15 @@ async function run(msg: StartMessage): Promise<void> {
   for (let frame = 0; frame < total; frame++) {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     if (failure) throw failure;
-    renderComposite(ctx as unknown as CompositeContext, timeline, msg.trackIndex, frameTime(frame, preset.fps), preset.width, preset.height);
+    renderComposite(
+      ctx as unknown as CompositeContext,
+      timeline,
+      msg.trackIndex,
+      frameTime(frame, preset.fps),
+      preset.width,
+      preset.height,
+      { bottom: msg.bottom },
+    );
     const videoFrame = new VideoFrame(canvas, {
       timestamp: Math.round((frame * 1e6) / preset.fps),
       duration: Math.round(1e6 / preset.fps),

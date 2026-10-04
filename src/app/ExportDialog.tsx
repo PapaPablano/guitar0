@@ -3,6 +3,7 @@ import type { PcmAudio } from '../export/audio';
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { estimateMegabytes, MAX_EXPORT_SECONDS, PRESETS, presetById, type ExportPreset } from '../export/presets';
+import type { BottomOptions } from '../render/composite';
 import type { Timeline } from '../model/score';
 
 type Phase =
@@ -15,6 +16,8 @@ type Phase =
 interface ExportDialogProps {
   timeline: Timeline;
   trackIndex: number;
+  /** The bottom view and look-ahead in use when the dialog opened; the video shows the same. */
+  bottom: BottomOptions;
   /** Produces the whole song's audio at original tempo: the synth mix or the user's recording. */
   getAudio: (onProgress: (fraction: number) => void) => Promise<PcmAudio>;
   onClose: () => void;
@@ -30,7 +33,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, getAudio, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, bottom, getAudio, onClose }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
@@ -87,6 +90,7 @@ export function ExportDialog({ timeline, trackIndex, getAudio, onClose }: Export
         trackIndex,
         preset,
         audio,
+        bottom,
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
       job.current = running;

@@ -301,7 +301,7 @@ a.link-button:hover {
 }
 
 .fretboard {
-  flex: 2;
+  flex: 3;
   min-height: 0;
 }
 

@@ -3,6 +3,7 @@ import type { Timeline } from '../model/score';
 import type { PcmAudio } from './audio';
 import { fitPcm } from './audio';
 import type { StartMessage, WorkerReply } from './encoder.worker';
+import type { BottomOptions } from '../render/composite';
 import type { ExportPreset } from './presets';
 
 export interface ExportJob {
@@ -23,6 +24,7 @@ export function startExport(args: {
   trackIndex: number;
   preset: ExportPreset;
   audio: PcmAudio;
+  bottom: BottomOptions;
   onProgress: (fraction: number) => void;
 }): ExportJob {
   const worker = new Worker(new URL('./encoder.worker.ts', import.meta.url), { type: 'module' });
@@ -60,6 +62,7 @@ export function startExport(args: {
         trackIndex: args.trackIndex,
         preset: args.preset,
         audio,
+        bottom: args.bottom,
       };
       worker.postMessage(start, [audio.left.buffer, audio.right.buffer]);
     } catch (e) {
