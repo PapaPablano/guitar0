@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StemMixClock, type StemChannel } from '../../src/audio/stem-mix';
 import type { AudioLike } from '../../src/audio/user-audio';
 import { initialMix } from '../../src/audio/mix-gains';
@@ -104,6 +104,59 @@ describe('StemMixClock', () => {
     clock.time();
     clock.resync();
     for (const c of list) expect((c.element as FakeAudio).currentTime).toBeCloseTo(10, 6);
+  });
+
+  describe('with a negative offset (lead-in)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function setup() {
+      let now = 50;
+      const made = channels();
+      const clock = new StemMixClock(made.list, 60, () => now);
+      clock.setOffset(-1);
+      clock.seek(0);
+      return { ...made, clock, advance: (s: number) => (now += s) };
+    }
+
+    it('starts no follower before the leader and does not resync during the lead-in', async () => {
+      vi.useFakeTimers();
+      const { list, el, clock, advance } = setup();
+      clock.play();
+      for (const c of list) expect((c.element as FakeAudio).paused).toBe(true);
+      expect(clock.playing).toBe(true);
+      el('drums').currentTime = 3; // far from the leader, but the lead-in is not a time to correct it
+      advance(0.5);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(el('drums').currentTime).toBe(3);
+      for (const c of list) expect((c.element as FakeAudio).paused).toBe(true);
+      clock.dispose();
+    });
+
+    it('starts every follower at the leader position when the lead-in ends, then pulls drift back', async () => {
+      vi.useFakeTimers();
+      const { list, el, clock, advance } = setup();
+      clock.play();
+      advance(1.02);
+      await vi.advanceTimersByTimeAsync(20);
+      for (const c of list) expect((c.element as FakeAudio).paused).toBe(false);
+      const leader = list[0].element as FakeAudio;
+      expect(leader.currentTime).toBeCloseTo(0.02, 9);
+      expect(el('drums').currentTime).toBeCloseTo(0.02, 9);
+      leader.currentTime = 1;
+      el('drums').currentTime = 0.88;
+      await vi.advanceTimersByTimeAsync(20);
+      expect(el('drums').currentTime).toBe(1);
+      clock.dispose();
+    });
+
+    it('seeking into the lead-in leaves every stem at zero', () => {
+      const { list, clock } = setup();
+      clock.seek(0.5);
+      for (const c of list) expect((c.element as FakeAudio).currentTime).toBe(0);
+      expect(clock.time()).toBeCloseTo(0.5, 9);
+    });
   });
 
   it('releases every channel on dispose', () => {

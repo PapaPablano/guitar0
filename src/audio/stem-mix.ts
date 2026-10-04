@@ -1,6 +1,6 @@
 import type { Clock, LoopRange } from './clock';
 import { stemGains, type MixState } from './mix-gains';
-import { UserAudioClock, type AudioLike } from './user-audio';
+import { UserAudioClock, type AudioLike, type TimeSource } from './user-audio';
 import type { StemName } from '../stems/engine-client';
 
 /** How far a follower may sit from the leader before it is pulled back. */
@@ -19,7 +19,8 @@ export interface StemChannel {
 /**
  * Plays the stems together as one Clock. The first channel leads: it owns time, offset, loop and tempo
  * through a recording clock, and every other channel follows it and is pulled back when it drifts. Each
- * stem is its own media element so tempo changes keep pitch.
+ * stem is its own media element so tempo changes keep pitch. While the leader counts the silence before a
+ * recording that starts after the tab, the followers wait and are not resynced.
  */
 export class StemMixClock implements Clock {
   private readonly leader: UserAudioClock;
@@ -29,8 +30,9 @@ export class StemMixClock implements Clock {
   constructor(
     private readonly channels: readonly StemChannel[],
     durationSeconds: number,
+    source?: TimeSource,
   ) {
-    this.leader = new UserAudioClock(channels[0].element, durationSeconds);
+    this.leader = new UserAudioClock(channels[0].element, durationSeconds, null, null, source);
     this.followers = channels.slice(1);
     for (const c of channels) c.element.preservesPitch = true;
   }
@@ -54,8 +56,7 @@ export class StemMixClock implements Clock {
 
   play(): void {
     this.leader.play();
-    this.resync();
-    for (const f of this.followers) void f.element.play();
+    this.followLeader();
     this.startTimer();
   }
 
@@ -67,7 +68,15 @@ export class StemMixClock implements Clock {
 
   seek(seconds: number): void {
     this.leader.seek(seconds);
+    if (this.leader.inLeadIn) {
+      for (const f of this.followers) {
+        f.element.pause();
+        f.element.currentTime = 0;
+      }
+      return;
+    }
     this.resync(0);
+    this.followLeader();
   }
 
   setRate(rate: number): void {
@@ -92,8 +101,9 @@ export class StemMixClock implements Clock {
     for (const c of this.channels) c.setGain(gains[c.name]);
   }
 
-  /** Pulls followers that sit further than the tolerance from the leader back to it. */
+  /** Pulls followers that sit further than the tolerance from the leader back to it; idle during the lead-in. */
   resync(tolerance = DRIFT_TOLERANCE_SECONDS): void {
+    if (this.leader.inLeadIn) return;
     const target = this.channels[0].element.currentTime;
     for (const f of this.followers) {
       if (Math.abs(f.element.currentTime - target) > tolerance) f.element.currentTime = target;
@@ -106,11 +116,30 @@ export class StemMixClock implements Clock {
     for (const c of this.channels) c.dispose();
   }
 
+  /**
+   * Keeps followers in step with the leader's state: held while it counts the lead-in, started at its
+   * position once its element runs, and pulled back when they drift.
+   */
+  private followLeader(): void {
+    if (!this.leader.playing) return;
+    if (this.leader.inLeadIn) {
+      for (const f of this.followers) if (!f.element.paused) f.element.pause();
+      return;
+    }
+    this.resync();
+    const target = this.channels[0].element.currentTime;
+    for (const f of this.followers) {
+      if (!f.element.paused) continue;
+      f.element.currentTime = target;
+      void f.element.play();
+    }
+  }
+
   private startTimer(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.time();
-      this.resync();
+      this.followLeader();
       if (!this.playing) {
         for (const f of this.followers) f.element.pause();
         this.stopTimer();
