@@ -4,6 +4,7 @@ Practice a Guitar Pro or MusicXML tab as a scrolling highway over a synced tab s
 
 - Drop a `.gp3`–`.gpx` or MusicXML file, or try the bundled sample riff.
 - Play with the built-in sound, slow it down, and loop bars (drag across bars on the strip, or use the bar fields).
+- If a file's frets are written for a tuning other than the one it says (a song played a half step down, saved as standard), set "File is actually tuned to". Fret numbers stay as written; the open strings, the built-in sound and the fretboard note names follow. "Show in tuning" is different: it keeps the sound and moves the frets.
 - Switch the bottom panel between the tab strip and a fretboard view. The fretboard shows the playing note as a solid dot, a dashed path to the next few notes (you choose how many, 1 to 8) and a fading trail, with a slim bar timeline underneath for looping and jumping. Exported videos use whichever view is selected.
 - Search Songsterr from the start screen, or jump to it from a loaded tab. This only opens their site in a new tab; the app makes no requests to Songsterr and never touches their tab files.
 - Load your own recording and line it up with an offset slider.

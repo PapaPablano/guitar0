@@ -4,6 +4,7 @@ import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
+import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/file-tuning';
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
@@ -27,6 +28,8 @@ import { songsterrLinkForSong } from './songsterr';
 import { assessSupport, readSupportEnvironment } from './support';
 import { FILE_TUNING, presetById, retuneTimeline } from '../model/retune';
 import { TuningPicker } from './TuningPicker';
+import { FileTuningPicker } from './FileTuningPicker';
+import { WRITTEN } from './file-tuning-options';
 import './app.css';
 
 const SOUND_FONT_URL = './soundfont/sonivox.sf3';
@@ -37,6 +40,8 @@ interface Session {
   timeline: Timeline;
   score: AlphaModel.Score;
   clock: SynthClock;
+  /** Every staff's open strings as the file wrote them, so a tuning choice always starts from the file. */
+  written: WrittenTunings;
 }
 
 export function App() {
@@ -103,7 +108,7 @@ export function App() {
     replaceUserClock(null);
     setOffset(0);
     setUserAudioError(null);
-    setSession({ timeline, score, clock: connectAudio(score, timeline) });
+    setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
     setTrackIndex(firstPlayableTrack(timeline));
     setBottomView(initialViewState().bottomView);
     setLookahead(initialViewState().lookahead);
@@ -220,6 +225,19 @@ export function App() {
     session?.clock.seek(position);
   }
 
+  /** Sets the tuning the file is really in; the sound is rebuilt from the changed score. */
+  function onFileTuningChange(id: string) {
+    if (!session) return;
+    const preset = id === WRITTEN ? undefined : presetById(id);
+    applyFileTuning(session.score, session.written, trackIndex, preset?.tuning ?? null);
+    const timeline = buildTimeline(session.score);
+    session.clock.dispose();
+    setSession({ ...session, timeline, clock: connectAudio(session.score, timeline) });
+    setTuningId(FILE_TUNING);
+    playingRef.current = false;
+    setPlaying(false);
+  }
+
   function retryAudio() {
     if (!session) return;
     session.clock.dispose();
@@ -331,6 +349,11 @@ export function App() {
             setTrackIndex(i);
             setTuningId(FILE_TUNING);
           }}
+        />
+        <FileTuningPicker
+          written={session.written[trackIndex]?.[0] ?? []}
+          current={sourceTimeline?.tracks[trackIndex]?.tuning ?? []}
+          onChange={onFileTuningChange}
         />
         <TuningPicker track={sourceTimeline?.tracks[trackIndex]} value={tuningId} onChange={setTuningId} />
         <ViewControls
