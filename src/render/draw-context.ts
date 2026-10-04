@@ -22,4 +22,5 @@ export interface DrawContext {
   fill(): void;
   stroke(): void;
   fillText(text: string, x: number, y: number): void;
+  setLineDash(segments: number[]): void;
 }
