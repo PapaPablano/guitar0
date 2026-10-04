@@ -9,7 +9,6 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub struct Layout {
-    pub root: PathBuf,
     pub data: PathBuf,
     pub python: PathBuf,
     pub backend: PathBuf,
@@ -31,7 +30,6 @@ impl Layout {
             python: root.join("python").join("Scripts").join("python.exe"),
             backend: root.join("backend"),
             wrapper: root.join("engine"),
-            root,
         })
     }
 

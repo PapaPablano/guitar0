@@ -37,6 +37,9 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
   const [error, setError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
   const hashRef = useRef<string | null>(null);
+  /** The newest mix, so two quick changes in a row build on each other instead of on a stale render. */
+  const mixRef = useRef(mix);
+  mixRef.current = mix;
 
   useEffect(() => {
     if (!desktop) return;
@@ -110,7 +113,9 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
     }
   }
 
-  function change(next: MixState) {
+  function change(update: (current: MixState) => MixState) {
+    const next = update(mixRef.current);
+    mixRef.current = next;
     onMixChange(next);
     active?.clock.setMix(next);
   }
@@ -147,7 +152,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
       {active && (
         <div className="stem-mixer">
           <div className="stems-row">
-            <button type="button" onClick={() => change(toggleStemMute(mix, 'guitar'))} aria-pressed={mix.guitar.muted}>
+            <button type="button" onClick={() => change((m) => toggleStemMute(m, 'guitar'))} aria-pressed={mix.guitar.muted}>
               {mix.guitar.muted ? 'Unmute guitar' : 'Mute guitar'}
             </button>
             <button type="button" onClick={() => onActivate(null)}>
@@ -164,12 +169,12 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
                 step={0.01}
                 value={mix[name].volume}
                 aria-label={`${name} volume`}
-                onChange={(e) => change(setStemVolume(mix, name, Number(e.target.value)))}
+                onChange={(e) => change((m) => setStemVolume(m, name, Number(e.target.value)))}
               />
-              <button type="button" aria-pressed={mix[name].muted} onClick={() => change(toggleStemMute(mix, name))}>
+              <button type="button" aria-pressed={mix[name].muted} onClick={() => change((m) => toggleStemMute(m, name))}>
                 M
               </button>
-              <button type="button" aria-pressed={mix[name].solo} onClick={() => change(toggleStemSolo(mix, name))}>
+              <button type="button" aria-pressed={mix[name].solo} onClick={() => change((m) => toggleStemSolo(m, name))}>
                 S
               </button>
             </div>

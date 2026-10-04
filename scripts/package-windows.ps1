@@ -46,7 +46,7 @@ $Zip = Join-Path $Cache "$($Version.tag)-$($Version.asset)"
 if (-not (Test-Path $Zip)) {
   Invoke-WebRequest "$Base/$($Version.asset)" -OutFile $Zip
 }
-$Published = (Invoke-WebRequest "$Base/$($Version.asset).sha256").Content.ToString().Trim().Split()[0].ToLower()
+$Published = (New-Object System.Net.WebClient).DownloadString("$Base/$($Version.asset).sha256").Trim().Split()[0].ToLower()
 $Actual = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower()
 if ($Published -ne $Actual) {
   Remove-Item -Force $Zip
@@ -68,7 +68,8 @@ New-Item -ItemType Directory -Force $Stage | Out-Null
 Copy-Item -Recurse (Join-Path $Inner.FullName "python") (Join-Path $Stage "python")
 Copy-Item -Recurse (Join-Path $Inner.FullName "backend") (Join-Path $Stage "backend")
 Copy-Item -Recurse (Join-Path $Root "engine\wrapper") (Join-Path $Stage "engine")
-$Exe = Join-Path $Root "src-tauri\target\release\tab-highway.exe"
+$TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root "src-tauri\target" }
+$Exe = Join-Path $TargetDir "release\tab-highway.exe"
 if (-not $SkipShell) {
   if (-not (Test-Path $Exe)) { throw "shell build not found at $Exe" }
   Copy-Item $Exe (Join-Path $Stage "TabHighway.exe")
