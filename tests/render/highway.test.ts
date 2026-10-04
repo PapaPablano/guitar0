@@ -115,3 +115,17 @@ describe('visibleNotes', () => {
     expect(found.map((n) => n.startSeconds)).toEqual([0]);
   });
 });
+
+describe('layering', () => {
+  it('draws the strikeline before the notes so it never covers one', () => {
+    const layout = computeLayout(W, H, 6);
+    const timeline = makeTimeline([{ start: 2, end: 2.5, string: 3 }]);
+    const calls = draw(timeline, 2);
+    const strikeAt = calls.findIndex(
+      (c) => c.name === 'moveTo' && c.args[0] === layout.strikeX && c.args[1] === layout.laneTop,
+    );
+    const noteAt = calls.findIndex((c) => c.name === 'arc' && c.args[2] === layout.noteRadius);
+    expect(strikeAt).toBeGreaterThanOrEqual(0);
+    expect(noteAt).toBeGreaterThan(strikeAt);
+  });
+});

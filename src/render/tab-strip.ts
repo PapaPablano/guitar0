@@ -196,6 +196,14 @@ export function renderTabStrip(
     ctx.stroke();
   }
 
+  // The cursor goes behind the fret numbers so it never hides the note being played.
+  ctx.strokeStyle = '#ffd43b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(layout.cursorX, layout.lineTop - 14);
+  ctx.lineTo(layout.cursorX, bottom + 30);
+  ctx.stroke();
+
   ctx.font = '12px system-ui, sans-serif';
   for (const bar of visible) {
     const x = bar.x - scroll;
@@ -220,12 +228,6 @@ export function renderTabStrip(
     drawBarNotes(ctx, bar, layout, theme, scroll, bottom);
   }
 
-  ctx.strokeStyle = '#ffd43b';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(layout.cursorX, layout.lineTop - 14);
-  ctx.lineTo(layout.cursorX, bottom + 30);
-  ctx.stroke();
   ctx.restore();
 }
 

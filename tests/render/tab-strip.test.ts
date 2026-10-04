@@ -85,3 +85,16 @@ describe('renderTabStrip', () => {
     expect(tinted).toHaveLength(1);
   });
 });
+
+describe('strip layering', () => {
+  it('draws the cursor before the fret numbers so it never hides the playing note', () => {
+    const timeline = makeTimeline([{ start: 0.2, end: 0.6, string: 2, fret: 5 }]);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, 0, W, H);
+    const cursorAt = calls.findIndex((c) => c.name === 'moveTo' && c.args[0] === layout.cursorX);
+    const numberAt = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === '5');
+    expect(cursorAt).toBeGreaterThanOrEqual(0);
+    expect(numberAt).toBeGreaterThan(cursorAt);
+  });
+});

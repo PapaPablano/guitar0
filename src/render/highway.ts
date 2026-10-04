@@ -77,13 +77,7 @@ export function renderHighway(
   drawBarLines(ctx, timeline, layout, theme, t);
   drawStrings(ctx, layout, theme);
 
-  const from = t - layout.lookbehindSeconds;
-  const to = t + layout.lookaheadSeconds;
-  const visible = visibleNotes(notes, from, to);
-  for (const note of visible) drawSustain(ctx, note, layout, theme, t);
-  for (const note of visible) drawNote(ctx, note, layout, theme, t);
-  drawTechniques(ctx, visible, layout, theme, t);
-
+  // Drawn before the notes, so a note crossing the line is never covered by it.
   ctx.strokeStyle = theme.strikeline;
   ctx.lineWidth = 3;
   ctx.globalAlpha = 1;
@@ -91,6 +85,13 @@ export function renderHighway(
   ctx.moveTo(layout.strikeX, layout.laneTop);
   ctx.lineTo(layout.strikeX, layout.laneTop + layout.laneHeight * layout.stringCount);
   ctx.stroke();
+
+  const from = t - layout.lookbehindSeconds;
+  const to = t + layout.lookaheadSeconds;
+  const visible = visibleNotes(notes, from, to);
+  for (const note of visible) drawSustain(ctx, note, layout, theme, t);
+  for (const note of visible) drawNote(ctx, note, layout, theme, t);
+  drawTechniques(ctx, visible, layout, theme, t);
 
   for (const note of visible) drawHitEffect(ctx, note, layout, theme, t);
   ctx.restore();
