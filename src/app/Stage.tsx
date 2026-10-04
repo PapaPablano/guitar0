@@ -6,7 +6,7 @@ import {
   scoreBarAtX,
   type LoopBars,
 } from '../render/tab-strip';
-import { playbackBarIndexAt } from './navigation';
+import { playbackBarIndexAt } from '../model/bars';
 import type { Clock } from '../audio/clock';
 import type { Timeline } from '../model/score';
 

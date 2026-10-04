@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
-import { techniqueMark } from './techniques';
+import { fretLabel, techniqueMark } from './techniques';
+import { playbackBarIndexAt } from '../model/bars';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
 import type { BarEvent, NoteEvent, Timeline } from '../model/score';
 
@@ -7,6 +8,8 @@ import type { BarEvent, NoteEvent, Timeline } from '../model/score';
 const STRIP_PX_PER_SECOND = 70;
 const MIN_BAR_WIDTH = 90;
 const CURSOR_FRACTION = 0.3;
+/** Fret-number colour on the strip's dark background. */
+const STRIP_NOTE_TEXT = '#f1f3f5';
 
 export interface StripBar {
   readonly scoreBar: number;
@@ -116,24 +119,11 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
   };
 }
 
-/** Index of the played bar containing time `t`, or the last bar when `t` is past the end. */
-function playbackBarAt(timeline: Timeline, t: number): BarEvent | undefined {
-  const bars = timeline.bars;
-  let lo = 0;
-  let hi = bars.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (bars[mid].startSeconds <= t) lo = mid;
-    else hi = mid - 1;
-  }
-  return bars[lo];
-}
-
 /** X of the playhead in strip space. Across a repeat this jumps back to the repeated bar. */
 export function playheadStripX(layout: StripLayout, timeline: Timeline, t: number): number {
-  const played = playbackBarAt(timeline, t);
+  const played = timeline.bars[playbackBarIndexAt(timeline, t)];
   if (!played) return 0;
-  const bar = layout.bars.find((b) => b.scoreBar === played.scoreBar);
+  const bar = stripBarFor(layout, played.scoreBar);
   if (!bar) return 0;
   const seconds = played.endSeconds - played.startSeconds;
   const fraction = seconds > 0 ? Math.min(1, Math.max(0, (t - played.startSeconds) / seconds)) : 0;
@@ -143,6 +133,11 @@ export function playheadStripX(layout: StripLayout, timeline: Timeline, t: numbe
 /** Strip-space x shown at the left edge of the canvas when the playhead is at `t`. */
 export function stripScrollX(layout: StripLayout, timeline: Timeline, t: number): number {
   return playheadStripX(layout, timeline, t) - layout.cursorX;
+}
+
+/** The strip bar for a score bar index, if the score has it. */
+export function stripBarFor(layout: StripLayout, scoreBar: number): StripBar | undefined {
+  return layout.bars.find((b) => b.scoreBar === scoreBar);
 }
 
 /** Score bar under a canvas x position, or null when the position is outside the score. */
@@ -156,7 +151,7 @@ export function scoreBarAtX(layout: StripLayout, timeline: Timeline, t: number, 
 
 /** Playback time at the start of a score bar's first pass. */
 export function scoreBarStartSeconds(layout: StripLayout, scoreBar: number): number | null {
-  return layout.bars.find((b) => b.scoreBar === scoreBar)?.playback.startSeconds ?? null;
+  return stripBarFor(layout, scoreBar)?.playback.startSeconds ?? null;
 }
 
 /** Draws the tab strip: staff lines, bars, fret numbers, rhythm stems and the cursor. */
@@ -183,8 +178,8 @@ export function renderTabStrip(
 
   const loop = options.loop;
   if (loop) {
-    const first = layout.bars.find((b) => b.scoreBar === loop.startBar);
-    const last = layout.bars.find((b) => b.scoreBar === loop.endBar);
+    const first = stripBarFor(layout, loop.startBar);
+    const last = stripBarFor(layout, loop.endBar);
     if (first && last) {
       ctx.fillStyle = 'rgba(77, 171, 247, 0.22)';
       ctx.fillRect(first.x - scroll, 0, last.x + last.width - first.x, height);
@@ -225,7 +220,6 @@ export function renderTabStrip(
     drawBarNotes(ctx, bar, layout, theme, scroll, bottom);
   }
 
-  // cursor
   ctx.strokeStyle = '#ffd43b';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -252,11 +246,11 @@ function drawBarNotes(
   for (const n of bar.notes) {
     const x = noteX(n);
     const y = layout.lineTop + (n.string - 1) * layout.lineGap;
-    const label = n.techniques.dead ? 'x' : n.techniques.ghost ? `(${n.fret})` : String(n.fret);
+    const label = fretLabel(n);
     // break the string behind the number so it stays readable
     ctx.fillStyle = '#1b1e26';
     ctx.fillRect(x - 7, y - 8, 14, 16);
-    ctx.fillStyle = theme.noteText === '#10131a' ? '#f1f3f5' : theme.noteText;
+    ctx.fillStyle = STRIP_NOTE_TEXT;
     ctx.fillText(label, x, y);
     const mark = techniqueMark(n);
     if (mark) {

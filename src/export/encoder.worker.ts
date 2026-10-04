@@ -68,14 +68,14 @@ async function run(msg: StartMessage): Promise<void> {
   for (let start = 0; start < audio.left.length; start += block) {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     const frames = Math.min(block, audio.left.length - start);
-    const planar = new Float32Array(frames * 2);
+    const planar = new Float32Array(frames * AUDIO_CHANNELS);
     planar.set(audio.left.subarray(start, start + frames), 0);
     planar.set(audio.right.subarray(start, start + frames), frames);
     const data = new AudioData({
       format: 'f32-planar',
       sampleRate: audio.sampleRate,
       numberOfFrames: frames,
-      numberOfChannels: 2,
+      numberOfChannels: AUDIO_CHANNELS,
       timestamp: Math.round((start / audio.sampleRate) * 1e6),
       data: planar,
     });

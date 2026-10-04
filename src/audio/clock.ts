@@ -7,6 +7,20 @@ export interface LoopRange {
   readonly endTick?: number;
 }
 
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Playback rate limits shared by the clocks; a clock may raise the floor. */
+export function clampRate(rate: number, min = 0.1): number {
+  return clamp(rate, min, 2);
+}
+
+/** A loop needs a positive length; anything else means no loop. */
+export function normalizeLoop(range: LoopRange | null): LoopRange | null {
+  return range && range.end > range.start ? range : null;
+}
+
 /** What the app needs from a clock, whether it is timer-driven or backed by the synth. */
 export interface Clock {
   readonly playing: boolean;
@@ -82,19 +96,19 @@ export class PlaybackClock implements Clock {
   }
 
   seek(seconds: number): void {
-    this.anchorMedia = Math.min(this.duration, Math.max(0, seconds));
+    this.anchorMedia = clamp(seconds, 0, this.duration);
     this.anchorSource = this.source();
   }
 
   /** Tempo as a multiple of the original; the media time advances at this rate. */
   setRate(rate: number): void {
     const current = this.time();
-    this.currentRate = Math.min(2, Math.max(0.1, rate));
+    this.currentRate = clampRate(rate);
     this.reanchor(current);
   }
 
   setLoop(range: LoopRange | null): void {
-    this.loopRange = range && range.end > range.start ? range : null;
+    this.loopRange = normalizeLoop(range);
   }
 
   private reanchor(media: number): void {

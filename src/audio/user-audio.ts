@@ -1,4 +1,4 @@
-import type { Clock, LoopRange } from './clock';
+import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
 /** Largest recording the page will accept. The file is streamed, not decoded, but export reads it whole. */
 export const MAX_AUDIO_BYTES = 400 * 1024 * 1024;
@@ -57,7 +57,7 @@ export class UserAudioClock implements Clock {
       media = loop.start;
       this.element.currentTime = loop.start + this.offsetSeconds;
     }
-    return Math.min(this.duration, Math.max(0, media));
+    return clamp(media, 0, this.duration);
   }
 
   play(): void {
@@ -70,18 +70,18 @@ export class UserAudioClock implements Clock {
   }
 
   seek(seconds: number): void {
-    const media = Math.min(this.duration, Math.max(0, seconds));
+    const media = clamp(seconds, 0, this.duration);
     this.element.currentTime = Math.max(0, media + this.offsetSeconds);
   }
 
   setRate(rate: number): void {
-    this.currentRate = Math.min(2, Math.max(0.25, rate));
+    this.currentRate = clampRate(rate, 0.25);
     this.element.playbackRate = this.currentRate;
     this.element.preservesPitch = true;
   }
 
   setLoop(range: LoopRange | null): void {
-    this.loopRange = range && range.end > range.start ? range : null;
+    this.loopRange = normalizeLoop(range);
   }
 
   /** Moves the recording against the tab; the recording keeps playing from where it is. */

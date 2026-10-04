@@ -121,7 +121,7 @@ export function ExportDialog({ timeline, trackIndex, getAudio, onClose }: Export
               <>
                 <label className="field">
                   Preset
-                  <select value={presetId} onChange={(e) => setPresetId(e.target.value as ExportPreset['id'])}>
+                  <select value={presetId} onChange={(e) => setPresetId(presetById(e.target.value).id)}>
                     {PRESETS.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.label}

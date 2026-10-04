@@ -1,17 +1,7 @@
+import { playbackBarIndexAt } from '../model/bars';
 import type { Timeline } from '../model/score';
 
-/** Index of the played bar containing time `t`. */
-export function playbackBarIndexAt(timeline: Timeline, t: number): number {
-  const bars = timeline.bars;
-  let lo = 0;
-  let hi = bars.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (bars[mid].startSeconds <= t) lo = mid;
-    else hi = mid - 1;
-  }
-  return Math.max(0, lo);
-}
+export { playbackBarIndexAt };
 
 /** Start time of the previous (-1) or next (+1) played bar. */
 export function seekByBar(timeline: Timeline, t: number, direction: -1 | 1): number {
@@ -32,7 +22,6 @@ export type ShortcutAction =
 
 export interface ShortcutTarget {
   readonly tag: string;
-  readonly inputType?: string;
 }
 
 /**

@@ -5,7 +5,7 @@ import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
 import type { Timeline } from '../model/score';
-import { getStripLayout, scoreBarStartSeconds, type LoopBars } from '../render/tab-strip';
+import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording } from '../export/audio';
@@ -48,10 +48,11 @@ export function App() {
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const lastShown = useRef(-1);
+  const playingRef = useRef(false);
 
-  function connectAudio(next: Session) {
+  function connectAudio(score: AlphaModel.Score, timelineToPlay: Timeline) {
     setAudio({ status: 'loading', progress: 0 });
-    const synth = createSynthSession(next.score, next.timeline.durationSeconds, next.timeline.tempoMap, {
+    const synth = createSynthSession(score, timelineToPlay.durationSeconds, timelineToPlay.tempoMap, {
       soundFontUrl: SOUND_FONT_URL,
       onProgress: (progress) => setAudio((a) => (a.status === 'loading' ? { status: 'loading', progress } : a)),
     });
@@ -68,13 +69,12 @@ export function App() {
     setUserClock(null);
     setOffset(0);
     setUserAudioError(null);
-    const draft = { timeline, score } as Session;
-    draft.clock = connectAudio(draft);
-    setSession(draft);
+    setSession({ timeline, score, clock: connectAudio(score, timeline) });
     setTrackIndex(firstPlayableTrack(timeline));
     setTempoPercent(100);
     setLoop(null);
     setLoopOn(false);
+    playingRef.current = false;
     setPlaying(false);
     setSeconds(0);
     setError(null);
@@ -113,8 +113,8 @@ export function App() {
       return;
     }
     const layout = getStripLayout(timeline, trackIndex, 1, 1);
-    const first = layout.bars.find((b) => b.scoreBar === loop.startBar);
-    const last = layout.bars.find((b) => b.scoreBar === loop.endBar);
+    const first = stripBarFor(layout, loop.startBar);
+    const last = stripBarFor(layout, loop.endBar);
     if (first && last) {
       clock.setLoop({
         start: first.playback.startSeconds,
@@ -124,11 +124,6 @@ export function App() {
       });
     }
   }, [clock, timeline, trackIndex, loop, loopOn]);
-
-  // Dev-only handle so the clock can be sampled from the browser console during manual checks.
-  useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as { __clock?: Clock }).__clock = clock;
-  }, [clock]);
 
   const audioReady = audio.status === 'ready' || userClock !== null;
   useEffect(() => {
@@ -163,15 +158,16 @@ export function App() {
   function retryAudio() {
     if (!session) return;
     session.clock.dispose();
-    const next = { ...session } as Session;
-    next.clock = connectAudio(next);
-    setSession(next);
+    setSession({ ...session, clock: connectAudio(session.score, session.timeline) });
   }
 
   const onFrame = useCallback(
     (t: number) => {
       if (!clock) return;
-      if (clock.playing !== playing) setPlaying(clock.playing);
+      if (clock.playing !== playingRef.current) {
+        playingRef.current = clock.playing;
+        setPlaying(clock.playing);
+      }
       // update the readout about ten times a second, not every frame
       const tenth = Math.floor(t * 10);
       if (tenth !== lastShown.current) {
@@ -179,13 +175,14 @@ export function App() {
         setSeconds(t);
       }
     },
-    [clock, playing],
+    [clock],
   );
 
   const togglePlay = useCallback(() => {
     if (!clock || !audioReady) return;
     if (clock.playing) clock.pause();
     else clock.play();
+    playingRef.current = clock.playing;
     setPlaying(clock.playing);
   }, [clock, audioReady]);
 
@@ -198,10 +195,7 @@ export function App() {
     if (!clock || !timeline) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      const action = interpretKey(e.key, {
-        tag: target?.tagName ?? 'body',
-        inputType: (target as HTMLInputElement | null)?.type,
-      });
+      const action = interpretKey(e.key, { tag: target?.tagName ?? 'body' });
       if (!action || e.ctrlKey || e.metaKey || e.altKey) return;
       e.preventDefault();
       switch (action) {
@@ -230,7 +224,7 @@ export function App() {
   }, [clock, timeline, loop, togglePlay]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
-  const title = useMemo(() => timeline?.title || 'Untitled', [timeline]);
+  const title = timeline?.title || 'Untitled';
 
   if (!support.canPractice) {
     return (

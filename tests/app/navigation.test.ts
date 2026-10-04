@@ -38,8 +38,8 @@ describe('interpretKey', () => {
   });
 
   it('is suspended while a slider, text field or select has focus', () => {
-    expect(interpretKey(' ', { tag: 'INPUT', inputType: 'range' })).toBeNull();
-    expect(interpretKey('ArrowUp', { tag: 'INPUT', inputType: 'range' })).toBeNull();
+    expect(interpretKey(' ', { tag: 'INPUT' })).toBeNull();
+    expect(interpretKey('ArrowUp', { tag: 'INPUT' })).toBeNull();
     expect(interpretKey(' ', { tag: 'SELECT' })).toBeNull();
   });
 

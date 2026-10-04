@@ -9,6 +9,8 @@ export interface ExportPreset {
   readonly videoCodec: string;
 }
 
+/** H.264 High profile, level 4.2: enough for 1080p at 60 fps. */
+const VIDEO_CODEC = 'avc1.64002a';
 export const AUDIO_CODEC = 'mp4a.40.2'; // AAC-LC, plays in every common player
 export const AUDIO_SAMPLE_RATE = 48000;
 export const AUDIO_CHANNELS = 2;
@@ -18,11 +20,11 @@ export const AUDIO_BITRATE = 160_000;
 export const MAX_EXPORT_SECONDS = 360;
 
 export const PRESETS: readonly ExportPreset[] = [
-  { id: 'landscape', label: '1080p, 60 fps (landscape)', width: 1920, height: 1080, fps: 60, videoBitrate: 8_000_000, videoCodec: 'avc1.64002a' },
-  { id: 'vertical', label: '1080 x 1920, 30 fps (vertical)', width: 1080, height: 1920, fps: 30, videoBitrate: 6_000_000, videoCodec: 'avc1.64002a' },
+  { id: 'landscape', label: '1080p, 60 fps (landscape)', width: 1920, height: 1080, fps: 60, videoBitrate: 8_000_000, videoCodec: VIDEO_CODEC },
+  { id: 'vertical', label: '1080 x 1920, 30 fps (vertical)', width: 1080, height: 1920, fps: 30, videoBitrate: 6_000_000, videoCodec: VIDEO_CODEC },
 ];
 
-export function presetById(id: ExportPreset['id']): ExportPreset {
+export function presetById(id: string): ExportPreset {
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
 }
 

@@ -1,5 +1,5 @@
 import type { DrawContext } from './draw-context';
-import { laneY, timeToX, type HighwayLayout } from './layout';
+import { isActive, laneY, noteX, timeToX, type HighwayLayout } from './layout';
 import { stringColor, type HighwayTheme } from './theme';
 import type { NoteEvent } from '../model/score';
 
@@ -24,7 +24,7 @@ export function techniqueMark(note: NoteEvent): string {
   const t = note.techniques;
   const parts: string[] = [];
   if (t.bend > 0) parts.push(`b${bendLabel(t.bend)}`);
-  if (t.slide !== 'none') parts.push(t.slide.startsWith('in') ? '/' : t.slide === 'out-down' ? '\\' : '/');
+  if (t.slide !== 'none') parts.push(t.slide === 'out-down' ? '\\' : '/');
   if (t.hammerPull === 'origin') parts.push('h');
   if (t.palmMute) parts.push('PM');
   if (t.harmonic) parts.push('NH');
@@ -33,8 +33,9 @@ export function techniqueMark(note: NoteEvent): string {
 }
 
 /** The next note after `note` on the same string, from notes sorted by start. */
-function nextOnString(note: NoteEvent, notes: readonly NoteEvent[]): NoteEvent | undefined {
-  for (const n of notes) {
+function nextOnString(note: NoteEvent, notes: readonly NoteEvent[], from: number): NoteEvent | undefined {
+  for (let i = from; i < notes.length; i++) {
+    const n = notes[i];
     if (n.startSeconds <= note.startSeconds) continue;
     if (n.string === note.string) return n;
   }
@@ -49,10 +50,11 @@ export function drawTechniques(
   theme: HighwayTheme,
   t: number,
 ): void {
-  for (const note of visible) {
+  for (let i = 0; i < visible.length; i++) {
+    const note = visible[i];
     const tech = note.techniques;
-    const active = note.startSeconds <= t && t < note.endSeconds;
-    const x = active ? layout.strikeX : timeToX(layout, note.startSeconds, t);
+    const active = isActive(note, t);
+    const x = noteX(layout, note, t);
     const y = laneY(layout, note.string);
     const r = layout.noteRadius;
     const colour = stringColor(theme, note.string);
@@ -63,7 +65,7 @@ export function drawTechniques(
     if (tech.palmMute) drawLabel(ctx, 'PM', x, y - r - 8, theme);
     if (tech.vibrato) drawVibrato(ctx, note, x, y, layout, t, colour);
 
-    const slideTarget = tech.slide === 'shift' || tech.slide === 'legato' ? nextOnString(note, visible) : undefined;
+    const slideTarget = tech.slide === 'shift' || tech.slide === 'legato' ? nextOnString(note, visible, i + 1) : undefined;
     if (slideTarget) {
       const x2 = timeToX(layout, slideTarget.startSeconds, t);
       drawConnector(ctx, x + r, y, x2 - r, y + (slideTarget.fret > note.fret ? -r : r), theme.strikeline, false);
@@ -76,7 +78,7 @@ export function drawTechniques(
     }
 
     if (tech.hammerPull === 'origin') {
-      const target = nextOnString(note, visible);
+      const target = nextOnString(note, visible, i + 1);
       if (target) {
         const x2 = timeToX(layout, target.startSeconds, t);
         drawConnector(ctx, x, y - r, x2, y - r, theme.strikeline, true);

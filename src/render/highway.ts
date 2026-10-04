@@ -1,5 +1,5 @@
 import type { DrawContext } from './draw-context';
-import { computeLayout, laneY, timeToX, type HighwayLayout } from './layout';
+import { computeLayout, isActive, laneY, noteX, timeToX, type HighwayLayout } from './layout';
 import { drawTechniques, fretLabel } from './techniques';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
 import type { NoteEvent, Timeline } from '../model/score';
@@ -136,10 +136,6 @@ function drawBarLines(
   }
 }
 
-function isActive(note: NoteEvent, t: number): boolean {
-  return note.startSeconds <= t && t < note.endSeconds;
-}
-
 function drawSustain(
   ctx: DrawContext,
   note: NoteEvent,
@@ -151,7 +147,7 @@ function drawSustain(
   const tailWidth = seconds * layout.pxPerSecond;
   // Only notes that last longer than their head get a visible tail.
   if (tailWidth <= layout.noteRadius * 2) return;
-  const headX = isActive(note, t) ? layout.strikeX : timeToX(layout, note.startSeconds, t);
+  const headX = noteX(layout, note, t);
   const endX = timeToX(layout, note.endSeconds, t);
   if (endX <= headX) return;
   const y = laneY(layout, note.string);
@@ -169,7 +165,7 @@ function drawNote(
   t: number,
 ): void {
   const active = isActive(note, t);
-  const x = active ? layout.strikeX : timeToX(layout, note.startSeconds, t);
+  const x = noteX(layout, note, t);
   const y = laneY(layout, note.string);
   const passed = note.startSeconds < t && !active;
   ctx.globalAlpha = passed ? Math.max(0, 0.35 - ((t - note.endSeconds) / layout.lookbehindSeconds) * 0.35) : 1;
