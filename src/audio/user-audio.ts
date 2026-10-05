@@ -1,3 +1,4 @@
+import { AlignmentMap } from './alignment-map';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 import { clampOffset } from './offset-range';
 
@@ -31,15 +32,17 @@ const LANDING_GRACE_SECONDS = 0.02;
 const LANDING_MAX_CORRECTIONS = 3;
 
 /**
- * A Clock backed by the user's own recording. Media time is the position in the tab; the recording
- * position is that time plus `offset`, so a positive offset means the recording has extra lead-in and
- * a negative one means it starts after the tab. A media element cannot sit before zero, so while the
- * recording position is negative the element waits at zero and the clock advances tab time itself
- * from `source`, then starts the element when the recording begins.
+ * A Clock backed by the user's own recording. Media time is the position in the tab. The recording leads:
+ * tab time is read from the element's position through an alignment map, which is the recording position
+ * equal to the tab time plus `offset` (a positive offset means the recording has extra lead-in, a negative
+ * one that it starts after the tab), except where the map holds the tab still while the recording plays
+ * extra material. A media element cannot sit before zero, so while the recording position is negative the
+ * element waits at zero and the clock advances tab time itself from `source`, then starts the element when
+ * the recording begins.
  * Tempo changes use the browser's pitch-preserving time stretch.
  */
 export class UserAudioClock implements Clock {
-  private offsetSeconds = 0;
+  private map = AlignmentMap.fromOffset(0);
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
   private watcher: ReturnType<typeof setInterval> | null = null;
@@ -111,16 +114,24 @@ export class UserAudioClock implements Clock {
     return this.loopRange;
   }
 
+  /** The base offset of the alignment: where tab time zero sits in the recording. */
   get offset(): number {
-    return this.offsetSeconds;
+    return this.map.base;
+  }
+
+  get alignment(): AlignmentMap {
+    return this.map;
   }
 
   time(): number {
     if (this.leadIn) return this.leadInTime();
     if (this.heldTab !== null) return this.heldTab;
-    let media = this.current.currentTime - this.offsetSeconds;
+    const recording = this.current.currentTime;
+    let media = this.map.toTab(recording);
     const loop = this.loopRange;
-    if (loop && this.playing && media >= loop.end) {
+    // A loop wraps when the recording reaches its end, so a loop that ends on a hold's bar line wraps on arrival
+    // and one that spans a hold plays the extra playing first.
+    if (loop && this.playing && recording >= this.map.toRec(loop.end, 'end')) {
       media = loop.start;
       this.place(loop.start, true);
       this.onLoopWrap?.();
@@ -179,28 +190,35 @@ export class UserAudioClock implements Clock {
    * started, there is no position to keep, so the playhead stays where it is.
    */
   setOffset(seconds: number): void {
-    const next = clampOffset(seconds);
+    this.setAlignment(this.map.withBase(clampOffset(seconds)));
+  }
+
+  /**
+   * Replaces the whole alignment. Like `setOffset`, the recording keeps playing from where it is and tab
+   * time moves to match the new map.
+   */
+  setAlignment(next: AlignmentMap): void {
     this.landing = null;
     if (this.leadIn) {
       // Reading the lead-in can hand over to the element, so look at the state again afterwards.
-      const recording = this.leadInTime() + this.offsetSeconds;
+      const recording = this.map.toRec(this.leadInTime(), 'start');
       if (this.leadIn) {
         // Still before the recording's start: keep that position, move the tab against it.
-        this.offsetSeconds = next;
-        this.leadIn = { anchorTab: Math.max(0, recording - next), anchorSource: this.source() };
+        this.map = next;
+        this.leadIn = { anchorTab: Math.max(0, next.toTab(recording)), anchorSource: this.source() };
         return;
       }
-      // The element has taken over (or the tab ended): only the offset changes.
-      this.offsetSeconds = next;
+      // The element has taken over (or the tab ended): only the map changes.
+      this.map = next;
       return;
     }
     if (this.heldTab !== null || (this.current.paused && this.current.currentTime === 0)) {
       const tab = this.time();
-      this.offsetSeconds = next;
+      this.map = next;
       this.place(tab, false);
       return;
     }
-    this.offsetSeconds = next;
+    this.map = next;
   }
 
   /** Tab time during the lead-in; ends the lead-in when the recording begins or the tab ends. */
@@ -219,10 +237,10 @@ export class UserAudioClock implements Clock {
       this.current.pause();
       return this.duration;
     }
-    if (tab + this.offsetSeconds >= 0) {
+    if (this.map.toRec(tab, 'start') >= 0) {
       // Hand over to the element at the overshoot, so tab time neither jumps nor steps back.
       this.place(tab, true);
-      tab = this.current.currentTime - this.offsetSeconds;
+      tab = this.map.toTab(this.current.currentTime);
     }
     return clamp(tab, 0, this.duration);
   }
@@ -234,7 +252,7 @@ export class UserAudioClock implements Clock {
    */
   private place(tab: number, playing: boolean): void {
     this.adoptPending(false);
-    const recording = tab + this.offsetSeconds;
+    const recording = this.map.toRec(tab, 'start');
     if (recording < 0) {
       this.landing = null;
       if (!this.current.paused) this.current.pause();

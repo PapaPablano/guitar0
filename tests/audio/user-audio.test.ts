@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AlignmentMap } from '../../src/audio/alignment-map';
 import { loadUserAudio, MAX_AUDIO_BYTES, UserAudioClock, type AudioLike } from '../../src/audio/user-audio';
 
 function fakeAudio(): AudioLike & { paused: boolean; ended: boolean; duration: number } {
@@ -735,5 +736,152 @@ describe('UserAudioClock element swap', () => {
     clock.play();
     clock.dispose();
     expect(copy.paused).toBe(true);
+  });
+});
+
+describe('UserAudioClock with holds', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Base 1.5 s and 8 s of extra playing on the bar line at tab 40 s: the recording runs 41.5 to 49.5 while the tab waits. */
+  function setup(map = AlignmentMap.of(1.5, [{ at: 40, length: 8 }]), duration = 100) {
+    let now = 100;
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, duration, null, null, () => now);
+    clock.setAlignment(map);
+    return {
+      el,
+      clock,
+      advance(seconds: number) {
+        now += seconds;
+      },
+    };
+  }
+
+  it('covers AE2: the tab waits before the bar line while the extra playing goes by, and the element is never seeked', () => {
+    const { el, clock } = setup();
+    clock.seek(39);
+    clock.play();
+    el.currentTime = 41.4;
+    expect(clock.time()).toBeCloseTo(39.9, 9);
+    el.currentTime = 41.5;
+    expect(clock.time()).toBeCloseTo(39.999, 9);
+    el.currentTime = 45;
+    expect(clock.time()).toBeCloseTo(39.999, 9);
+    // nothing in the clock wrote to the element while it played through the extra playing
+    expect(el.currentTime).toBe(45);
+    el.currentTime = 49.5;
+    expect(clock.time()).toBeCloseTo(40, 9);
+    el.currentTime = 54.5;
+    expect(clock.time()).toBeCloseTo(45, 9);
+    clock.dispose();
+  });
+
+  it('covers AE5: a loop across the extra playing wraps only after it, restarting at the loop start', () => {
+    const { el, clock } = setup();
+    clock.setLoop({ start: 35, end: 45 });
+    clock.seek(36);
+    expect(el.currentTime).toBeCloseTo(37.5, 9);
+    clock.play();
+    el.currentTime = 45; // inside the extra playing: no wrap
+    expect(clock.time()).toBeCloseTo(39.999, 9);
+    expect(el.currentTime).toBe(45);
+    el.currentTime = 54.4;
+    expect(clock.time()).toBeCloseTo(44.9, 9);
+    el.currentTime = 54.5;
+    expect(clock.time()).toBeCloseTo(35, 9);
+    expect(el.currentTime).toBeCloseTo(36.5, 9);
+    clock.dispose();
+  });
+
+  it('a loop ending at the hold wraps on arrival; a loop starting there restarts after the extra playing', () => {
+    const ending = setup();
+    ending.clock.setLoop({ start: 30, end: 40 });
+    ending.clock.seek(35);
+    ending.clock.play();
+    ending.el.currentTime = 41.5;
+    expect(ending.clock.time()).toBeCloseTo(30, 9);
+    expect(ending.el.currentTime).toBeCloseTo(31.5, 9);
+    ending.clock.dispose();
+
+    const starting = setup();
+    starting.clock.setLoop({ start: 40, end: 50 });
+    starting.clock.seek(40);
+    expect(starting.el.currentTime).toBeCloseTo(49.5, 9);
+    starting.clock.play();
+    starting.el.currentTime = 58.4;
+    expect(starting.clock.time()).toBeCloseTo(48.9, 9);
+    starting.el.currentTime = 59.5;
+    expect(starting.clock.time()).toBeCloseTo(40, 9);
+    expect(starting.el.currentTime).toBeCloseTo(49.5, 9);
+    starting.clock.dispose();
+  });
+
+  it('seeks past the extra playing for a tab time after it, and to the rejoin side at the bar line itself', () => {
+    const { el, clock } = setup();
+    clock.seek(45);
+    expect(el.currentTime).toBeCloseTo(54.5, 9);
+    clock.seek(40);
+    expect(el.currentTime).toBeCloseTo(49.5, 9);
+    clock.seek(10);
+    expect(el.currentTime).toBeCloseTo(11.5, 9);
+  });
+
+  it('keeps the same places for the wait and the rejoin at a reduced rate', () => {
+    const { el, clock } = setup();
+    clock.setRate(0.6);
+    clock.seek(39);
+    clock.play();
+    el.currentTime = 44;
+    expect(clock.time()).toBeCloseTo(39.999, 9);
+    el.currentTime = 49.5;
+    expect(clock.time()).toBeCloseTo(40, 9);
+    clock.dispose();
+  });
+
+  it('applying a map while playing leaves the element alone and moves tab time', () => {
+    const { el, clock } = setup(AlignmentMap.fromOffset(1.5));
+    clock.seek(18.5);
+    clock.play();
+    el.currentTime = 20;
+    clock.setAlignment(AlignmentMap.of(1.5, [{ at: 10, length: 4 }]));
+    expect(el.currentTime).toBe(20);
+    expect(clock.time()).toBeCloseTo(20 - 1.5 - 4, 9);
+    expect(clock.alignment.holds).toEqual([{ at: 10, length: 4 }]);
+    clock.dispose();
+  });
+
+  it('setOffset changes only the base offset and keeps the holds', () => {
+    const { clock } = setup();
+    clock.setOffset(2);
+    expect(clock.offset).toBe(2);
+    expect(clock.alignment.holds).toEqual([{ at: 40, length: 8 }]);
+  });
+
+  it('still counts the silence before a recording that starts after the tab', () => {
+    const { el, clock, advance } = setup(AlignmentMap.of(-1.5, [{ at: 40, length: 8 }]));
+    clock.seek(0);
+    clock.play();
+    expect(clock.inLeadIn).toBe(true);
+    advance(1);
+    expect(clock.time()).toBeCloseTo(1, 9);
+    expect(el.paused).toBe(true);
+    advance(0.5);
+    expect(clock.time()).toBeCloseTo(1.5, 9);
+    expect(el.paused).toBe(false);
+    clock.dispose();
+  });
+
+  it('stops at the end of the tab after the extra playing, not before it', async () => {
+    vi.useFakeTimers();
+    const { el, clock } = setup(AlignmentMap.of(0, [{ at: 5, length: 3 }]), 10);
+    clock.seek(9.9);
+    clock.play();
+    el.currentTime = 13.4; // tab 10.4: past the end
+    await vi.advanceTimersByTimeAsync(40);
+    expect(el.paused).toBe(true);
+    expect(clock.time()).toBe(10);
+    clock.dispose();
   });
 });

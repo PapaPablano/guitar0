@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StemMixClock, type StemChannel } from '../../src/audio/stem-mix';
 import type { AudioLike } from '../../src/audio/user-audio';
+import { AlignmentMap } from '../../src/audio/alignment-map';
 import { initialMix } from '../../src/audio/mix-gains';
 import { STEM_NAMES, type StemName } from '../../src/stems/engine-client';
 
@@ -329,5 +330,42 @@ describe('StemMixClock loop wrap together', () => {
     clock.time();
     expect(clock.pass).toBe(2);
     for (const c of ch.list) expect((c.element as FakeAudio).paused).toBe(true);
+  });
+});
+
+describe('StemMixClock with holds', () => {
+  const map = () => AlignmentMap.of(1.5, [{ at: 40, length: 8 }]);
+
+  it('exposes the map of the leading stem and seeks every stem to the same recording position through it', () => {
+    const { list } = channels();
+    const clock = new StemMixClock(list, 100);
+    clock.setAlignment(map());
+    expect(clock.alignment.holds).toEqual([{ at: 40, length: 8 }]);
+    expect(clock.offset).toBe(1.5);
+    clock.seek(45);
+    for (const c of list) expect((c.element as FakeAudio).currentTime).toBeCloseTo(54.5, 9);
+    expect(clock.time()).toBeCloseTo(45, 9);
+  });
+
+  it('wraps a loop that spans the extra playing with every stem together and counts one pass', () => {
+    const ch = channels();
+    let now = 100;
+    const clock = new StemMixClock(ch.list, 100, () => now);
+    const elements = ch.list.map((c) => c.element as FakeAudio);
+    clock.setAlignment(map());
+    clock.setLoop({ start: 35, end: 45 });
+    clock.seek(36);
+    clock.play();
+    for (const e of elements) {
+      e.paused = false;
+      e.currentTime = 45; // inside the extra playing: no wrap
+    }
+    clock.time();
+    expect(clock.pass).toBe(1);
+    expect(elements[0].currentTime).toBe(45);
+    for (const e of elements) e.currentTime = 54.5;
+    clock.time();
+    expect(clock.pass).toBe(2);
+    for (const e of elements) expect(e.currentTime).toBeCloseTo(36.5, 6);
   });
 });

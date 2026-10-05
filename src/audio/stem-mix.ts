@@ -1,3 +1,4 @@
+import type { AlignmentMap } from './alignment-map';
 import type { Clock, LoopRange } from './clock';
 import { stemGains, initialMix, type MixState } from './mix-gains';
 import { passMix, type PassSchedule } from './pass-schedule';
@@ -79,6 +80,9 @@ export class StemMixClock implements Clock {
   get offset(): number {
     return this.leader.offset;
   }
+  get alignment(): AlignmentMap {
+    return this.leader.alignment;
+  }
 
   time(): number {
     return this.leader.time();
@@ -127,6 +131,11 @@ export class StemMixClock implements Clock {
   /** The recording moves against the tab; every stem keeps playing from where it is. */
   setOffset(seconds: number): void {
     this.leader.setOffset(seconds);
+  }
+
+  /** Applies a whole alignment, holds included; every stem keeps playing from where it is. */
+  setAlignment(map: AlignmentMap): void {
+    this.leader.setAlignment(map);
   }
 
   /** Sets the user's base mix; while a schedule runs on a loop, the current pass's mix is what plays. */
