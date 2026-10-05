@@ -290,7 +290,10 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
     const length = round2(offsets[n + 1] - offsets[n]);
     if (length < o.minHoldSeconds) continue;
     const at = nearestBar((jumps[n].before + 0.5) / CHROMA_RATE, input.barLines);
-    holds.push({ at, length });
+    // Two jumps that land on one bar line are one stretch of extra playing; add them up without float noise.
+    const same = holds.find((h) => h.at === at);
+    if (same) holds[holds.indexOf(same)] = { at, length: round2(same.length + length) };
+    else holds.push({ at, length });
   }
   return {
     kind: 'aligned',
