@@ -49,7 +49,7 @@ export class UserAudioClock implements Clock {
   private heldTab: number | null = null;
   private onLoopWrap: (() => void) | null = null;
   /** Where the element should be, set whenever it is positioned while playing; verified once, then cleared. */
-  private landing: { target: number; at: number; corrections: number } | null = null;
+  private landing: { target: number; at: number; corrections: number; sawSeeking: boolean } | null = null;
 
   /** The element in use; it can be replaced once with a seek-exact copy, see `offerElement`. */
   private current: AudioLike;
@@ -251,7 +251,7 @@ export class UserAudioClock implements Clock {
     this.leadIn = null;
     this.heldTab = null;
     this.current.currentTime = recording;
-    this.landing = playing ? { target: recording, at: this.source(), corrections: 0 } : null;
+    this.landing = playing ? { target: recording, at: this.source(), corrections: 0, sawSeeking: false } : null;
     if (playing && this.current.paused) void this.current.play();
   }
 
@@ -266,8 +266,17 @@ export class UserAudioClock implements Clock {
    * it did not. Compressed files seek inexactly, so a pass can otherwise start on a slightly different spot.
    */
   private checkLanding(): void {
-    const landing = this.landing;
-    if (!landing || this.current.paused || this.current.seeking) return;
+    let landing = this.landing;
+    if (!landing || this.current.paused) return;
+    if (this.current.seeking) {
+      landing.sawSeeking = true;
+      return;
+    }
+    if (landing.sawSeeking) {
+      // The element only starts playing when its seek ends, so measure from there, not from the restart.
+      landing = { ...landing, at: this.source(), sawSeeking: false };
+      this.landing = landing;
+    }
     if (this.source() - landing.at < LANDING_GRACE_SECONDS) return;
     const expected = this.expectedLanding();
     if (Math.abs(this.current.currentTime - expected) <= LANDING_TOLERANCE_SECONDS) {
@@ -279,7 +288,7 @@ export class UserAudioClock implements Clock {
       return;
     }
     this.current.currentTime = expected;
-    this.landing = { target: expected, at: this.source(), corrections: landing.corrections + 1 };
+    this.landing = { target: expected, at: this.source(), corrections: landing.corrections + 1, sawSeeking: false };
   }
 
   /** Loop wrapping and the stop at the tab end are checked on a timer too, so they hold when frames are throttled. */

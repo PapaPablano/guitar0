@@ -455,6 +455,13 @@ describe('UserAudioClock loop landing check', () => {
         await vi.advanceTimersByTimeAsync(20);
       }
     };
+    /** Time passes but the element does not move, as while it is busy seeking. */
+    const idle = async (seconds: number) => {
+      for (let t = 0; t < seconds - 1e-9; t += STEP) {
+        now += STEP;
+        await vi.advanceTimersByTimeAsync(20);
+      }
+    };
     /** Steps until the loop wraps and returns where the element was put, before any later tick runs. */
     const untilWrap = async () => {
       let previous = el.currentTime;
@@ -467,7 +474,7 @@ describe('UserAudioClock loop landing check', () => {
       }
       throw new Error('the loop never wrapped');
     };
-    return { el, clock, run, untilWrap };
+    return { el, clock, run, untilWrap, idle };
   }
 
   it('covers AE1: a restart that lands 60 ms late is corrected on the next check', async () => {
@@ -510,16 +517,34 @@ describe('UserAudioClock loop landing check', () => {
     clock.dispose();
   });
 
-  it('waits while the element reports it is still seeking', async () => {
-    const { el, clock, run, untilWrap } = setup(1);
+  it('does not skip ahead after a slow seek: time spent seeking is not playing time', async () => {
+    const { el, clock, run, untilWrap, idle } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.9);
+    clock.play();
+    const wrapped = await untilWrap();
+    // the element takes 300 ms to finish the seek and does not advance meanwhile
+    (el as { seeking?: boolean }).seeking = true;
+    await idle(0.3);
+    expect(el.currentTime).toBeCloseTo(wrapped, 9);
+    (el as { seeking?: boolean }).seeking = false;
+    await run(0.2);
+    expect(el.currentTime).toBeCloseTo(wrapped + 0.2, 6);
+    clock.dispose();
+  });
+
+  it('corrects a bad landing measured from when the seek finished', async () => {
+    const { el, clock, run, untilWrap, idle } = setup(1);
     clock.setLoop({ start: 4, end: 8 });
     clock.seek(7.9);
     clock.play();
     const wrapped = await untilWrap();
     (el as { seeking?: boolean }).seeking = true;
-    el.currentTime = wrapped + 0.2;
-    await run(0.1);
-    expect(el.currentTime).toBeCloseTo(wrapped + 0.2 + 0.1, 6);
+    await idle(0.1);
+    el.currentTime = wrapped + 0.08; // the seek ended 80 ms past the target
+    (el as { seeking?: boolean }).seeking = false;
+    await run(0.2);
+    expect(Math.abs(el.currentTime - (wrapped + 0.2))).toBeLessThan(0.025);
     clock.dispose();
   });
 
