@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeNeck, renderFretboard, stringLineY, type LabelMode } from '../../src/render/fretboard';
+import { emphasisAt } from '../../src/render/emphasis';
 import { frameLayout, renderComposite, type CompositeContext } from '../../src/render/composite';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -64,7 +65,7 @@ describe('dot labels', () => {
     expect(labels).toContain('C');
     expect(labels).toContain('D');
     // the only digits left are the fret numbers printed under the neck (1..7), never on a dot at 5 or 3 twice
-    const dotRadius = computeNeck(W, H, 6, 5).dotRadius;
+    const dotRadius = computeNeck(W, H, 6, 5).dotRadius * emphasisAt(1, 2, 1.2).scale;
     const dotFonts = calls.filter((c) => c.name === 'set:font' && String(c.args[0]).includes(`${Math.round(dotRadius * 1.1)}px`));
     expect(dotFonts.length).toBeGreaterThan(0);
   });

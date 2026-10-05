@@ -137,6 +137,44 @@ describe('neck styling', () => {
   });
 });
 
+describe('gem emphasis', () => {
+  const layout = computeLayout(W, H, 6);
+  const timeline = makeTimeline([{ start: 2, end: 3, string: 3, fret: FRET }]);
+  const note = timeline.notesForTrack(0)[0];
+
+  it('grows the gem as its start nears and again when it is struck', () => {
+    const far = gemBox(layout, note, 1).w;
+    const near = gemBox(layout, note, 1.8).w;
+    const struck = gemBox(layout, note, 2).w;
+    expect(near).toBeGreaterThan(far);
+    expect(struck).toBeGreaterThan(near);
+  });
+
+  it('settles smaller than the strike but stays above normal while held, then returns', () => {
+    const base = gemBox(layout, note, 1).w;
+    const held = gemBox(layout, note, 2.8).w;
+    expect(held).toBeGreaterThan(base);
+    expect(held).toBeLessThan(gemBox(layout, note, 2).w);
+    expect(gemBox(layout, note, 3.1).w).toBeCloseTo(base, 9);
+  });
+
+  it('keeps the gem centred on its string and, while it sounds, on the strikeline', () => {
+    const box = gemBox(layout, note, 2.1);
+    expect(box.x + box.w / 2).toBeCloseTo(layout.strikeX, 9);
+    expect(box.y + box.h / 2).toBeCloseTo(laneY(layout, 3), 9);
+  });
+
+  it('draws the fret number larger while the note sounds', () => {
+    const size = (t: number) => {
+      const calls = draw(timeline, t);
+      const at = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === String(FRET));
+      const font = calls.slice(0, at).filter((c) => c.name === 'set:font').pop();
+      return parseInt(String(font?.args[0]).replace('bold ', ''), 10);
+    };
+    expect(size(2.05)).toBeGreaterThan(size(1));
+  });
+});
+
 describe('visibleNotes', () => {
   it('includes a long note that began before the window but is still sounding', () => {
     const timeline = makeTimeline([

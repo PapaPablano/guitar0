@@ -56,7 +56,7 @@ describe('composite bottom view', () => {
 
     const neck = computeNeck(W, fretboardHeight, 6, maxFretUsed(timeline.notesForTrack(0)));
     const frameArcs = composite(t, { view: 'fretboard', lookahead: 4 }).filter(
-      (c) => c.name === 'arc' && (c.args[2] as number) <= neck.dotRadius * 1.4 && c.args[1] !== undefined,
+      (c) => c.name === 'arc' && (c.args[2] as number) <= neck.dotRadius * 4 && c.args[1] !== undefined,
     );
     // every fretboard arc appears in the frame (the highway adds its own note heads too)
     for (const arc of liveArcs) expect(frameArcs).toContainEqual(arc);

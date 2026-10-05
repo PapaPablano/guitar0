@@ -8,6 +8,7 @@ import {
   renderFretboard,
   stringLineY,
 } from '../../src/render/fretboard';
+import { emphasisAt } from '../../src/render/emphasis';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
 
@@ -23,6 +24,9 @@ function draw(specs: NoteSpec[], t: number, lookahead?: number, strings = 6): Ca
 }
 
 const neckFor = (highest: number, strings = 6) => computeNeck(W, H, strings, highest);
+/** Radius of a playing dot: the base radius grown by the note's emphasis at time `t`. */
+const playingRadius = (neck: ReturnType<typeof computeNeck>, start: number, end: number, t: number) =>
+  neck.dotRadius * emphasisAt(start, end, t).scale;
 const arcs = (calls: Call[], radius: number) =>
   calls.filter((c) => c.name === 'arc' && Math.abs((c.args[2] as number) - radius) < 1e-9);
 
@@ -83,7 +87,7 @@ describe('renderFretboard', () => {
   it('draws the playing note at its string and fret', () => {
     const neck = neckFor(7);
     const calls = draw([{ start: 1, end: 2, string: 3, fret: 5 }, { start: 3, end: 4, string: 2, fret: 7 }], 1.2);
-    const [dot] = arcs(calls, neck.dotRadius);
+    const [dot] = arcs(calls, playingRadius(neck, 1, 2, 1.2));
     expect(dot.args[0]).toBeCloseTo(noteDotX(neck, 5), 6);
     expect(dot.args[1]).toBeCloseTo(stringLineY(neck, 3), 6);
   });
@@ -99,13 +103,13 @@ describe('renderFretboard', () => {
       ],
       1.2,
     );
-    expect(arcs(calls, neck.dotRadius)).toHaveLength(3);
+    expect(arcs(calls, playingRadius(neck, 1, 2, 1.2))).toHaveLength(3);
   });
 
   it('draws an open-string note beside the nut', () => {
     const neck = neckFor(7);
     const calls = draw([{ start: 1, end: 2, string: 2, fret: 0 }, { start: 3, end: 4, fret: 7 }], 1.2);
-    const [dot] = arcs(calls, neck.dotRadius);
+    const [dot] = arcs(calls, playingRadius(neck, 1, 2, 1.2));
     expect(dot.args[0] as number).toBeLessThan(neck.nutX);
   });
 
@@ -183,7 +187,7 @@ describe('renderFretboard', () => {
       2.2,
     );
     const trailAt = calls.findIndex((c) => c.name === 'arc' && c.args[2] === neck.dotRadius * 0.8);
-    const playingAt = calls.findIndex((c) => c.name === 'arc' && c.args[2] === neck.dotRadius);
+    const playingAt = calls.findIndex((c) => c.name === 'arc' && c.args[2] === playingRadius(neck, 2, 2.5, 2.2));
     expect(trailAt).toBeGreaterThanOrEqual(0);
     expect(playingAt).toBeGreaterThan(trailAt);
   });
@@ -202,5 +206,37 @@ describe('renderFretboard', () => {
       { start: 2, end: 2.5, string: 3, fret: 7 },
     ];
     expect(draw(specs, 1.2)).toEqual(draw(specs, 1.2));
+  });
+});
+
+describe('emphasis on the playing note', () => {
+  const specs: NoteSpec[] = [{ start: 1, end: 2, string: 3, fret: 5 }, { start: 3, end: 4, string: 2, fret: 7 }];
+
+  it('draws the playing dot larger than the base size, and largest right at its start', () => {
+    const neck = neckFor(7);
+    const radiusAt = (t: number) =>
+      Math.max(...draw(specs, t).filter((c) => c.name === 'arc' && (c.args[0] as number) === noteDotX(neck, 5)).map((c) => c.args[2] as number));
+    expect(radiusAt(1.01)).toBeGreaterThan(neck.dotRadius);
+    expect(radiusAt(1.01)).toBeGreaterThan(radiusAt(1.5));
+  });
+
+  it('draws a halo around the playing dot only while it sounds', () => {
+    const neck = neckFor(7);
+    const halos = (t: number) =>
+      draw(specs, t).filter((c) => c.name === 'arc' && (c.args[2] as number) > playingRadius(neck, 1, 2, t) + 1 && (c.args[0] as number) === noteDotX(neck, 5)).length;
+    expect(halos(1.2)).toBeGreaterThan(0);
+    expect(halos(2.5)).toBe(0);
+  });
+
+  it('returns to the base size once the note is over', () => {
+    const neck = neckFor(7);
+    expect(arcs(draw(specs, 2.5), neck.dotRadius).length).toBeGreaterThan(0);
+  });
+
+  it('swells the next marker as its start nears', () => {
+    const neck = neckFor(7);
+    const outline = (t: number) =>
+      Math.max(...draw(specs, t, 1).filter((c) => c.name === 'arc' && (c.args[0] as number) === noteDotX(neck, 7)).map((c) => c.args[2] as number));
+    expect(outline(2.9)).toBeGreaterThan(outline(2.2));
   });
 });

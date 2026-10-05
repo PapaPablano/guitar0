@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
-import { computeLayout, isActive, laneY, noteX, timeToX, type HighwayLayout } from './layout';
+import { emphasisAt } from './emphasis';
+import { computeLayout, laneY, noteX, timeToX, type HighwayLayout } from './layout';
 import { noteName, spellingForTuning } from './note-names';
 import { drawTechniques, fretLabel } from './techniques';
 import { DEFAULT_THEME, stringColor, stringShade, type HighwayTheme } from './theme';
@@ -63,13 +64,16 @@ export interface GemBox {
 const GEM_HALF_WIDTH = 1.4;
 const GEM_HALF_HEIGHT = 0.95;
 
+/** The gem as drawn at time `t`, grown by its emphasis and held on the strikeline while it sounds. */
 export function gemBox(layout: HighwayLayout, note: NoteEvent, t: number): GemBox {
-  return gemBoxAt(layout, noteX(layout, note, t), laneY(layout, note.string));
+  const e = emphasisAt(note.startSeconds, note.endSeconds, t);
+  const cx = e.sounding ? layout.strikeX : noteX(layout, note, t);
+  return gemBoxAt(layout, cx, laneY(layout, note.string), e.scale);
 }
 
-function gemBoxAt(layout: HighwayLayout, cx: number, cy: number): GemBox {
-  const w = layout.noteRadius * GEM_HALF_WIDTH * 2;
-  const h = layout.noteRadius * GEM_HALF_HEIGHT * 2;
+function gemBoxAt(layout: HighwayLayout, cx: number, cy: number, scale = 1): GemBox {
+  const w = layout.noteRadius * GEM_HALF_WIDTH * 2 * scale;
+  const h = layout.noteRadius * GEM_HALF_HEIGHT * 2 * scale;
   return { x: cx - w / 2, y: cy - h / 2, w, h };
 }
 
@@ -108,7 +112,10 @@ export function renderHighway(
   const visible = visibleNotes(notes, from, to);
   drawStrikeRings(ctx, visible, layout, theme, t);
   for (const note of visible) drawSustain(ctx, note, layout, theme, t);
-  for (const note of visible) drawNote(ctx, note, layout, theme, t);
+  // The note being played goes on top, so a neighbour never covers it.
+  const sounding = (n: NoteEvent) => emphasisAt(n.startSeconds, n.endSeconds, t).sounding;
+  for (const note of visible) if (!sounding(note)) drawNote(ctx, note, layout, theme, t);
+  for (const note of visible) if (sounding(note)) drawNote(ctx, note, layout, theme, t);
   drawTechniques(ctx, visible, layout, theme, t);
 
   for (const note of visible) drawHitEffect(ctx, note, layout, theme, t);
@@ -253,7 +260,7 @@ function drawStrikeRings(
   t: number,
 ): void {
   const lit = new Set<number>();
-  for (const note of visible) if (isActive(note, t)) lit.add(note.string);
+  for (const note of visible) if (emphasisAt(note.startSeconds, note.endSeconds, t).sounding) lit.add(note.string);
   const glow: readonly (readonly [number, number])[] = [[8, 0.1], [4, 0.18]];
   for (let s = 1; s <= layout.stringCount; s++) {
     const box = gemBoxAt(layout, layout.strikeX, laneY(layout, s));
@@ -308,18 +315,20 @@ function drawNote(
   theme: HighwayTheme,
   t: number,
 ): void {
-  const active = isActive(note, t);
-  const passed = note.startSeconds < t && !active;
+  const e = emphasisAt(note.startSeconds, note.endSeconds, t);
+  const passed = note.startSeconds < t && !e.sounding;
   const alpha = passed ? Math.max(0, 0.35 - ((t - note.endSeconds) / layout.lookbehindSeconds) * 0.35) : 1;
   if (alpha <= 0) return;
   const box = gemBox(layout, note, t);
   const corner = box.h * 0.3;
-  const lip = Math.max(2, layout.noteRadius * 0.2);
+  const lip = Math.max(2, layout.noteRadius * 0.2 * e.scale);
   const colour = stringColor(theme, note.string);
 
-  if (active) {
+  if (e.sounding) {
     ctx.fillStyle = colour;
-    const glow: readonly (readonly [number, number])[] = [[8, 0.1], [4, 0.18]];
+    // The glow flares with the attack and settles while the note is held.
+    const flare = 1 + e.pop;
+    const glow: readonly (readonly [number, number])[] = [[8 * flare, 0.1], [4 * flare, 0.18]];
     for (const [grow, a] of glow) {
       ctx.globalAlpha = alpha * a;
       roundedRectPath(ctx, box.x - grow, box.y - grow, box.w + grow * 2, box.h + grow * 2, corner + grow);
@@ -341,7 +350,7 @@ function drawNote(
 
   ctx.globalAlpha = alpha;
   ctx.fillStyle = theme.noteText;
-  ctx.font = `bold ${Math.round(layout.noteRadius * 1.1)}px system-ui, sans-serif`;
+  ctx.font = `bold ${Math.round(layout.noteRadius * 1.1 * e.scale)}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(fretLabel(note), box.x + box.w / 2, box.y + box.h / 2);

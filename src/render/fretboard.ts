@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
 import { DEFAULT_LOOKAHEAD, maxFretUsed, stepsAt, type Step } from './fretboard-steps';
+import { emphasisAt } from './emphasis';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
 import { noteName, spellingForTuning, type NoteSpelling } from './note-names';
 import { fretLabel } from './techniques';
@@ -140,11 +141,23 @@ export function renderFretboard(
     for (const note of step.notes) {
       const onPlaying = playing?.notes.some((p) => p.string === note.string && p.fret === note.fret) ?? false;
       if (onPlaying) drawRing(ctx, neck, note, theme, 0.9 - i * 0.1);
-      else drawDot(ctx, neck, note, neck.dotRadius * 0.7, theme, 0.95 - i * 0.1, 'outline', naming);
+      else {
+        // The next marker swells as its moment nears.
+        const grow = emphasisAt(note.startSeconds, note.endSeconds, t).scale;
+        drawDot(ctx, neck, note, neck.dotRadius * 0.7 * grow, theme, 0.95 - i * 0.1, 'outline', naming);
+      }
     }
   });
 
-  if (playing) for (const note of playing.notes) drawDot(ctx, neck, note, neck.dotRadius, theme, 1, 'solid', naming);
+  if (playing) {
+    for (const note of playing.notes) {
+      // The note to play is drawn larger, popping on its beat, with a halo that flares then settles.
+      const e = emphasisAt(note.startSeconds, note.endSeconds, t);
+      const radius = neck.dotRadius * e.scale;
+      if (e.sounding) drawHalo(ctx, neck, note, radius, e.pop, theme);
+      drawDot(ctx, neck, note, radius, theme, 1, 'solid', naming);
+    }
+  }
   ctx.restore();
 }
 
@@ -252,6 +265,27 @@ function drawDot(
       ctx.font = `${Math.max(9, Math.round(radius * 0.8))}px system-ui, sans-serif`;
       ctx.fillText(text.badge, x, y + radius + 8);
     }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** A soft glow around the note being played; wider and brighter right at its start. */
+function drawHalo(
+  ctx: DrawContext,
+  neck: NeckLayout,
+  note: NoteEvent,
+  radius: number,
+  pop: number,
+  theme: HighwayTheme,
+): void {
+  const x = noteDotX(neck, note.fret);
+  const y = stringLineY(neck, note.string);
+  ctx.fillStyle = stringColor(theme, note.string);
+  for (const [extra, alpha] of [[10 + 10 * pop, 0.12], [5 + 5 * pop, 0.2]] as const) {
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(x, y, radius + extra, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.globalAlpha = 1;
 }
