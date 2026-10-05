@@ -396,13 +396,16 @@ function drawNut(
 
 /** The far right fades into the background, so notes seem to rise out of the dark. */
 function drawEdgeFade(ctx: DrawContext, layout: HighwayLayout, theme: HighwayTheme): void {
-  const steps = 10;
+  // Each strip covers everything to its right too, so the layers stack into a smooth ramp
+  // and no two strips overlap at a seam.
+  const steps = 16;
   const fadeWidth = layout.width * 0.14;
   const stripWidth = fadeWidth / steps;
   ctx.fillStyle = theme.background;
+  ctx.globalAlpha = 0.14;
   for (let i = 0; i < steps; i++) {
-    ctx.globalAlpha = ((i + 0.5) / steps) * 0.95;
-    fillBox(ctx, layout.width - fadeWidth + i * stripWidth, 0, stripWidth + 1, layout.height);
+    const x = layout.width - fadeWidth + i * stripWidth;
+    fillBox(ctx, x, 0, layout.width - x, layout.height);
   }
   ctx.globalAlpha = 1;
 }
