@@ -14,7 +14,7 @@ export const DEFAULT_LABEL_MODE: LabelMode = 'fret';
 export const MIN_FRETS = 7;
 export const MAX_FRETS = 24;
 export const MIN_DOT_RADIUS = 7;
-const MAX_DOT_RADIUS = 18;
+const MAX_DOT_RADIUS = 28;
 
 const POSITION_MARKS = [3, 5, 7, 9, 15, 17, 19, 21];
 const DOUBLE_MARKS = [12, 24];

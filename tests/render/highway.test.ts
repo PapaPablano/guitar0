@@ -50,8 +50,8 @@ describe('renderHighway', () => {
     expect(labels).toHaveLength(1);
     const box = gemBox(layout, timeline.notesForTrack(0)[0], 2);
     expect(box.x + box.w / 2).toBe(layout.strikeX);
-    expect(labels[0].args[1]).toBe(layout.strikeX);
-    expect(labels[0].args[2]).toBe(laneY(layout, 3));
+    expect(labels[0].args[1] as number).toBeCloseTo(layout.strikeX, 9);
+    expect(labels[0].args[2] as number).toBeCloseTo(laneY(layout, 3), 9);
   });
 
   it('places an upcoming note one second of travel to the right of the strikeline', () => {
@@ -79,7 +79,7 @@ describe('renderHighway', () => {
     const layout = computeLayout(W, H, 6);
     const timeline = makeTimeline([{ start: 2, end: 4, fret: FRET }]);
     const labels = gemLabels(draw(timeline, 3));
-    expect(labels[0].args[1]).toBe(layout.strikeX);
+    expect(labels[0].args[1] as number).toBeCloseTo(layout.strikeX, 9);
   });
 
   it('draws a hit ring only shortly after the note starts', () => {

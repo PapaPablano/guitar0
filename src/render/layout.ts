@@ -45,7 +45,7 @@ export function computeLayout(
     pxPerSecond,
     lookaheadSeconds,
     lookbehindSeconds: strikeX / pxPerSecond,
-    noteRadius: Math.max(4, Math.min(laneHeight * 0.42, 18)),
+    noteRadius: Math.max(4, Math.min(laneHeight * 0.42, 30)),
   };
 }
 
