@@ -51,18 +51,51 @@ export class UserAudioClock implements Clock {
   /** Where the element should be, set whenever it is positioned while playing; verified once, then cleared. */
   private landing: { target: number; at: number; corrections: number } | null = null;
 
+  /** The element in use; it can be replaced once with a seek-exact copy, see `offerElement`. */
+  private current: AudioLike;
+  /** A replacement waiting for a point where the element is positioned anyway. */
+  private pendingElement: AudioLike | null = null;
+
   constructor(
-    readonly element: AudioLike,
+    initial: AudioLike,
     private readonly duration: number,
     readonly file: File | null = null,
     private readonly objectUrl: string | null = null,
     private readonly source: TimeSource = performanceSource,
   ) {
-    element.preservesPitch = true;
+    this.current = initial;
+    initial.preservesPitch = true;
+  }
+
+  get element(): AudioLike {
+    return this.current;
+  }
+
+  /**
+   * Offers an element that plays the same recording, such as a seek-exact copy. It takes over at the next
+   * loop restart, seek or pause, where the element is repositioned anyway, so what is heard does not jump;
+   * when nothing is playing it takes over at once. A second offer before the first applies replaces it.
+   */
+  offerElement(next: AudioLike): void {
+    this.pendingElement = next;
+    if (!this.playing) this.adoptPending(true);
+  }
+
+  /** Moves playback onto the waiting element. `carryPosition` copies the old element's position; a caller that is about to reposition it does not need to. */
+  private adoptPending(carryPosition: boolean): void {
+    const next = this.pendingElement;
+    if (!next) return;
+    this.pendingElement = null;
+    const old = this.current;
+    next.playbackRate = this.currentRate;
+    next.preservesPitch = true;
+    if (carryPosition) next.currentTime = old.currentTime;
+    old.pause();
+    this.current = next;
   }
 
   get playing(): boolean {
-    return this.leadIn !== null || (!this.element.paused && !this.element.ended);
+    return this.leadIn !== null || (!this.current.paused && !this.current.ended);
   }
 
   /** True while the clock is counting the silence before the recording and the element is not running. */
@@ -85,7 +118,7 @@ export class UserAudioClock implements Clock {
   time(): number {
     if (this.leadIn) return this.leadInTime();
     if (this.heldTab !== null) return this.heldTab;
-    let media = this.element.currentTime - this.offsetSeconds;
+    let media = this.current.currentTime - this.offsetSeconds;
     const loop = this.loopRange;
     if (loop && this.playing && media >= loop.end) {
       media = loop.start;
@@ -93,7 +126,7 @@ export class UserAudioClock implements Clock {
       this.onLoopWrap?.();
     }
     // A recording longer than the tab stops with the tab instead of playing on unseen.
-    if (this.playing && media >= this.duration) this.element.pause();
+    if (this.playing && media >= this.duration) this.current.pause();
     return clamp(media, 0, this.duration);
   }
 
@@ -112,7 +145,8 @@ export class UserAudioClock implements Clock {
       this.heldTab = this.leadInTime();
       this.leadIn = null;
     }
-    this.element.pause();
+    this.current.pause();
+    this.adoptPending(true);
     this.landing = null;
     this.stopWatcher();
   }
@@ -126,8 +160,8 @@ export class UserAudioClock implements Clock {
     if (this.leadIn) this.leadIn = { anchorTab: this.leadInTime(), anchorSource: this.source() };
     if (this.landing) this.landing = { ...this.landing, target: this.expectedLanding(), at: this.source() };
     this.currentRate = clampRate(rate, 0.25);
-    this.element.playbackRate = this.currentRate;
-    this.element.preservesPitch = true;
+    this.current.playbackRate = this.currentRate;
+    this.current.preservesPitch = true;
   }
 
   setLoop(range: LoopRange | null): void {
@@ -160,7 +194,7 @@ export class UserAudioClock implements Clock {
       this.offsetSeconds = next;
       return;
     }
-    if (this.heldTab !== null || (this.element.paused && this.element.currentTime === 0)) {
+    if (this.heldTab !== null || (this.current.paused && this.current.currentTime === 0)) {
       const tab = this.time();
       this.offsetSeconds = next;
       this.place(tab, false);
@@ -182,13 +216,13 @@ export class UserAudioClock implements Clock {
     if (tab >= this.duration) {
       this.leadIn = null;
       this.heldTab = this.duration;
-      this.element.pause();
+      this.current.pause();
       return this.duration;
     }
     if (tab + this.offsetSeconds >= 0) {
       // Hand over to the element at the overshoot, so tab time neither jumps nor steps back.
       this.place(tab, true);
-      tab = this.element.currentTime - this.offsetSeconds;
+      tab = this.current.currentTime - this.offsetSeconds;
     }
     return clamp(tab, 0, this.duration);
   }
@@ -199,11 +233,12 @@ export class UserAudioClock implements Clock {
    * is never given a negative position.
    */
   private place(tab: number, playing: boolean): void {
+    this.adoptPending(false);
     const recording = tab + this.offsetSeconds;
     if (recording < 0) {
       this.landing = null;
-      if (!this.element.paused) this.element.pause();
-      this.element.currentTime = 0;
+      if (!this.current.paused) this.current.pause();
+      this.current.currentTime = 0;
       if (playing) {
         this.leadIn = { anchorTab: tab, anchorSource: this.source() };
         this.heldTab = null;
@@ -215,9 +250,9 @@ export class UserAudioClock implements Clock {
     }
     this.leadIn = null;
     this.heldTab = null;
-    this.element.currentTime = recording;
+    this.current.currentTime = recording;
     this.landing = playing ? { target: recording, at: this.source(), corrections: 0 } : null;
-    if (playing && this.element.paused) void this.element.play();
+    if (playing && this.current.paused) void this.current.play();
   }
 
   /** Where the element should be now, given where the last restart put it and how long it has played. */
@@ -232,10 +267,10 @@ export class UserAudioClock implements Clock {
    */
   private checkLanding(): void {
     const landing = this.landing;
-    if (!landing || this.element.paused || this.element.seeking) return;
+    if (!landing || this.current.paused || this.current.seeking) return;
     if (this.source() - landing.at < LANDING_GRACE_SECONDS) return;
     const expected = this.expectedLanding();
-    if (Math.abs(this.element.currentTime - expected) <= LANDING_TOLERANCE_SECONDS) {
+    if (Math.abs(this.current.currentTime - expected) <= LANDING_TOLERANCE_SECONDS) {
       this.landing = null;
       return;
     }
@@ -243,7 +278,7 @@ export class UserAudioClock implements Clock {
       this.landing = null;
       return;
     }
-    this.element.currentTime = expected;
+    this.current.currentTime = expected;
     this.landing = { target: expected, at: this.source(), corrections: landing.corrections + 1 };
   }
 
@@ -266,7 +301,7 @@ export class UserAudioClock implements Clock {
     this.stopWatcher();
     this.leadIn = null;
     this.landing = null;
-    this.element.pause();
+    this.current.pause();
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
   }
 }

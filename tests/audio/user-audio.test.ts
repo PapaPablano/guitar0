@@ -577,3 +577,138 @@ describe('UserAudioClock loop landing check', () => {
     clock.dispose();
   });
 });
+
+describe('UserAudioClock element swap', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const STEP = 0.02;
+
+  function setup(offset = 1) {
+    vi.useFakeTimers();
+    let now = 100;
+    const original = fakeAudio();
+    const copy = fakeAudio();
+    const clock = new UserAudioClock(original, 60, null, null, () => now);
+    clock.setOffset(offset);
+    const run = async (seconds: number) => {
+      for (let t = 0; t < seconds - 1e-9; t += STEP) {
+        now += STEP;
+        for (const el of [original, copy]) if (!el.paused) el.currentTime += STEP * clock.rate;
+        await vi.advanceTimersByTimeAsync(20);
+      }
+    };
+    return { original, copy, clock, run };
+  }
+
+  it('covers AE5: a copy offered while playing waits, then takes over at the next loop wrap', async () => {
+    const { original, copy, clock, run } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(5);
+    clock.play();
+    clock.offerElement(copy);
+    await run(0.5);
+    expect(clock.element).toBe(original);
+    expect(copy.paused).toBe(true);
+    // play on to just past the loop end (started at tab 5, so tab 8 is 3 s in)
+    await run(2.6);
+    expect(clock.element).toBe(copy);
+    expect(copy.paused).toBe(false);
+    expect(original.paused).toBe(true);
+    expect(copy.currentTime).toBeGreaterThanOrEqual(5);
+    expect(copy.currentTime).toBeLessThan(5.3); // the loop start plus the offset, then a little playing
+    clock.dispose();
+  });
+
+  it('covers AE5: tab time moves on by normal playback across the swap', async () => {
+    const { copy, clock, run } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.8);
+    clock.play();
+    clock.offerElement(copy);
+    const before = clock.time();
+    await run(0.1);
+    expect(clock.time()).toBeCloseTo(before + 0.1, 1);
+    clock.dispose();
+  });
+
+  it('applies a copy offered while paused at once, at the same position', () => {
+    const { original, copy, clock } = setup(1);
+    clock.seek(10);
+    clock.offerElement(copy);
+    expect(clock.element).toBe(copy);
+    expect(copy.currentTime).toBeCloseTo(original.currentTime, 9);
+    expect(clock.time()).toBeCloseTo(10, 9);
+    clock.play();
+    expect(copy.paused).toBe(false);
+    expect(original.paused).toBe(true);
+    clock.dispose();
+  });
+
+  it('applies a pending copy when the clock is paused, carrying the position over', async () => {
+    const { original, copy, clock, run } = setup(1);
+    clock.seek(10);
+    clock.play();
+    clock.offerElement(copy);
+    await run(0.2);
+    const at = original.currentTime;
+    clock.pause();
+    expect(clock.element).toBe(copy);
+    expect(copy.currentTime).toBeCloseTo(at, 9);
+    expect(copy.paused).toBe(true);
+    clock.dispose();
+  });
+
+  it('applies a pending copy on a seek while playing', async () => {
+    const { original, copy, clock, run } = setup(1);
+    clock.seek(10);
+    clock.play();
+    clock.offerElement(copy);
+    await run(0.1);
+    clock.seek(20);
+    expect(clock.element).toBe(copy);
+    expect(copy.currentTime).toBeCloseTo(21, 9);
+    expect(copy.paused).toBe(false);
+    expect(original.paused).toBe(true);
+    clock.dispose();
+  });
+
+  it('a second copy offered before the first applies replaces it', async () => {
+    const { copy, clock, run } = setup(1);
+    const second = fakeAudio();
+    clock.seek(10);
+    clock.play();
+    clock.offerElement(copy);
+    clock.offerElement(second);
+    await run(0.1);
+    clock.seek(12);
+    expect(clock.element).toBe(second);
+    expect(copy.paused).toBe(true);
+    clock.dispose();
+  });
+
+  it('carries the rate to the new element and keeps the loop', async () => {
+    const { copy, clock, run } = setup(1);
+    clock.setRate(0.5);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(5);
+    clock.play();
+    clock.offerElement(copy);
+    await run(0.1);
+    clock.seek(6);
+    expect(copy.playbackRate).toBe(0.5);
+    expect(copy.preservesPitch).toBe(true);
+    expect(clock.loop).toEqual({ start: 4, end: 8 });
+    clock.dispose();
+  });
+
+  it('dispose pauses the element in use', () => {
+    const { copy, clock } = setup(1);
+    clock.seek(5);
+    clock.offerElement(copy);
+    clock.play();
+    clock.dispose();
+    expect(copy.paused).toBe(true);
+  });
+});
