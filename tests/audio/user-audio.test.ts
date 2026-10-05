@@ -433,3 +433,147 @@ describe('UserAudioClock loop-wrap notification', () => {
     expect(wraps).toBe(0);
   });
 });
+
+describe('UserAudioClock loop landing check', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const STEP = 0.02;
+
+  /** A clock on a manual time source with a fake element that advances as time passes. */
+  function setup(offset = 1) {
+    vi.useFakeTimers();
+    let now = 100;
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, 60, null, null, () => now);
+    clock.setOffset(offset);
+    const run = async (seconds: number) => {
+      for (let t = 0; t < seconds - 1e-9; t += STEP) {
+        now += STEP;
+        if (!el.paused) el.currentTime += STEP * clock.rate;
+        await vi.advanceTimersByTimeAsync(20);
+      }
+    };
+    /** Steps until the loop wraps and returns where the element was put, before any later tick runs. */
+    const untilWrap = async () => {
+      let previous = el.currentTime;
+      for (let i = 0; i < 400; i++) {
+        now += STEP;
+        if (!el.paused) el.currentTime += STEP * clock.rate;
+        await vi.advanceTimersByTimeAsync(20);
+        if (el.currentTime < previous - 0.5) return el.currentTime;
+        previous = el.currentTime;
+      }
+      throw new Error('the loop never wrapped');
+    };
+    return { el, clock, run, untilWrap };
+  }
+
+  it('covers AE1: a restart that lands 60 ms late is corrected on the next check', async () => {
+    const { el, clock, run, untilWrap } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.9);
+    clock.play();
+    const wrapped = await untilWrap(); // the loop start plus the offset, 5
+    expect(wrapped).toBeCloseTo(5, 6);
+    el.currentTime = wrapped + 0.06; // the seek landed late
+    await run(0.1);
+    // five ticks after the late landing: the correct position is the wrapped one plus 0.1
+    expect(Math.abs(el.currentTime - (wrapped + 0.1))).toBeLessThan(0.025);
+    clock.dispose();
+  });
+
+  it('leaves a landing inside the tolerance alone', async () => {
+    const { el, clock, run, untilWrap } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.9);
+    clock.play();
+    const wrapped = await untilWrap();
+    el.currentTime = wrapped + 0.01;
+    await run(0.1);
+    expect(el.currentTime).toBeCloseTo(wrapped + 0.01 + 0.1, 6);
+    clock.dispose();
+  });
+
+  it('covers AE4: at 0.6 speed the expected position advances at 0.6', async () => {
+    const { el, clock, run, untilWrap } = setup(1);
+    clock.setRate(0.6);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.95);
+    clock.play();
+    const wrapped = await untilWrap();
+    el.currentTime = wrapped + 0.08;
+    await run(0.1);
+    // five ticks of 20 ms at rate 0.6 is 0.06 of recording time
+    expect(Math.abs(el.currentTime - (wrapped + 0.06))).toBeLessThan(0.025);
+    clock.dispose();
+  });
+
+  it('waits while the element reports it is still seeking', async () => {
+    const { el, clock, run, untilWrap } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.9);
+    clock.play();
+    const wrapped = await untilWrap();
+    (el as { seeking?: boolean }).seeking = true;
+    el.currentTime = wrapped + 0.2;
+    await run(0.1);
+    expect(el.currentTime).toBeCloseTo(wrapped + 0.2 + 0.1, 6);
+    clock.dispose();
+  });
+
+  it('covers AE2: an offset change during a loop keeps the loop on the same bars', async () => {
+    const { el, clock, run } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(5);
+    clock.play();
+    await run(0.1);
+    clock.setOffset(2);
+    expect(clock.loop).toEqual({ start: 4, end: 8 });
+    el.currentTime = 9.9; // tab time 7.9 under the new offset
+    await run(0.2);
+    expect(el.currentTime).toBeLessThan(6.5); // wrapped to 4 + 2
+    expect(el.currentTime).toBeGreaterThan(5.9);
+    clock.dispose();
+  });
+
+  it('covers AE3: turning the loop off mid-pass keeps playing with no seek', async () => {
+    const { el, clock, run } = setup(1);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(5);
+    clock.play();
+    await run(0.1);
+    const before = el.currentTime;
+    const tabBefore = clock.time();
+    clock.setLoop(null);
+    await run(0.1);
+    expect(el.paused).toBe(false);
+    expect(el.currentTime).toBeCloseTo(before + 0.1, 6);
+    expect(clock.time()).toBeCloseTo(tabBefore + 0.1, 6);
+    clock.dispose();
+  });
+
+  it('does not check during the silence before a recording that starts later', async () => {
+    const { el, clock, run } = setup(-2);
+    clock.setLoop({ start: 0, end: 3 });
+    clock.play();
+    await run(0.5);
+    expect(clock.inLeadIn).toBe(true);
+    expect(el.currentTime).toBe(0);
+    clock.dispose();
+  });
+
+  it('still checks an element that never reports seeking', async () => {
+    const { el, clock, run, untilWrap } = setup(0);
+    clock.setLoop({ start: 4, end: 8 });
+    clock.seek(7.9);
+    clock.play();
+    const wrapped = await untilWrap();
+    expect('seeking' in el).toBe(false);
+    el.currentTime = wrapped - 0.07;
+    await run(0.1);
+    expect(Math.abs(el.currentTime - (wrapped + 0.1))).toBeLessThan(0.025);
+    clock.dispose();
+  });
+});

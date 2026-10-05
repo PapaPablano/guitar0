@@ -12,6 +12,8 @@ export interface AudioLike {
   readonly paused: boolean;
   readonly ended: boolean;
   readonly duration: number;
+  /** True while the element is still moving to a position it was just given; absent on elements that do not report it. */
+  readonly seeking?: boolean;
   play(): Promise<void>;
   pause(): void;
 }
@@ -20,6 +22,13 @@ export interface AudioLike {
 export type TimeSource = () => number;
 
 const performanceSource: TimeSource = () => performance.now() / 1000;
+
+/** How far the element may sit from where a loop restart should have put it before it is moved back. */
+export const LANDING_TOLERANCE_SECONDS = 0.025;
+/** How long after a restart the landing is first checked, one watcher tick. */
+const LANDING_GRACE_SECONDS = 0.02;
+/** A restart that keeps missing is corrected this many times, then left alone. */
+const LANDING_MAX_CORRECTIONS = 3;
 
 /**
  * A Clock backed by the user's own recording. Media time is the position in the tab; the recording
@@ -39,6 +48,8 @@ export class UserAudioClock implements Clock {
   /** Tab time while paused in the silence before the recording. */
   private heldTab: number | null = null;
   private onLoopWrap: (() => void) | null = null;
+  /** Where the element should be, set whenever it is positioned while playing; verified once, then cleared. */
+  private landing: { target: number; at: number; corrections: number } | null = null;
 
   constructor(
     readonly element: AudioLike,
@@ -102,6 +113,7 @@ export class UserAudioClock implements Clock {
       this.leadIn = null;
     }
     this.element.pause();
+    this.landing = null;
     this.stopWatcher();
   }
 
@@ -112,6 +124,7 @@ export class UserAudioClock implements Clock {
   setRate(rate: number): void {
     // The lead-in counts tab time at the old rate up to now, then continues at the new one.
     if (this.leadIn) this.leadIn = { anchorTab: this.leadInTime(), anchorSource: this.source() };
+    if (this.landing) this.landing = { ...this.landing, target: this.expectedLanding(), at: this.source() };
     this.currentRate = clampRate(rate, 0.25);
     this.element.playbackRate = this.currentRate;
     this.element.preservesPitch = true;
@@ -133,6 +146,7 @@ export class UserAudioClock implements Clock {
    */
   setOffset(seconds: number): void {
     const next = clampOffset(seconds);
+    this.landing = null;
     if (this.leadIn) {
       // Reading the lead-in can hand over to the element, so look at the state again afterwards.
       const recording = this.leadInTime() + this.offsetSeconds;
@@ -187,6 +201,7 @@ export class UserAudioClock implements Clock {
   private place(tab: number, playing: boolean): void {
     const recording = tab + this.offsetSeconds;
     if (recording < 0) {
+      this.landing = null;
       if (!this.element.paused) this.element.pause();
       this.element.currentTime = 0;
       if (playing) {
@@ -201,7 +216,35 @@ export class UserAudioClock implements Clock {
     this.leadIn = null;
     this.heldTab = null;
     this.element.currentTime = recording;
+    this.landing = playing ? { target: recording, at: this.source(), corrections: 0 } : null;
     if (playing && this.element.paused) void this.element.play();
+  }
+
+  /** Where the element should be now, given where the last restart put it and how long it has played. */
+  private expectedLanding(): number {
+    const landing = this.landing!;
+    return landing.target + (this.source() - landing.at) * this.currentRate;
+  }
+
+  /**
+   * Checks, once the element has settled, that a restart put it where it should be, and moves it back when
+   * it did not. Compressed files seek inexactly, so a pass can otherwise start on a slightly different spot.
+   */
+  private checkLanding(): void {
+    const landing = this.landing;
+    if (!landing || this.element.paused || this.element.seeking) return;
+    if (this.source() - landing.at < LANDING_GRACE_SECONDS) return;
+    const expected = this.expectedLanding();
+    if (Math.abs(this.element.currentTime - expected) <= LANDING_TOLERANCE_SECONDS) {
+      this.landing = null;
+      return;
+    }
+    if (landing.corrections >= LANDING_MAX_CORRECTIONS) {
+      this.landing = null;
+      return;
+    }
+    this.element.currentTime = expected;
+    this.landing = { target: expected, at: this.source(), corrections: landing.corrections + 1 };
   }
 
   /** Loop wrapping and the stop at the tab end are checked on a timer too, so they hold when frames are throttled. */
@@ -209,6 +252,7 @@ export class UserAudioClock implements Clock {
     if (this.watcher) return;
     this.watcher = setInterval(() => {
       this.time();
+      this.checkLanding();
       if (!this.playing) this.stopWatcher();
     }, 20);
   }
@@ -221,6 +265,7 @@ export class UserAudioClock implements Clock {
   dispose(): void {
     this.stopWatcher();
     this.leadIn = null;
+    this.landing = null;
     this.element.pause();
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
   }
