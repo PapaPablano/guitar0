@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
+import { startExactCopy } from './exact-copy-load';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
 import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/file-tuning';
@@ -90,6 +91,8 @@ export function App() {
   const profileRuns = useRef(createRunGuard());
   /** Content hash of the loaded recording, once known; null means nothing is restored or saved for it. */
   const profileHash = useRef<string | null>(null);
+  /** Gives up the exact copy of the loaded recording when it is replaced or removed. */
+  const stopExactCopy = useRef<(() => void) | null>(null);
   /** True once the user has moved the offset since this recording loaded (KTD12). */
   const offsetMoved = useRef(false);
   /** True once the user has changed the mix since this recording loaded; a restore then leaves the mix alone. */
@@ -186,6 +189,8 @@ export function App() {
 
   /** Replaces the recording clock, disposing the previous one. */
   function replaceUserClock(next: UserAudioClock | null) {
+    stopExactCopy.current?.();
+    stopExactCopy.current = null;
     stemsRef.current?.clock.dispose();
     stemsRef.current = null;
     setStems(null);
@@ -314,6 +319,7 @@ export function App() {
       next.setRate(tempoPercent / 100);
       next.seek(position);
       replaceUserClock(next);
+      stopExactCopy.current = startExactCopy(file, next);
       resetProfile();
       void restoreProfile(file, next);
     } catch (e) {
