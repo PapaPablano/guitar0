@@ -88,6 +88,12 @@ describe('matchRecording', { timeout: 30000 }, () => {
     const result = aligned(run(recording));
     expect(result.map.holds).toEqual([]);
     expect(Math.abs(result.map.base - 1.5)).toBeLessThanOrEqual(0.03);
+    // the skipped bars are reported, not hidden
+    expect(result.unfollowed).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reports nothing unfollowed for a recording that follows the tab', () => {
+    expect(aligned(run(shifted(recordingOfSong, 1.5, R))).unfollowed).toBe(0);
   });
 
   it('puts an extra section that starts in the middle of a bar on the nearest bar line', () => {
@@ -108,6 +114,18 @@ describe('matchRecording', { timeout: 30000 }, () => {
     const result = aligned(run(recording, tabSamples, bars));
     expect(Math.abs(result.map.base - 0.8)).toBeLessThanOrEqual(0.03);
     expect(result.map.holds).toEqual([]);
+  });
+
+  it('finds an extra section far into the song to the same accuracy as one near the start', () => {
+    const longNotes = songNotes(160, BAR_SECONDS, 71);
+    const longTab = renderSong(longNotes, 160 * BAR_SECONDS, R, 'plain');
+    const long = renderSong(longNotes, 160 * BAR_SECONDS, R, 'rich', 73);
+    const recording = shifted(inserted(long, 280, unrelatedMusic(10, R, 305), R), 0.5, R);
+    const result = aligned(run(recording, longTab, barLines(160)));
+    expect(result.map.holds).toHaveLength(1);
+    expect(result.map.holds[0].at).toBe(280);
+    expect(Math.abs(result.map.holds[0].length - 10)).toBeLessThanOrEqual(0.05);
+    expect(Math.abs(result.map.base - 0.5)).toBeLessThanOrEqual(0.03);
   });
 
   it('covers AE3: unrelated music, silence and noise are not found', () => {

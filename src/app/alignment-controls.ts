@@ -1,5 +1,5 @@
 import { AlignmentMap, type Hold } from '../audio/alignment-map';
-import { NUDGE_COARSE_SECONDS, NUDGE_FINE_SECONDS } from '../audio/offset-range';
+import { NUDGE_COARSE_SECONDS, NUDGE_FINE_SECONDS, OFFSET_MAX_SECONDS } from '../audio/offset-range';
 import type { Timeline } from '../model/score';
 import type { AlignStatus } from './auto-align';
 import type { NudgeSize } from './offset-controls';
@@ -50,14 +50,17 @@ function notFoundText(reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-
     case 'silent':
       return 'The recording or the tab has no sound to compare, so it was not lined up. Your offset is unchanged.';
     case 'out-of-range':
-      return 'The recording starts more than 30 seconds away from the tab, so it was not lined up. Your offset is unchanged.';
+      return `The recording starts more than ${OFFSET_MAX_SECONDS} seconds away from the tab, so it was not lined up. Your offset is unchanged.`;
     case 'not-confident':
       return 'Could not line the recording up with the tab. Your offset is unchanged.';
   }
 }
 
-/** What the panel says about the detection, in the user's words. */
-export function statusText(status: AlignStatus): string {
+/**
+ * What the panel says about the detection, in the user's words. `sections` is how many sections the alignment has
+ * now, so the count stays right after the user removes or nudges one.
+ */
+export function statusText(status: AlignStatus, sections?: number): string {
   switch (status.phase) {
     case 'idle':
       return '';
@@ -65,10 +68,14 @@ export function statusText(status: AlignStatus): string {
       return "Waiting for the tab's sound to load before lining the recording up.";
     case 'analysing':
       return `Lining the recording up with the tab… ${Math.round(status.progress * 100)}%`;
-    case 'found':
-      return status.sections === 0
-        ? 'Lined up with the tab. No extra playing found.'
-        : `Lined up with the tab. Found ${status.sections} ${plural(status.sections, 'section of extra playing', 'sections of extra playing')}.`;
+    case 'found': {
+      const count = sections ?? status.sections;
+      const found =
+        count === 0
+          ? 'Lined up with the tab. No extra playing found.'
+          : `Lined up with the tab. Found ${count} ${plural(count, 'section of extra playing', 'sections of extra playing')}.`;
+      return status.unfollowed > 0 ? `${found} Part of the recording skips bars the tab has; that part was not followed.` : found;
+    }
     case 'not-found':
       return notFoundText(status.reason);
     case 'failed':

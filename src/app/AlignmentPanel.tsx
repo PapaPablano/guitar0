@@ -25,7 +25,7 @@ interface AlignmentPanelProps {
 /** What the app found when it lined the recording up with the tab, with the controls to correct it. */
 export function AlignmentPanel({ status, alignment, timeline, canReanalyse, onChange, onRevert, onReanalyse }: AlignmentPanelProps) {
   const sections = describeSections(alignment, timeline);
-  const text = statusText(status);
+  const text = statusText(status, sections.length);
   return (
     <div className="alignment" role="group" aria-label="Alignment with the tab">
       {text && (

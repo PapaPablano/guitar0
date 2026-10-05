@@ -10,7 +10,14 @@ import { mapOfResult, type MatchJob, type MatchJobResult } from './job';
 export const MAX_ANALYSIS_SECONDS = 30 * 60;
 
 export type AnalysisResult =
-  | { readonly kind: 'aligned'; readonly map: AlignmentMap; readonly confidence: number; readonly matchedFraction: number }
+  | {
+      readonly kind: 'aligned';
+      readonly map: AlignmentMap;
+      readonly confidence: number;
+      readonly matchedFraction: number;
+      /** Places where the recording skips bars the tab has; these are not followed. */
+      readonly unfollowed: number;
+    }
   | { readonly kind: 'not-found'; readonly reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-range' }
   | { readonly kind: 'failed'; readonly reason: 'decode' | 'render' | 'worker' }
   | { readonly kind: 'cancelled' };
@@ -111,7 +118,7 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
   };
 
   void (async () => {
-    if (args.durationSeconds > MAX_ANALYSIS_SECONDS || args.tabSeconds > MAX_EXPORT_SECONDS) {
+    if (!Number.isFinite(args.durationSeconds) || args.durationSeconds > MAX_ANALYSIS_SECONDS || args.tabSeconds > MAX_EXPORT_SECONDS) {
       return settle({ kind: 'not-found', reason: 'too-long' });
     }
     let recording: Float32Array;
@@ -136,7 +143,13 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
       if (cancelled) return;
       report(1);
       const map = mapOfResult(answer);
-      settle(map && answer.kind === 'aligned' ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction } : answer.kind === 'not-found' ? { kind: 'not-found', reason: answer.reason } : { kind: 'failed', reason: 'worker' });
+      settle(
+        map && answer.kind === 'aligned'
+          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, unfollowed: answer.unfollowed }
+          : answer.kind === 'not-found'
+            ? { kind: 'not-found', reason: answer.reason }
+            : { kind: 'failed', reason: 'worker' },
+      );
     } catch {
       if (!cancelled) settle({ kind: 'failed', reason: 'worker' });
     }

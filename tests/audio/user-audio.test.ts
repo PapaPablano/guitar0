@@ -828,6 +828,31 @@ describe('UserAudioClock with holds', () => {
     expect(el.currentTime).toBeCloseTo(11.5, 9);
   });
 
+  it('pausing inside the extra playing and playing again goes on from there, not from the start of it', () => {
+    const { el, clock } = setup();
+    clock.seek(39);
+    clock.play();
+    el.currentTime = 45;
+    clock.pause();
+    expect(el.paused).toBe(true);
+    clock.play();
+    expect(el.paused).toBe(false);
+    expect(el.currentTime).toBe(45);
+    expect(clock.time()).toBeCloseTo(39.999, 9);
+    clock.dispose();
+  });
+
+  it('pausing and playing outside the extra playing still puts the element where the tab is', () => {
+    const { el, clock } = setup();
+    clock.seek(10);
+    clock.play();
+    el.currentTime = 11.6;
+    clock.pause();
+    clock.play();
+    expect(el.currentTime).toBeCloseTo(11.6, 9);
+    clock.dispose();
+  });
+
   it('keeps the same places for the wait and the rejoin at a reduced rate', () => {
     const { el, clock } = setup();
     clock.setRate(0.6);

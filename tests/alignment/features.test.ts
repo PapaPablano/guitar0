@@ -46,6 +46,13 @@ function chord(midis: number[], rich: boolean, seconds = 2): Float32Array {
   return out;
 }
 
+describe('feature rates', () => {
+  it('make every frame an exact time: the sample rate divides evenly into both frame rates', () => {
+    expect(FEATURE_RATE % CHROMA_RATE).toBe(0);
+    expect(FEATURE_RATE % ONSET_RATE).toBe(0);
+  });
+});
+
 describe('chromaFrames', () => {
   it('puts a 440 Hz tone in the A pitch class, and the same note an octave away in the same class', () => {
     for (const hz of [220, 440, 880]) {

@@ -1,7 +1,10 @@
 import type { PcmAudio } from '../export/audio';
 
-/** Both signals are brought to this rate before features are taken; it is plenty for pitch content up to 2 kHz. */
-export const FEATURE_RATE = 11025;
+/**
+ * Both signals are brought to this rate before features are taken; it is plenty for pitch content up to 2 kHz.
+ * It divides evenly into `CHROMA_RATE` and `ONSET_RATE` frames a second, so a frame index is an exact time.
+ */
+export const FEATURE_RATE = 11000;
 /** Chroma frames per second. */
 export const CHROMA_RATE = 10;
 /** Onset-envelope values per second. */

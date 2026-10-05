@@ -19,6 +19,7 @@ export type MatchJobResult =
       readonly holds: readonly Hold[];
       readonly confidence: number;
       readonly matchedFraction: number;
+      readonly unfollowed: number;
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -39,7 +40,7 @@ export function runMatchJob(job: MatchJob, onProgress: (fraction: number) => voi
   onProgress(1);
   if (result.kind === 'not-found') return result;
   const data = result.map.toData();
-  return { kind: 'aligned', base: data.base, holds: data.holds, confidence: result.confidence, matchedFraction: result.matchedFraction };
+  return { kind: 'aligned', base: data.base, holds: data.holds, confidence: result.confidence, matchedFraction: result.matchedFraction, unfollowed: result.unfollowed };
 }
 
 /** The result as a map; null when it was not aligned. */

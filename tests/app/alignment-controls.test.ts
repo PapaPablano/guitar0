@@ -76,14 +76,25 @@ describe('statusText', () => {
   it('words every state, with the percentage while analysing', () => {
     expect(statusText({ phase: 'idle' })).toBe('');
     expect(statusText({ phase: 'analysing', progress: 0.426 })).toContain('43%');
-    expect(statusText({ phase: 'found', sections: 0 })).toMatch(/no extra playing/i);
-    expect(statusText({ phase: 'found', sections: 1 })).toMatch(/1 section of extra playing/);
-    expect(statusText({ phase: 'found', sections: 3 })).toMatch(/3 sections of extra playing/);
+    expect(statusText({ phase: 'found', sections: 0, unfollowed: 0 })).toMatch(/no extra playing/i);
+    expect(statusText({ phase: 'found', sections: 1, unfollowed: 0 })).toMatch(/1 section of extra playing/);
+    expect(statusText({ phase: 'found', sections: 3, unfollowed: 0 })).toMatch(/3 sections of extra playing/);
     expect(statusText({ phase: 'not-found', reason: 'not-confident' })).toMatch(/unchanged/);
     expect(statusText({ phase: 'failed', reason: 'no-sound' })).toMatch(/sound/);
     expect(statusText({ phase: 'discarded' })).toMatch(/Re-analyse/);
     expect(statusText({ phase: 'manual' })).toMatch(/by hand/);
     expect(statusText({ phase: 'waiting' })).toMatch(/sound/);
+  });
+
+  it('counts the sections the alignment has now, not the ones that were found', () => {
+    const found = { phase: 'found', sections: 3, unfollowed: 0 } as const;
+    expect(statusText(found, 1)).toMatch(/1 section of extra playing/);
+    expect(statusText(found, 0)).toMatch(/no extra playing/i);
+  });
+
+  it('says so when part of the recording skips bars and was not followed', () => {
+    expect(statusText({ phase: 'found', sections: 1, unfollowed: 1 })).toMatch(/skips bars the tab has/);
+    expect(statusText({ phase: 'found', sections: 1, unfollowed: 0 })).not.toMatch(/skips bars/);
   });
 
   it('says something different for each way a search can come up empty', () => {

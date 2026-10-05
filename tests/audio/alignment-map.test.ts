@@ -104,6 +104,15 @@ describe('AlignmentMap', () => {
     expect(AlignmentMap.of(0, [{ at: 5, length: 2 }, { at: 9, length: 1.5 }]).totalHold).toBeCloseTo(3.5, 9);
   });
 
+  it('says whether a recording position is inside extra playing', () => {
+    const map = example();
+    expect(map.inHold(41.4)).toBe(false);
+    expect(map.inHold(41.5)).toBe(true);
+    expect(map.inHold(45)).toBe(true);
+    expect(map.inHold(49.7)).toBe(false);
+    expect(AlignmentMap.fromOffset(1).inHold(10)).toBe(false);
+  });
+
   it('round-trips through plain data', () => {
     const map = example();
     expect(AlignmentMap.normalize(map.toData())?.toData()).toEqual(map.toData());

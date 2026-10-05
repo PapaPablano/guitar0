@@ -147,6 +147,14 @@ export class UserAudioClock implements Clock {
       this.startWatcher();
       return;
     }
+    if (this.heldTab === null && this.map.inHold(this.current.currentTime)) {
+      // Tab time cannot say where in the extra playing the recording was, so resume the element where it is.
+      this.adoptPending(true);
+      this.landing = null;
+      void this.current.play();
+      this.startWatcher();
+      return;
+    }
     this.place(this.time(), true);
     this.startWatcher();
   }

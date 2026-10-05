@@ -7,7 +7,7 @@ export type AlignStatus =
   /** The recording is loaded and detection is waiting for the tab's sound to finish loading. */
   | { readonly phase: 'waiting' }
   | { readonly phase: 'analysing'; readonly progress: number }
-  | { readonly phase: 'found'; readonly sections: number }
+  | { readonly phase: 'found'; readonly sections: number; readonly unfollowed: number }
   | { readonly phase: 'not-found'; readonly reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-range' }
   | { readonly phase: 'failed'; readonly reason: 'decode' | 'render' | 'worker' | 'no-sound' }
   /** A result arrived after the user had already moved the offset, so it was not applied. */
@@ -40,7 +40,7 @@ export function settleAnalysis(ctx: { stillCurrent: boolean; offsetMoved: boolea
     case 'aligned':
       return ctx.offsetMoved
         ? { map: null, status: { phase: 'discarded' } }
-        : { map: result.map, status: { phase: 'found', sections: result.map.holds.length } };
+        : { map: result.map, status: { phase: 'found', sections: result.map.holds.length, unfollowed: result.unfollowed } };
     case 'not-found':
       return { map: null, status: { phase: 'not-found', reason: result.reason } };
     case 'failed':

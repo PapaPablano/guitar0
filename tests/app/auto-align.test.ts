@@ -17,12 +17,18 @@ describe('decideAutoAlign', () => {
 
 describe('settleAnalysis', () => {
   const live = { stillCurrent: true, offsetMoved: false };
-  const aligned: AnalysisResult = { kind: 'aligned', map: AlignmentMap.of(1.5, [{ at: 20, length: 16 }]), confidence: 6, matchedFraction: 1 };
+  const aligned: AnalysisResult = {
+    kind: 'aligned',
+    map: AlignmentMap.of(1.5, [{ at: 20, length: 16 }]),
+    confidence: 6,
+    matchedFraction: 1,
+    unfollowed: 2,
+  };
 
   it('applies a confident result and counts the sections', () => {
     const out = settleAnalysis(live, aligned);
     expect(out?.map?.holds).toEqual([{ at: 20, length: 16 }]);
-    expect(out?.status).toEqual({ phase: 'found', sections: 1 });
+    expect(out?.status).toEqual({ phase: 'found', sections: 1, unfollowed: 2 });
   });
 
   it('discards a result when the user moved the offset in the meantime', () => {

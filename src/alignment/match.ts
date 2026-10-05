@@ -21,6 +21,8 @@ export type MatchResult =
       readonly confidence: number;
       /** Share of the tab's sounding frames that the path matched to the recording. */
       readonly matchedFraction: number;
+      /** Places where the recording skips bars the tab has; these are not followed. */
+      readonly unfollowed: number;
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -285,8 +287,12 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
   if (Math.abs(base) > OFFSET_MAX_SECONDS) return { kind: 'not-found', reason: 'out-of-range' };
 
   const holds: Hold[] = [];
+  let unfollowed = 0;
   for (let n = 0; n < jumps.length; n++) {
-    if (jumps[n].delta <= 0) continue; // bars the recording skips are not handled
+    if (jumps[n].delta <= 0) {
+      unfollowed += 1; // bars the recording skips are not handled
+      continue;
+    }
     const length = round2(offsets[n + 1] - offsets[n]);
     if (length < o.minHoldSeconds) continue;
     const at = nearestBar((jumps[n].before + 0.5) / CHROMA_RATE, input.barLines);
@@ -300,5 +306,6 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
     map: AlignmentMap.of(base, holds),
     confidence: coarse.prominence,
     matchedFraction,
+    unfollowed,
   };
 }

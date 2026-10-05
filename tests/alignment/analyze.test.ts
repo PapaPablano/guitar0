@@ -40,7 +40,7 @@ describe('startAnalysis', () => {
     const seen: number[] = [];
     const job = startAnalysis(args({ onProgress: (f: number) => seen.push(f) }), deps);
     await flush();
-    answer({ kind: 'aligned', base: 1.5, holds: [{ at: 20, length: 16 }], confidence: 6, matchedFraction: 1 });
+    answer({ kind: 'aligned', base: 1.5, holds: [{ at: 20, length: 16 }], confidence: 6, matchedFraction: 1, unfollowed: 0 });
     const result = await job.result;
     expect(result.kind).toBe('aligned');
     if (result.kind === 'aligned') {
@@ -65,6 +65,15 @@ describe('startAnalysis', () => {
     expect(await long.result).toEqual({ kind: 'not-found', reason: 'too-long' });
     const tabLong = startAnalysis(args({ tabSeconds: MAX_EXPORT_SECONDS + 1 }), deps);
     expect(await tabLong.result).toEqual({ kind: 'not-found', reason: 'too-long' });
+    expect(deps.decode).not.toHaveBeenCalled();
+  });
+
+  it('does not decode a recording whose length is not a finite number', async () => {
+    const { deps } = fakes();
+    for (const durationSeconds of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const job = startAnalysis(args({ durationSeconds }), deps);
+      expect(await job.result).toEqual({ kind: 'not-found', reason: 'too-long' });
+    }
     expect(deps.decode).not.toHaveBeenCalled();
   });
 
@@ -97,7 +106,7 @@ describe('startAnalysis', () => {
     expect(await job.result).toEqual({ kind: 'cancelled' });
     expect(terminate).toHaveBeenCalled();
     const reported = seen.length;
-    answer({ kind: 'aligned', base: 1, holds: [], confidence: 6, matchedFraction: 1 });
+    answer({ kind: 'aligned', base: 1, holds: [], confidence: 6, matchedFraction: 1, unfollowed: 0 });
     await flush();
     expect(seen.length).toBe(reported);
   });

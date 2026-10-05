@@ -102,6 +102,18 @@ export class AlignmentMap {
     return tab + this.base + passed;
   }
 
+  /** True while the recording position is inside a stretch of extra playing, where tab time stands still. */
+  inHold(recording: number): boolean {
+    let passed = 0;
+    for (const hold of this.holds) {
+      const begins = hold.at + this.base + passed;
+      if (recording < begins) return false;
+      if (recording < begins + hold.length) return true;
+      passed += hold.length;
+    }
+    return false;
+  }
+
   withBase(offset: number): AlignmentMap {
     return AlignmentMap.of(offset, this.holds);
   }

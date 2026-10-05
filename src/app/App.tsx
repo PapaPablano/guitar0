@@ -262,7 +262,9 @@ export function App() {
     if (plan?.offset !== undefined) {
       applyAlignment(AlignmentMap.of(plan.offset, plan.alignment?.holds ?? []), plan.alignment?.source ?? null, false);
       setAlignStatus(
-        plan.alignment?.source === 'auto' ? { phase: 'found', sections: plan.alignment.holds.length } : { phase: 'manual' },
+        plan.alignment?.source === 'auto'
+          ? { phase: 'found', sections: plan.alignment.holds.length, unfollowed: 0 }
+          : { phase: 'manual' },
       );
     }
     if (plan?.mix) {
@@ -681,8 +683,12 @@ export function App() {
           alignment={alignment}
           timeline={timeline}
           canReanalyse={userClock?.file != null && alignStatus.phase !== 'analysing' && alignStatus.phase !== 'waiting'}
-          onChange={(map) => applyAlignment(map, alignSource.current ?? 'auto', true)}
+          onChange={(map) => {
+            offsetMoved.current = true;
+            applyAlignment(map, alignSource.current ?? 'auto', true);
+          }}
           onRevert={() => {
+            offsetMoved.current = true;
             applyAlignment(revertToManual(live.current.alignment), 'manual', true);
             setAlignStatus({ phase: 'manual' });
           }}
