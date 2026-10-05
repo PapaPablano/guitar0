@@ -263,3 +263,71 @@ describe('StemMixClock pass schedule', () => {
     expect(ch.gains.guitar).toBe(1);
   });
 });
+
+describe('StemMixClock loop wrap together', () => {
+  function playing() {
+    const ch = channels();
+    let now = 100;
+    const clock = new StemMixClock(ch.list, 60, () => now);
+    const elements = ch.list.map((c) => c.element as FakeAudio);
+    clock.setLoop({ start: 10, end: 12 });
+    clock.seek(11.9);
+    clock.play();
+    return { ch, clock, elements, advance: (s: number) => (now += s) };
+  }
+
+  it('covers AE6: on a wrap every follower is with the leader at once, with no timer tick between', () => {
+    const { clock, elements } = playing();
+    for (const e of elements) {
+      e.paused = false;
+      e.currentTime = 12.1;
+    }
+    clock.time(); // the leader wraps
+    for (const e of elements) expect(e.currentTime).toBeCloseTo(10, 6);
+  });
+
+  it('covers AE6: the pass number runs 1 to 5 over five wraps and is not moved by a seek, a pause or a tempo change', () => {
+    const { clock, elements } = playing();
+    const wrap = () => {
+      elements[0].currentTime = 12.1;
+      clock.time();
+    };
+    const seen = [clock.pass];
+    for (let i = 0; i < 4; i++) {
+      wrap();
+      seen.push(clock.pass);
+    }
+    expect(seen).toEqual([1, 2, 3, 4, 5]);
+    clock.seek(10.5);
+    clock.setRate(0.5);
+    clock.pause();
+    clock.play();
+    expect(clock.pass).toBe(5);
+  });
+
+  it('turning the loop off mid-pass leaves every follower with the leader', () => {
+    const { clock, elements, advance } = playing();
+    for (const e of elements) e.paused = false;
+    clock.setLoop(null);
+    advance(0.5);
+    for (const e of elements) e.currentTime += 0.5;
+    clock.time();
+    clock.resync();
+    for (const e of elements) expect(Math.abs(e.currentTime - elements[0].currentTime)).toBeLessThan(0.04);
+    expect(elements[0].currentTime).toBeGreaterThan(12);
+  });
+
+  it('a wrap during the lead-in leaves followers paused', () => {
+    const ch = channels();
+    let now = 50;
+    const clock = new StemMixClock(ch.list, 60, () => now);
+    clock.setOffset(-5);
+    clock.setLoop({ start: 0, end: 2 });
+    clock.seek(0);
+    clock.play();
+    now += 2.5;
+    clock.time();
+    expect(clock.pass).toBe(2);
+    for (const c of ch.list) expect((c.element as FakeAudio).paused).toBe(true);
+  });
+});

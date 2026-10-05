@@ -42,6 +42,8 @@ export class StemMixClock implements Clock {
     this.followers = channels.slice(1);
     for (const c of channels) c.element.preservesPitch = true;
     this.leader.setLoopWrapListener(() => {
+      // The leader has just restarted: put every follower on the same spot now, not on the next tick.
+      this.resync(0);
       this.passNumber += 1;
       this.applyMix();
       this.notifyPass();
