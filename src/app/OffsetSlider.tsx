@@ -67,7 +67,7 @@ export function OffsetSlider({ offsetSeconds, fileName, error, onLoad, onOffsetC
             Use built-in sound
           </button>
           <p className="muted note">
-            One offset aligns the whole recording, so a recording that speeds up or slows down against the tab will drift.
+            The offset moves the whole recording against the tab. Sections where the recording plays on while the tab waits are listed under Alignment; a recording that speeds up or slows down against the tab will still drift.
           </p>
         </>
       )}

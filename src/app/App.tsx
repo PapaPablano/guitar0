@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
+import { AlignmentMap } from '../audio/alignment-map';
+import { barLinesOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
 import { startExactCopy } from './exact-copy-load';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -16,9 +18,12 @@ import { decodeRecordingWindow, renderStemMix, renderStemMixRange } from '../exp
 import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
+import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
+import { revertToManual } from './alignment-controls';
+import { decideAutoAlign, settleAnalysis, type AlignStatus } from './auto-align';
 import { clampOffset } from '../audio/offset-range';
-import { PROFILE_VERSION, type ProfileStore } from '../audio/recording-profile';
+import { PROFILE_VERSION, type AlignmentRecord, type ProfileStore } from '../audio/recording-profile';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
 import { hashFile } from '../stems/file-hash';
@@ -68,6 +73,11 @@ export function App() {
   const support = useMemo(() => assessSupport(readSupportEnvironment()), []);
   const [userClock, setUserClock] = useState<UserAudioClock | null>(null);
   const [offset, setOffset] = useState(0);
+  /** How the recording sits against the tab: the base offset plus any extra playing where the tab waits. */
+  const [alignment, setAlignment] = useState<AlignmentMap>(() => AlignmentMap.fromOffset(0));
+  const [alignStatus, setAlignStatus] = useState<AlignStatus>({ phase: 'idle' });
+  /** A recording waiting for the tab's sound before it is lined up with the tab. */
+  const [alignRequest, setAlignRequest] = useState<{ file: File; clock: UserAudioClock } | null>(null);
   const [stems, setStems] = useState<ActiveStems | null>(null);
   const [mix, setMix] = useState<MixState>(() => initialMix());
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
@@ -83,7 +93,14 @@ export function App() {
   const userClockRef = useRef<UserAudioClock | null>(null);
   const stemsRef = useRef<ActiveStems | null>(null);
   /** The newest settings, for activateStems, which a separation calls minutes after it was started. */
-  const live = useRef({ offset: 0, tempoPercent: 100, mix: initialMix(), userClock: null as UserAudioClock | null, session: null as Session | null });
+  const live = useRef({
+    offset: 0,
+    tempoPercent: 100,
+    mix: initialMix(),
+    userClock: null as UserAudioClock | null,
+    session: null as Session | null,
+    alignment: AlignmentMap.fromOffset(0),
+  });
 
   /** Where per-recording offset and mix are remembered: a shell file on the desktop, browser storage on the web. */
   const profileStore = useMemo<ProfileStore>(() => (isDesktop() ? shellProfileStore : new WebProfileStore()), []);
@@ -99,18 +116,108 @@ export function App() {
   const mixMoved = useRef(false);
   /** The mix to remember with the offset; desktop only, set by a restore or a user change. */
   const profileMix = useRef<MixState | undefined>(undefined);
-  const profileSaver = useRef<ReturnType<typeof createDebouncer<{ hash: string; offset: number; mix?: MixState }>> | null>(null);
+  /** Names the analysis of the loaded recording; any newer load, removal or run makes it stale. */
+  const alignRuns = useRef(createRunGuard());
+  const alignJob = useRef<AnalysisJob | null>(null);
+  /** Where the alignment came from; null means the offset was set by hand and no record is saved. */
+  const alignSource = useRef<AlignmentRecord['source'] | null>(null);
+  const profileSaver = useRef<ReturnType<
+    typeof createDebouncer<{ hash: string; offset: number; mix?: MixState; alignment?: AlignmentRecord }>
+  > | null>(null);
   if (!profileSaver.current) {
-    profileSaver.current = createDebouncer(DEBOUNCE_MS, ({ hash, offset, mix }) => {
-      void profileStore.save(hash, mix ? { version: PROFILE_VERSION, offset, mix } : { version: PROFILE_VERSION, offset });
+    profileSaver.current = createDebouncer(DEBOUNCE_MS, ({ hash, offset, mix, alignment }) => {
+      void profileStore.save(hash, {
+        version: PROFILE_VERSION,
+        offset,
+        ...(mix ? { mix } : {}),
+        ...(alignment ? { alignment } : {}),
+      });
     });
   }
 
   /** Queues a save of the current offset (and desktop mix) for the loaded recording. Loop and tempo are never saved (R19). */
   function scheduleProfileSave(offsetSeconds: number) {
     const hash = profileHash.current;
-    if (hash) profileSaver.current?.push({ hash, offset: offsetSeconds, mix: profileMix.current });
+    const source = alignSource.current;
+    const alignmentRecord = source ? { source, holds: live.current.alignment.holds } : undefined;
+    if (hash) profileSaver.current?.push({ hash, offset: offsetSeconds, mix: profileMix.current, alignment: alignmentRecord });
   }
+
+  /** Stops any analysis of the loaded recording and forgets one that was waiting to start. */
+  function cancelAlignment() {
+    alignRuns.current.invalidate();
+    alignJob.current?.cancel();
+    alignJob.current = null;
+    setAlignRequest(null);
+    setAlignStatus((s) => (s.phase === 'analysing' || s.phase === 'waiting' ? { phase: 'idle' } : s));
+  }
+
+  /**
+   * Puts a new alignment on the recording clock and the stem clock together, and remembers it. `source` says
+   * where it came from: null means the user's own offset with no analysis behind it.
+   */
+  function applyAlignment(map: AlignmentMap, source: AlignmentRecord['source'] | null, save: boolean) {
+    userClockRef.current?.setAlignment(map);
+    stemsRef.current?.clock.setAlignment(map);
+    setAlignment(map);
+    setOffset(map.base);
+    live.current.alignment = map;
+    live.current.offset = map.base;
+    alignSource.current = source;
+    if (save) scheduleProfileSave(map.base);
+  }
+
+  /** Lines the recording up with the tab in the background and applies the result unless the user got there first. */
+  async function startAlignment(file: File, clockForRun: UserAudioClock, current: Session) {
+    alignJob.current?.cancel();
+    const run = alignRuns.current.begin();
+    const token = sessionToken.current;
+    // A run the user asked for starts from a clean slate: only a move made while it runs discards its result.
+    offsetMoved.current = false;
+    setAlignStatus({ phase: 'analysing', progress: 0 });
+    const job = startAnalysis({
+      file,
+      durationSeconds: clockForRun.element.duration,
+      tabSeconds: current.timeline.durationSeconds,
+      barLines: barLinesOf(current.timeline),
+      renderTab: (onProgress) => current.clock.exportAudio(onProgress),
+      onProgress: (progress) => {
+        if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress });
+      },
+    });
+    alignJob.current = job;
+    const result = await job.result;
+    if (alignJob.current === job) alignJob.current = null;
+    const settled = settleAnalysis(
+      {
+        stillCurrent: alignRuns.current.isCurrent(run) && token === sessionToken.current && userClockRef.current === clockForRun,
+        offsetMoved: offsetMoved.current,
+      },
+      result,
+    );
+    if (!settled) return;
+    setAlignStatus(settled.status);
+    if (settled.map) applyAlignment(settled.map, 'auto', true);
+  }
+
+  // A recording waits here until the tab's sound is ready, because the tab's render is what it is compared with.
+  useEffect(() => {
+    if (!alignRequest) return;
+    if (audio.status === 'failed') {
+      setAlignRequest(null);
+      setAlignStatus({ phase: 'failed', reason: 'no-sound' });
+      return;
+    }
+    if (audio.status !== 'ready') {
+      setAlignStatus({ phase: 'waiting' });
+      return;
+    }
+    const request = alignRequest;
+    setAlignRequest(null);
+    const current = live.current.session;
+    if (current) void startAlignment(request.file, request.clock, current);
+    // startAlignment reads only refs and the request, so it is not a dependency
+  }, [alignRequest, audio.status]);
 
   // Do not lose the last change when the page closes.
   useEffect(() => {
@@ -130,6 +237,11 @@ export function App() {
     offsetMoved.current = false;
     mixMoved.current = false;
     profileMix.current = undefined;
+    cancelAlignment();
+    alignSource.current = null;
+    live.current.alignment = AlignmentMap.fromOffset(0);
+    setAlignment(live.current.alignment);
+    setAlignStatus({ phase: 'idle' });
     setOffset(0);
     setMix(initialMix());
   }
@@ -150,10 +262,10 @@ export function App() {
       profile,
     );
     if (plan?.offset !== undefined) {
-      clockForLoad.setOffset(plan.offset);
-      stemsRef.current?.clock.setOffset(plan.offset);
-      setOffset(plan.offset);
-      live.current.offset = plan.offset;
+      applyAlignment(AlignmentMap.of(plan.offset, plan.alignment?.holds ?? []), plan.alignment?.source ?? null, false);
+      setAlignStatus(
+        plan.alignment?.source === 'auto' ? { phase: 'found', sections: plan.alignment.holds.length } : { phase: 'manual' },
+      );
     }
     if (plan?.mix) {
       profileMix.current = plan.mix;
@@ -165,12 +277,22 @@ export function App() {
     if (hash && userClockRef.current === clockForLoad && (offsetMoved.current || mixMoved.current)) {
       scheduleProfileSave(live.current.offset);
     }
+    // Anything saved or moved by the user wins; otherwise the recording is lined up with the tab (KTD8).
+    if (userClockRef.current === clockForLoad) {
+      if (decideAutoAlign({ hasProfile: profile !== null, offsetMoved: offsetMoved.current }) === 'run') {
+        setAlignRequest({ file, clock: clockForLoad });
+      } else if (!plan?.alignment) {
+        setAlignStatus({ phase: 'manual' });
+      }
+    }
   }
 
   function connectAudio(score: AlphaModel.Score, timelineToPlay: Timeline) {
     sessionToken.current += 1;
     const token = sessionToken.current;
     const isCurrent = () => token === sessionToken.current;
+    // The tab's sound is being rebuilt, so a comparison with the old render no longer counts.
+    cancelAlignment();
     setAudio({ status: 'loading', progress: 0 });
     const synth = createSynthSession(score, timelineToPlay.durationSeconds, timelineToPlay.tempoMap, {
       soundFontUrl: SOUND_FONT_URL,
@@ -189,6 +311,7 @@ export function App() {
 
   /** Replaces the recording clock, disposing the previous one. */
   function replaceUserClock(next: UserAudioClock | null) {
+    cancelAlignment();
     stopExactCopy.current?.();
     stopExactCopy.current = null;
     stemsRef.current?.clock.dispose();
@@ -243,7 +366,7 @@ export function App() {
 
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
   function activateStems(next: ActiveStems | null) {
-    const { offset, tempoPercent, mix, userClock, session } = live.current;
+    const { alignment, tempoPercent, mix, userClock, session } = live.current;
     const current = stemsRef.current;
     const position = current?.clock.time() ?? userClock?.time() ?? session?.clock.time() ?? 0;
     current?.clock.dispose();
@@ -253,7 +376,7 @@ export function App() {
       userClock?.pause();
       session?.clock.pause();
       next.clock.setRate(tempoPercent / 100);
-      next.clock.setOffset(offset);
+      next.clock.setAlignment(alignment);
       next.clock.setMix(mix);
       next.clock.seek(position);
     } else {
@@ -261,7 +384,7 @@ export function App() {
     }
   }
 
-  live.current = { offset, tempoPercent, mix, userClock, session };
+  live.current = { offset, tempoPercent, mix, userClock, session, alignment };
 
   const clock: Clock | undefined = stems?.clock ?? userClock ?? session?.clock;
   const sourceTimeline = session?.timeline;
@@ -546,15 +669,27 @@ export function App() {
         onLoad={onLoadRecording}
         onOffsetChange={(raw) => {
           const seconds = clampOffset(raw);
-          userClock?.setOffset(seconds);
-          stems?.clock.setOffset(seconds);
-          setOffset(seconds);
-          live.current.offset = seconds;
           offsetMoved.current = true;
-          scheduleProfileSave(seconds);
+          applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
         }}
         onRemove={onRemoveRecording}
       />
+      {(userClock || stems) && (
+        <AlignmentPanel
+          status={alignStatus}
+          alignment={alignment}
+          timeline={timeline}
+          canReanalyse={userClock?.file != null && alignStatus.phase !== 'analysing' && alignStatus.phase !== 'waiting'}
+          onChange={(map) => applyAlignment(map, alignSource.current ?? 'auto', true)}
+          onRevert={() => {
+            applyAlignment(revertToManual(live.current.alignment), 'manual', true);
+            setAlignStatus({ phase: 'manual' });
+          }}
+          onReanalyse={() => {
+            if (userClock?.file) setAlignRequest({ file: userClock.file, clock: userClock });
+          }}
+        />
+      )}
       <StemPanel
         recording={userClock?.file ?? null}
         durationSeconds={timeline.durationSeconds}
