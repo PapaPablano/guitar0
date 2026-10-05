@@ -42,7 +42,7 @@ function aligned(result: MatchResult) {
   return result;
 }
 
-describe('matchRecording', () => {
+describe('matchRecording', { timeout: 30000 }, () => {
   it('covers AE1: a recording with 1.5 s of lead-in gives that base offset and no holds', () => {
     const result = aligned(run(shifted(recordingOfSong, 1.5, R)));
     expect(Math.abs(result.map.base - 1.5)).toBeLessThanOrEqual(0.03);

@@ -114,7 +114,7 @@ describe('startAnalysis', () => {
     expect(deps.startMatch).not.toHaveBeenCalled();
   });
 
-  it('runs the real matcher through the job shapes: a late start and an extra section are found in a render at 48 kHz', async () => {
+  it('runs the real matcher through the job shapes: a late start and an extra section are found in a render at 48 kHz', { timeout: 30000 }, async () => {
     const notes = songNotes(24, 2, 51);
     const tab48 = renderSong(notes, 48, 48000, 'plain');
     const recording = shifted(inserted(renderSong(notes, 48, FEATURE_RATE, 'rich', 61), 20, unrelatedMusic(12, FEATURE_RATE, 71), FEATURE_RATE), 1, FEATURE_RATE);

@@ -154,24 +154,45 @@ export function downsampleMono(pcm: PcmAudio, targetRate: number = FEATURE_RATE)
   const radius = Math.ceil(16 * ratio);
   const outLength = Math.floor(length / ratio);
   const out = new Float32Array(outLength);
-  const weights = new Float64Array(2 * radius);
-  for (let j = 0; j < outLength; j++) {
-    const centre = j * ratio;
-    const first = Math.floor(centre) - radius + 1;
-    let sum = 0;
+  // With whole-number rates the position of an output sample between source samples repeats every
+  // target / gcd outputs, so each distinct kernel is worked out once and reused.
+  const common = gcd(pcm.sampleRate, targetRate);
+  const phases = targetRate / common;
+  const kernels = new Map<number, Float64Array>();
+  const kernelFor = (phase: number, fraction: number): Float64Array => {
+    let kernel = kernels.get(phase);
+    if (kernel) return kernel;
+    kernel = new Float64Array(2 * radius);
     let norm = 0;
-    for (let t = 0; t < weights.length; t++) {
-      const x = first + t - centre;
+    for (let t = 0; t < kernel.length; t++) {
+      const x = t - radius + 1 - fraction;
       const u = x / radius;
       const y = 2 * cutoff * x;
       const sinc = y === 0 ? 1 : Math.sin(Math.PI * y) / (Math.PI * y);
       const blackman = 0.42 + 0.5 * Math.cos(Math.PI * u) + 0.08 * Math.cos(2 * Math.PI * u);
-      const w = sinc * blackman;
-      const at = first + t;
-      if (at >= 0 && at < length) sum += mono[at] * w;
-      norm += w;
+      kernel[t] = sinc * blackman;
+      norm += kernel[t];
     }
-    out[j] = sum / norm;
+    for (let t = 0; t < kernel.length; t++) kernel[t] /= norm;
+    kernels.set(phase, kernel);
+    return kernel;
+  };
+  for (let j = 0; j < outLength; j++) {
+    const position = j * pcm.sampleRate; // in units of 1 / targetRate source samples
+    const base = Math.floor(position / targetRate);
+    const phase = ((position % targetRate) / common) % phases;
+    const kernel = kernelFor(phase, (position % targetRate) / targetRate);
+    const first = base - radius + 1;
+    let sum = 0;
+    for (let t = 0; t < kernel.length; t++) {
+      const at = first + t;
+      if (at >= 0 && at < length) sum += mono[at] * kernel[t];
+    }
+    out[j] = sum;
   }
   return out;
+}
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
 }
