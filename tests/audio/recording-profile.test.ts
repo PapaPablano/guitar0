@@ -52,6 +52,52 @@ describe('normalizeProfile', () => {
   });
 });
 
+describe('normalizeProfile alignment record', () => {
+  it('keeps the source and the holds, and a profile without one stays as it was', () => {
+    const holds = [{ at: 20, length: 16 }];
+    expect(normalizeProfile({ version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'auto', holds } })).toEqual({
+      version: PROFILE_VERSION,
+      offset: 1.5,
+      alignment: { source: 'auto', holds },
+    });
+    const plain = normalizeProfile({ version: PROFILE_VERSION, offset: 1.5 });
+    expect(plain).toEqual({ version: PROFILE_VERSION, offset: 1.5 });
+    expect(plain).not.toHaveProperty('alignment');
+  });
+
+  it('keeps an auto record with no holds, which says the recording was analysed', () => {
+    expect(normalizeProfile({ version: PROFILE_VERSION, offset: 0, alignment: { source: 'auto', holds: [] } })?.alignment).toEqual({
+      source: 'auto',
+      holds: [],
+    });
+  });
+
+  it('drops a malformed record but keeps the offset', () => {
+    for (const alignment of [{ source: 'x', holds: [] }, 'junk', 5, { holds: [] }]) {
+      const p = normalizeProfile({ version: PROFILE_VERSION, offset: 2, alignment });
+      expect(p).toEqual({ version: PROFILE_VERSION, offset: 2 });
+    }
+  });
+
+  it('cleans the holds: unusable ones are dropped and the rest are sorted', () => {
+    const p = normalizeProfile({
+      version: PROFILE_VERSION,
+      offset: 1,
+      alignment: { source: 'auto', holds: [{ at: 30, length: 2 }, { at: 10, length: -1 }, 'x', { at: 5, length: 1 }] },
+    });
+    expect(p?.alignment?.holds).toEqual([
+      { at: 5, length: 1 },
+      { at: 30, length: 2 },
+    ]);
+  });
+
+  it('keeps the record when the profile is saved and read back', async () => {
+    const store = new FileProfileStore(memoryBackend());
+    await store.save('h', { version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'manual', holds: [] } });
+    await expect(store.load('h')).resolves.toEqual({ version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'manual', holds: [] } });
+  });
+});
+
 describe('FileProfileStore', () => {
   it('returns a saved offset and mix for the same hash and not for another', async () => {
     const store = new FileProfileStore(memoryBackend());

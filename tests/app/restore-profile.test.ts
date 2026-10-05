@@ -62,6 +62,21 @@ describe('decideRestore', () => {
   });
 });
 
+describe('decideRestore with an alignment record', () => {
+  const ok = { stillLoaded: true, offsetMoved: false, mixMoved: false, desktop: false };
+  const aligned: RecordingProfile = { version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'auto', holds: [{ at: 20, length: 16 }] } };
+
+  it('restores the offset together with its alignment record', () => {
+    expect(decideRestore(ok, aligned)).toEqual({ offset: 1.5, alignment: aligned.alignment });
+  });
+  it('discards the record along with the offset when the user moved the offset first', () => {
+    expect(decideRestore({ ...ok, offsetMoved: true }, aligned)).toBeNull();
+  });
+  it('leaves the record out for an old profile that has none', () => {
+    expect(decideRestore(ok, profile(2))).toEqual({ offset: 2 });
+  });
+});
+
 describe('createDebouncer', () => {
   function fakeTimers() {
     let next = 1;

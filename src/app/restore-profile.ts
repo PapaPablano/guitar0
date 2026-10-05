@@ -1,5 +1,5 @@
 import type { MixState } from '../audio/mix-gains';
-import type { ProfileStore, RecordingProfile } from '../audio/recording-profile';
+import type { AlignmentRecord, ProfileStore, RecordingProfile } from '../audio/recording-profile';
 
 /** Quiet time after the last change before it is written, so dragging the slider is one save. */
 export const DEBOUNCE_MS = 500;
@@ -25,6 +25,8 @@ export async function fetchProfile(
 /** What a restore changes. Loop range and tempo are deliberately not here (R19). */
 export interface RestorePlan {
   offset?: number;
+  /** The saved alignment record, restored together with the offset it belongs to. */
+  alignment?: AlignmentRecord;
   mix?: MixState;
 }
 
@@ -38,7 +40,10 @@ export function decideRestore(
 ): RestorePlan | null {
   if (!profile || !ctx.stillLoaded) return null;
   const plan: RestorePlan = {};
-  if (!ctx.offsetMoved) plan.offset = profile.offset;
+  if (!ctx.offsetMoved) {
+    plan.offset = profile.offset;
+    if (profile.alignment) plan.alignment = profile.alignment;
+  }
   if (ctx.desktop && profile.mix && !ctx.mixMoved) plan.mix = profile.mix;
   return plan.offset === undefined && plan.mix === undefined ? null : plan;
 }
