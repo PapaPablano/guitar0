@@ -36,7 +36,7 @@ export function AlignmentPanel({ status, alignment, timeline, canReanalyse, onCh
       {sections.length > 0 && (
         <ul className="alignment-sections">
           {sections.map(({ index, label }) => (
-            <li key={`${index}-${label}`} className="alignment-section">
+            <li key={index} className="alignment-section">
               <span>{label}</span>
               <span className="nudge" role="group" aria-label={`Nudge section ${index + 1}`}>
                 {NUDGES.map(([nudgeText, size, direction, spoken]) => (

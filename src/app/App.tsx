@@ -172,8 +172,6 @@ export function App() {
     alignJob.current?.cancel();
     const run = alignRuns.current.begin();
     const token = sessionToken.current;
-    // A run the user asked for starts from a clean slate: only a move made while it runs discards its result.
-    offsetMoved.current = false;
     setAlignStatus({ phase: 'analysing', progress: 0 });
     const job = startAnalysis({
       file,
@@ -689,7 +687,10 @@ export function App() {
             setAlignStatus({ phase: 'manual' });
           }}
           onReanalyse={() => {
-            if (userClock?.file) setAlignRequest({ file: userClock.file, clock: userClock });
+            if (!userClock?.file) return;
+            // A run the user asks for starts from a clean slate: only a move made while it runs discards its result.
+            offsetMoved.current = false;
+            setAlignRequest({ file: userClock.file, clock: userClock });
           }}
         />
       )}
