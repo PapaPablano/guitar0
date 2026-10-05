@@ -62,8 +62,9 @@ describe('technique marks', () => {
   });
 
   it('draws a diamond around a harmonic', () => {
-    const calls = draw(withTechnique({ harmonic: true }));
-    expect(calls.filter((c) => c.name === 'closePath')).toHaveLength(1);
+    const closes = (calls: Call[]) => calls.filter((c) => c.name === 'closePath').length;
+    // The gem and the nut close paths too, so count only what the harmonic adds.
+    expect(closes(draw(withTechnique({ harmonic: true }))) - closes(draw([PLAIN_NOTE]))).toBe(1);
   });
 
   it('shows an x for a dead note and parentheses for a ghost note', () => {

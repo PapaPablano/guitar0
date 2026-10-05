@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HIT_EFFECT_SECONDS, renderHighway, visibleNotes } from '../../src/render/highway';
+import { gemBox, HIT_EFFECT_SECONDS, renderHighway, visibleNotes } from '../../src/render/highway';
 import { computeLayout, laneY, timeToX } from '../../src/render/layout';
 import { createRecordingContext } from '../helpers/recording-context';
 import { makeTimeline } from '../helpers/make-timeline';
@@ -13,10 +13,11 @@ function draw(timeline: ReturnType<typeof makeTimeline>, t: number) {
   return calls;
 }
 
-/** Arc calls that draw a filled note head (radius equals the note radius). */
-function noteHeads(calls: ReturnType<typeof draw>) {
-  const layout = computeLayout(W, H, 6);
-  return calls.filter((c) => c.name === 'arc' && c.args[2] === layout.noteRadius);
+const FRET = 12;
+
+/** The fret-number labels drawn on gems; bar numbers and string names never read '12'. */
+function gemLabels(calls: ReturnType<typeof draw>) {
+  return calls.filter((c) => c.name === 'fillText' && c.args[0] === String(FRET));
 }
 
 describe('layout', () => {
@@ -44,18 +45,20 @@ describe('renderHighway', () => {
 
   it('places a note on the strikeline at its start time', () => {
     const layout = computeLayout(W, H, 6);
-    const timeline = makeTimeline([{ start: 2, end: 2.5, string: 3 }]);
-    const heads = noteHeads(draw(timeline, 2));
-    expect(heads).toHaveLength(1);
-    expect(heads[0].args[0]).toBe(layout.strikeX);
-    expect(heads[0].args[1]).toBe(laneY(layout, 3));
+    const timeline = makeTimeline([{ start: 2, end: 2.5, string: 3, fret: FRET }]);
+    const labels = gemLabels(draw(timeline, 2));
+    expect(labels).toHaveLength(1);
+    const box = gemBox(layout, timeline.notesForTrack(0)[0], 2);
+    expect(box.x + box.w / 2).toBe(layout.strikeX);
+    expect(labels[0].args[1]).toBe(layout.strikeX);
+    expect(labels[0].args[2]).toBe(laneY(layout, 3));
   });
 
   it('places an upcoming note one second of travel to the right of the strikeline', () => {
     const layout = computeLayout(W, H, 6);
-    const timeline = makeTimeline([{ start: 3, end: 3.5 }]);
-    const heads = noteHeads(draw(timeline, 2));
-    expect(heads[0].args[0]).toBeCloseTo(layout.strikeX + layout.pxPerSecond, 6);
+    const timeline = makeTimeline([{ start: 3, end: 3.5, fret: FRET }]);
+    const labels = gemLabels(draw(timeline, 2));
+    expect(labels[0].args[1]).toBeCloseTo(layout.strikeX + layout.pxPerSecond, 6);
   });
 
   it('draws a sustain tail whose length matches the note duration', () => {
@@ -74,9 +77,9 @@ describe('renderHighway', () => {
 
   it('holds a sustained note at the strikeline while it sounds', () => {
     const layout = computeLayout(W, H, 6);
-    const timeline = makeTimeline([{ start: 2, end: 4 }]);
-    const heads = noteHeads(draw(timeline, 3));
-    expect(heads[0].args[0]).toBe(layout.strikeX);
+    const timeline = makeTimeline([{ start: 2, end: 4, fret: FRET }]);
+    const labels = gemLabels(draw(timeline, 3));
+    expect(labels[0].args[1]).toBe(layout.strikeX);
   });
 
   it('draws a hit ring only shortly after the note starts', () => {
@@ -92,7 +95,7 @@ describe('renderHighway', () => {
   it('draws strings but no note heads for a window with no notes', () => {
     const timeline = makeTimeline([{ start: 10, end: 10.5 }], 2, 8);
     const calls = draw(timeline, 0);
-    expect(noteHeads(calls)).toHaveLength(0);
+    expect(gemLabels(calls)).toHaveLength(0);
     expect(calls.filter((c) => c.name === 'lineTo').length).toBeGreaterThanOrEqual(6);
   });
 
@@ -101,6 +104,36 @@ describe('renderHighway', () => {
     const labels = draw(timeline, 0).filter((c) => c.name === 'fillText').map((c) => c.args[0]);
     expect(labels).toContain('1');
     expect(labels).toContain('2');
+  });
+});
+
+describe('neck styling', () => {
+  it('names each open string at the nut', () => {
+    const labels = draw(makeTimeline([]), 0)
+      .filter((c) => c.name === 'fillText')
+      .map((c) => c.args[0]);
+    for (const name of ['E', 'B', 'G', 'D', 'A']) expect(labels).toContain(name);
+  });
+
+  it('draws a faint line on each beat inside a bar', () => {
+    const faint = draw(makeTimeline([], 2, 1), 0).filter((c) => c.name === 'set:globalAlpha' && c.args[0] === 0.08);
+    expect(faint).toHaveLength(1);
+  });
+
+  it('lights the ring of a string only while its note sounds', () => {
+    const ring = (t: number) =>
+      draw(makeTimeline([{ start: 2, end: 3, string: 3 }]), t).filter(
+        (c) => c.name === 'set:lineWidth' && c.args[0] === 3,
+      ).length;
+    // A lit ring is stroked 3 wide, an idle one 2 wide; the strikeline core is 3 wide either way.
+    expect(ring(2.5)).toBeGreaterThan(ring(1));
+  });
+
+  it('keeps decorative inlay dots smaller than a note', () => {
+    const layout = computeLayout(W, H, 6);
+    const arcs = draw(makeTimeline([]), 0).filter((c) => c.name === 'arc');
+    expect(arcs.length).toBeGreaterThan(0);
+    for (const a of arcs) expect(a.args[2] as number).toBeLessThan(layout.noteRadius);
   });
 });
 
@@ -119,12 +152,12 @@ describe('visibleNotes', () => {
 describe('layering', () => {
   it('draws the strikeline before the notes so it never covers one', () => {
     const layout = computeLayout(W, H, 6);
-    const timeline = makeTimeline([{ start: 2, end: 2.5, string: 3 }]);
+    const timeline = makeTimeline([{ start: 2, end: 2.5, string: 3, fret: FRET }]);
     const calls = draw(timeline, 2);
     const strikeAt = calls.findIndex(
       (c) => c.name === 'moveTo' && c.args[0] === layout.strikeX && c.args[1] === layout.laneTop,
     );
-    const noteAt = calls.findIndex((c) => c.name === 'arc' && c.args[2] === layout.noteRadius);
+    const noteAt = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === String(FRET));
     expect(strikeAt).toBeGreaterThanOrEqual(0);
     expect(noteAt).toBeGreaterThan(strikeAt);
   });

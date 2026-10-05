@@ -19,6 +19,7 @@ export interface DrawContext {
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
   arc(x: number, y: number, r: number, start: number, end: number): void;
+  quadraticCurveTo(cx: number, cy: number, x: number, y: number): void;
   fill(): void;
   stroke(): void;
   fillText(text: string, x: number, y: number): void;
