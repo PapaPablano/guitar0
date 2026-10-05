@@ -64,11 +64,11 @@ describe('planAudioExport', () => {
 
   it('refuses a whole song over the cap, in the existing wording style', () => {
     const plan = planAudioExport(MAX_EXPORT_SECONDS + 1, null);
-    expect(plan).toEqual({ ok: false, reason: 'This song is 6:01 long. Export is limited to 6:00.' });
+    expect(plan).toEqual({ ok: false, reason: 'This song is 10:01 long. Export is limited to 10:00.' });
   });
 
   it('refuses a range over the cap', () => {
-    const plan = planAudioExport(900, { startSeconds: 0, endSeconds: 400 });
+    const plan = planAudioExport(1200, { startSeconds: 0, endSeconds: 700 });
     expect(plan.ok).toBe(false);
   });
 

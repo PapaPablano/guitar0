@@ -88,7 +88,7 @@ describe('checkExportSupport', () => {
 
 describe('length cap', () => {
   it('is a fixed, documented limit', () => {
-    expect(MAX_EXPORT_SECONDS).toBe(360);
+    expect(MAX_EXPORT_SECONDS).toBe(600);
   });
 });
 
