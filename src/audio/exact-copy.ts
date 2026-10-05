@@ -27,8 +27,9 @@ const browserDeps: ExactCopyDeps = {
   async decode(file) {
     const offline = new OfflineAudioContext(2, 1, AUDIO_SAMPLE_RATE);
     const decoded = await offline.decodeAudioData(await file.arrayBuffer());
-    const left = new Float32Array(decoded.getChannelData(0));
-    const right = decoded.numberOfChannels > 1 ? new Float32Array(decoded.getChannelData(1)) : left;
+    // Encoding only reads the samples, so the decoded buffer's own channel data is used without a second copy.
+    const left = decoded.getChannelData(0);
+    const right = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : left;
     return { left, right, sampleRate: decoded.sampleRate };
   },
   encode: encodeWav,

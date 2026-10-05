@@ -24,7 +24,7 @@ export type TimeSource = () => number;
 const performanceSource: TimeSource = () => performance.now() / 1000;
 
 /** How far the element may sit from where a loop restart should have put it before it is moved back. */
-export const LANDING_TOLERANCE_SECONDS = 0.025;
+const LANDING_TOLERANCE_SECONDS = 0.025;
 /** How long after a restart the landing is first checked, one watcher tick. */
 const LANDING_GRACE_SECONDS = 0.02;
 /** A restart that keeps missing is corrected this many times, then left alone. */

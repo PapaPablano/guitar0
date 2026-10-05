@@ -2,7 +2,7 @@ import { ExactCopyBuilder, type ExactCopyResult } from '../audio/exact-copy';
 import type { AudioLike } from '../audio/user-audio';
 
 /** The one builder for the page, so a recording reopened in the same session reuses its copy. */
-export const exactCopies = new ExactCopyBuilder();
+const exactCopies = new ExactCopyBuilder();
 
 /** The slice of the recording clock this needs. */
 export interface CopyTarget {
