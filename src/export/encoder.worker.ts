@@ -1,7 +1,8 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
+import { AlignmentMap, type AlignmentData } from '../audio/alignment-map';
 import { hydrateTimeline, type TimelineData } from '../model/serialize';
 import { renderComposite, type BottomOptions, type CompositeContext } from '../render/composite';
-import type { PcmAudio } from './audio';
+import { tabTimeAt, type PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
 import { AUDIO_CHANNELS, frameCount, frameTime, type ExportPreset } from './presets';
 
@@ -13,6 +14,10 @@ export interface StartMessage {
   audio: PcmAudio;
   /** The bottom view the video shows, chosen when the export started. */
   bottom: BottomOptions;
+  /** How long the video lasts: the tab plus any extra playing the tab waits through. */
+  outputSeconds: number;
+  /** Where the recording sits against the tab; absent when the video is the tab's own length. */
+  alignment?: AlignmentData;
 }
 
 export type WorkerMessage = StartMessage | { type: 'cancel' };
@@ -87,7 +92,8 @@ async function run(msg: StartMessage): Promise<void> {
     await sleep(0); // let a cancel message through
   }
 
-  const total = frameCount(timeline.durationSeconds, preset.fps);
+  const alignment = msg.alignment ? AlignmentMap.normalize(msg.alignment) : null;
+  const total = frameCount(msg.outputSeconds, preset.fps);
   for (let frame = 0; frame < total; frame++) {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     if (failure) throw failure;
@@ -95,7 +101,7 @@ async function run(msg: StartMessage): Promise<void> {
       ctx as unknown as CompositeContext,
       timeline,
       msg.trackIndex,
-      frameTime(frame, preset.fps),
+      tabTimeAt(alignment, frameTime(frame, preset.fps)),
       preset.width,
       preset.height,
       { bottom: msg.bottom },

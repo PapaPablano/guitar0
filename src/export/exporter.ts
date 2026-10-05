@@ -1,7 +1,8 @@
 import { serializeTimeline } from '../model/serialize';
 import type { Timeline } from '../model/score';
+import type { AlignmentData, AlignmentMap } from '../audio/alignment-map';
 import type { PcmAudio } from './audio';
-import { fitPcm } from './audio';
+import { exportLength, fitPcm } from './audio';
 import type { StartMessage, WorkerReply } from './encoder.worker';
 import type { BottomOptions } from '../render/composite';
 import type { ExportPreset } from './presets';
@@ -25,10 +26,14 @@ export function startExport(args: {
   preset: ExportPreset;
   audio: PcmAudio;
   bottom: BottomOptions;
+  /** Where the recording sits against the tab; the video lasts through any extra playing, with the tab waiting. */
+  alignment?: AlignmentMap | null;
   onProgress: (fraction: number) => void;
 }): ExportJob {
   const worker = new Worker(new URL('./encoder.worker.ts', import.meta.url), { type: 'module' });
-  const audio = fitPcm(args.audio, args.timeline.durationSeconds);
+  const outputSeconds = exportLength(args.timeline.durationSeconds, args.alignment);
+  const audio = fitPcm(args.audio, outputSeconds);
+  const alignment: AlignmentData | undefined = args.alignment && args.alignment.holds.length > 0 ? args.alignment.toData() : undefined;
 
   const result = new Promise<Blob>((resolve, reject) => {
     worker.onmessage = (e: MessageEvent<WorkerReply>) => {
@@ -63,6 +68,8 @@ export function startExport(args: {
         preset: args.preset,
         audio,
         bottom: args.bottom,
+        outputSeconds,
+        alignment,
       };
       worker.postMessage(start, [audio.left.buffer, audio.right.buffer]);
     } catch (e) {

@@ -12,7 +12,7 @@ import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
-import { decodeUserRecording } from '../export/audio';
+import { decodeUserRecording, exportLength, outputWindow } from '../export/audio';
 import { slicePcm } from '../export/audio-file';
 import { decodeRecordingWindow, renderStemMix, renderStemMixRange } from '../export/stem-audio';
 import { initialMix, type MixState } from '../audio/mix-gains';
@@ -414,13 +414,16 @@ export function App() {
     }
   }, [clock, timeline, trackIndex, loop, loopOn]);
 
+  /** The alignment the export follows: only a loaded recording (or its stems) has one. */
+  const exportAlignment = userClock || stems ? alignment : null;
   const exportLoopRange = useMemo(() => {
     if (!timeline || !loop) return null;
     const layout = getStripLayout(timeline, trackIndex, 1, 1);
     const first = stripBarFor(layout, loop.startBar);
     const last = stripBarFor(layout, loop.endBar);
-    return first && last ? { startSeconds: first.playback.startSeconds, endSeconds: last.playback.endSeconds } : null;
-  }, [timeline, trackIndex, loop]);
+    // the loop is set on tab bars; the export's own time includes any extra playing inside it
+    return first && last ? outputWindow(exportAlignment, { startSeconds: first.playback.startSeconds, endSeconds: last.playback.endSeconds }) : null;
+  }, [timeline, trackIndex, loop, exportAlignment]);
 
   const audioReady = audio.status === 'ready' || userClock !== null || stems !== null;
   useEffect(() => {
@@ -724,6 +727,7 @@ export function App() {
           bottom={{ view: bottomView, lookahead, labelMode }}
           onClose={() => setExportOpen(false)}
           loopRange={exportLoopRange}
+          alignment={exportAlignment}
           getAudio={(onProgress, range) =>
             range
               ? stems
@@ -732,9 +736,9 @@ export function App() {
                 ? decodeRecordingWindow(userClock.file, userClock.offset, range.startSeconds, range.durationSeconds)
                 : session.clock.exportAudio(onProgress).then((pcm) => slicePcm(pcm, range.startSeconds, range.durationSeconds))
               : stems
-              ? renderStemMix(stems.sources, mix, stems.clock.offset, timeline.durationSeconds)
+              ? renderStemMix(stems.sources, mix, stems.clock.offset, exportLength(timeline.durationSeconds, exportAlignment))
               : userClock?.file
-              ? decodeUserRecording(userClock.file, userClock.offset, timeline.durationSeconds)
+              ? decodeUserRecording(userClock.file, userClock.offset, exportLength(timeline.durationSeconds, exportAlignment))
               : session.clock.exportAudio(onProgress)
           }
         />

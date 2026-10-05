@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StartMessage } from '../../src/export/encoder.worker';
+import { AlignmentMap } from '../../src/audio/alignment-map';
 import { startExport } from '../../src/export/exporter';
 import { presetById } from '../../src/export/presets';
 import { frameLayout, renderComposite, type BottomOptions, type CompositeContext } from '../../src/render/composite';
@@ -111,5 +112,65 @@ describe('export start message', () => {
     expect(start.type).toBe('start');
     expect(start.bottom).toEqual({ view: 'fretboard', lookahead: 6 });
     expect(start.preset.id).toBe('landscape');
+  });
+
+  it('sends the alignment and the lengthened output to the worker, and stretches the audio to match', () => {
+    const posted: unknown[] = [];
+    class FakeWorker {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(message: unknown) {
+        posted.push(message);
+      }
+      terminate() {}
+    }
+    const original = (globalThis as { Worker?: unknown }).Worker;
+    (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+    try {
+      void startExport({
+        timeline,
+        trackIndex: 0,
+        preset: presetById('landscape'),
+        audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+        bottom: { view: 'tab', lookahead: 6 },
+        alignment: AlignmentMap.of(1, [{ at: 4, length: 3 }]),
+        onProgress: () => {},
+      }).result.catch(() => {});
+    } finally {
+      (globalThis as { Worker?: unknown }).Worker = original;
+    }
+    const start = posted[0] as StartMessage;
+    expect(start.alignment).toEqual({ base: 1, holds: [{ at: 4, length: 3 }] });
+    expect(start.outputSeconds).toBeCloseTo(timeline.durationSeconds + 3, 9);
+    expect(start.audio.left).toHaveLength(Math.ceil((timeline.durationSeconds + 3) * 48000));
+  });
+
+  it('sends no alignment and the tab length when there is none', () => {
+    const posted: unknown[] = [];
+    class FakeWorker {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(message: unknown) {
+        posted.push(message);
+      }
+      terminate() {}
+    }
+    const original = (globalThis as { Worker?: unknown }).Worker;
+    (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+    try {
+      void startExport({
+        timeline,
+        trackIndex: 0,
+        preset: presetById('landscape'),
+        audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+        bottom: { view: 'tab', lookahead: 6 },
+        onProgress: () => {},
+      }).result.catch(() => {});
+    } finally {
+      (globalThis as { Worker?: unknown }).Worker = original;
+    }
+    const start = posted[0] as StartMessage;
+    expect(start.alignment).toBeUndefined();
+    expect(start.outputSeconds).toBe(timeline.durationSeconds);
   });
 });

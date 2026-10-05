@@ -1,3 +1,4 @@
+import type { AlignmentMap } from '../audio/alignment-map';
 import { clampOffset } from '../audio/offset-range';
 import { AUDIO_SAMPLE_RATE } from './presets';
 
@@ -44,6 +45,38 @@ export function fitPcm(pcm: PcmAudio, durationSeconds: number): PcmAudio {
   left.set(pcm.left.subarray(0, copy));
   right.set(pcm.right.subarray(0, copy));
   return { left, right, sampleRate: pcm.sampleRate };
+}
+
+/**
+ * How long an export is: the tab plus every stretch of extra playing, since the tab waits through those while
+ * the recording plays on. Without an alignment it is the tab's length.
+ */
+export function exportLength(durationSeconds: number, alignment?: AlignmentMap | null): number {
+  return durationSeconds + (alignment?.totalHold ?? 0);
+}
+
+/**
+ * The tab time a video frame shows at `outputSeconds` into the export. The recording is placed straight from its
+ * base offset, so output time is the recording position less that offset; with no holds it is the tab time itself.
+ */
+export function tabTimeAt(alignment: AlignmentMap | null | undefined, outputSeconds: number): number {
+  if (!alignment || alignment.holds.length === 0) return outputSeconds;
+  return Math.max(0, alignment.toTab(outputSeconds + alignment.base));
+}
+
+/**
+ * A span of the tab (a loop) as a span of the export's output time. It starts where the tab rejoins at its
+ * first bar and ends where the tab arrives at its last, so extra playing inside the loop is included.
+ */
+export function outputWindow(
+  alignment: AlignmentMap | null | undefined,
+  range: { readonly startSeconds: number; readonly endSeconds: number },
+): { startSeconds: number; endSeconds: number } {
+  if (!alignment || alignment.holds.length === 0) return { startSeconds: range.startSeconds, endSeconds: range.endSeconds };
+  return {
+    startSeconds: alignment.toRec(range.startSeconds, 'start') - alignment.base,
+    endSeconds: alignment.toRec(range.endSeconds, 'end') - alignment.base,
+  };
 }
 
 /** Where the recording sits on the tab's timeline. */

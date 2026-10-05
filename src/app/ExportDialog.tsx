@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PcmAudio } from '../export/audio';
+import type { AlignmentMap } from '../audio/alignment-map';
+import { exportLength, type PcmAudio } from '../export/audio';
 import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../export/audio-file';
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
@@ -21,8 +22,10 @@ interface ExportDialogProps {
   bottom: BottomOptions;
   /** Produces the whole song's audio at original tempo: the synth mix or the user's recording. */
   getAudio: (onProgress: (fraction: number) => void, range?: { startSeconds: number; durationSeconds: number }) => Promise<PcmAudio>;
-  /** The loop's span in tab seconds, when a loop is set; offered for the audio export. */
+  /** The loop's span in the export's own time (see `outputWindow`), when a loop is set; offered for the audio export. */
   loopRange?: TimeRange | null;
+  /** Where the recording sits against the tab; the export lasts through any extra playing, with the tab waiting. */
+  alignment?: AlignmentMap | null;
   onClose: () => void;
 }
 
@@ -36,7 +39,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange = null, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const [loopOnly, setLoopOnly] = useState(false);
@@ -47,7 +50,9 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
   /** Which export ran last, so Retry repeats that one and not the other. */
   const lastKind = useRef<'audio' | 'video'>('video');
   const preset = presetById(presetId);
-  const tooLong = timeline.durationSeconds > MAX_EXPORT_SECONDS;
+  /** The tab plus any extra playing: how long the video and the whole-song audio last. */
+  const songSeconds = exportLength(timeline.durationSeconds, alignment);
+  const tooLong = songSeconds > MAX_EXPORT_SECONDS;
 
   useEffect(() => {
     let live = true;
@@ -88,7 +93,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
     const run = runId.current;
     const current = () => run === runId.current;
     const useLoop = loopOnly && loopRange !== null;
-    const plan = planAudioExport(timeline.durationSeconds, useLoop ? loopRange : null);
+    const plan = planAudioExport(songSeconds, useLoop ? loopRange : null);
     if (!plan.ok) {
       setPhase({ name: 'failed', reason: plan.reason });
       return;
@@ -126,6 +131,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
         preset,
         audio,
         bottom,
+        alignment,
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
       job.current = running;
@@ -180,8 +186,8 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
                   </select>
                 </label>
                 <p className="muted">
-                  The whole song at original tempo, {formatDuration(timeline.durationSeconds)} long, about{' '}
-                  {Math.max(1, Math.round(estimateMegabytes(preset, timeline.durationSeconds)))} MB. Loops and tempo changes
+                  The whole song at original tempo, {formatDuration(songSeconds)} long, about{' '}
+                  {Math.max(1, Math.round(estimateMegabytes(preset, songSeconds)))} MB. Loops and tempo changes
                   are not applied.
                 </p>
                 {loopRange && (
@@ -192,7 +198,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
                 )}
                 {tooLong && (
                   <p role="alert" className="error">
-                    This song is {formatDuration(timeline.durationSeconds)} long. Export is limited to{' '}
+                    This song is {formatDuration(songSeconds)} long. Export is limited to{' '}
                     {formatDuration(MAX_EXPORT_SECONDS)}.
                   </p>
                 )}
