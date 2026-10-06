@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Full-screen neck view and recording-to-tab sync</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --ink: #1d2128;
+    --muted: #4b5563;
+    --line: #dcd8cf;
+    --accent: #8d1127;
+    --accent-soft: #f7e4e7;
+    --accent-ink: #6b0c1d;
+    --teal: #0f6f7c;
+    --teal-soft: #dcf1f3;
+    --amber: #9a6200;
+    --amber-soft: #fbefd5;
+    --grey-soft: #e9e7e1;
+    --green: #1f7a3d;
+    --green-soft: #def3e4;
+    --code-bg: #f1efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --surface: #1b1f26;
+      --ink: #e8e6e1;
+      --muted: #aeb4bd;
+      --line: #343a44;
+      --accent: #ff7a8e;
+      --accent-soft: #3a1c24;
+      --accent-ink: #ffb3bf;
+      --teal: #5cc4d0;
+      --teal-soft: #17353a;
+      --amber: #f0b44c;
+      --amber-soft: #3a2f16;
+      --grey-soft: #2a2f38;
+      --green: #6fd08c;
+      --green-soft: #173324;
+      --code-bg: #232831;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 -apple-system, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 56rem; margin-inline: auto; padding: 2.5rem 1.25rem 4rem; }
+  p, li, dd { max-width: 70ch; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0.25rem 0 0.75rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.15rem; margin: 1.5rem 0 0.4rem; }
+  h4 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 1.25rem 0 0.25rem; }
+  a { color: var(--teal); }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; font: 0.88em ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .eyebrow { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); font-weight: 600; margin: 0; }
+  .meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; margin: 1rem 0 0; color: var(--muted); font-size: 0.92rem; }
+  .meta dt { font-weight: 600; }
+  .meta dd { margin: 0; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 0.75rem; margin: 1.5rem 0 0; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.75rem 1rem; }
+  .stat b { display: block; font-size: 1.6rem; line-height: 1.1; }
+  .stat span { color: var(--muted); font-size: 0.85rem; }
+  .callout { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem 1.1rem; margin: 1.25rem 0; }
+  .callout .eyebrow { margin-bottom: 0.25rem; }
+  .callout p { margin: 0.3rem 0; }
+  .jump { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.75rem 1.25rem; margin: 1rem 0 1.5rem; }
+  .jump ol { margin: 0.25rem 0; padding-left: 1.4rem; }
+  article.idea { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem 1.4rem 1.4rem; margin: 1.5rem 0; }
+  article.idea h3 { margin-top: 0.4rem; font-size: 1.3rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.25rem 0 0.5rem; }
+  .chip { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0.1rem 0.7rem; font-size: 0.8rem; background: var(--grey-soft); color: var(--ink); }
+  .chip.id { background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
+  .chip.conf { background: var(--teal-soft); color: var(--ink); }
+  .chip.cx { background: var(--amber-soft); color: var(--ink); }
+  .field { margin: 0.9rem 0 0; }
+  .field h4 { margin-top: 0; }
+  .field p { margin: 0.2rem 0 0; }
+  figure { margin: 1.25rem 0 0.25rem; }
+  figure svg { width: 100%; height: auto; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+  figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; max-width: 70ch; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.93rem; }
+  th, td { text-align: left; vertical-align: top; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--line); }
+  th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  td:first-child, th:first-child { width: 3.2rem; }
+  ul.tight { margin: 0.3rem 0; padding-left: 1.3rem; }
+  footer.composition-signal { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.85rem; }
+  /* svg palette */
+  svg text { fill: var(--ink); font: 13px -apple-system, "Segoe UI", system-ui, sans-serif; }
+  svg .small { font-size: 11.5px; fill: var(--muted); }
+  svg .head { font-weight: 700; font-size: 13px; }
+  svg .box { fill: var(--surface); stroke: var(--ink); stroke-width: 1.4; }
+  svg .box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
+  svg .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#tip); }
+  svg .arrow-accent { stroke: var(--accent); stroke-width: 1.8; fill: none; marker-end: url(#tipa); }
+  svg .c-pin { fill: var(--teal); }
+  svg .c-grid { fill: var(--grey-soft); stroke: var(--line); }
+  svg .c-hold { fill: var(--amber); }
+  svg .c-you { fill: var(--green); }
+  svg .seg-bad { fill: var(--amber-soft); stroke: var(--amber); stroke-width: 1.2; }
+  svg .seg-ok { fill: var(--green-soft); stroke: var(--green); stroke-width: 1.2; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <p class="eyebrow">Ideation</p>
+  <h1>Full-screen neck view and recording-to-tab sync</h1>
+  <dl class="meta">
+    <dt>Date</dt><dd><time datetime="2026-10-05">2026-10-05</time></dd>
+    <dt>Topic</dt><dd>neck-view-and-recording-sync</dd>
+    <dt>Focus</dt><dd>The full-screen neck view with its video-export layout, and the recording-to-tab sync (alignment, sections, readout, seeking, saved profiles)</dd>
+    <dt>Mode</dt><dd>repo-grounded</dd>
+  </dl>
+  <div class="stats" aria-label="Run summary">
+    <div class="stat"><b>46</b><span>raw ideas from 5 agents</span></div>
+    <div class="stat"><b>19</b><span>after merging repeats (16 ideas, 3 combinations)</span></div>
+    <div class="stat"><b>7</b><span>survivors</span></div>
+    <div class="stat"><b>5 of 5</b><span>axes have a survivor</span></div>
+  </div>
+  <div class="callout">
+    <p class="eyebrow">The short version</p>
+    <p>The user's complaint, "sections are timed fine but the whole isn't stitched, and everything reads uncertain", points at the same few moves from several directions. The top two ideas make the weak bars visible and fixable by ear (1), and give every consumer one map that keeps those fixes (2). The cheapest valuable move is not to lose corrections on a rebuild (3). The neck-view ideas (5 to 7) are good but compete with sync work for time.</p>
+  </div>
+</header>
+
+<section id="grounding-context">
+  <h2>Grounding Context</h2>
+  <h3>Codebase Context</h3>
+  <ul class="tight">
+    <li>Tab Highway is a React + TypeScript + Vite app, also packaged with Tauri for desktop. Render code is pure functions of (timeline, time, size), and the live view and the video export draw frames through the same function.</li>
+    <li><strong>Neck view</strong> (<code>src/render/neck-view.ts</code>): glowing rings and lit strings over one bundled photo (1120x491), with hand-measured calibration constants (24 fret X positions, six string Y knots, nut and bridge X). Portrait screens turn the photo upright. The neck views show fret or note labels only; techniques are drawn on the highway and tab strip (<code>src/render/techniques.ts</code>). Export has a "practice" or "neck" layout (1080p 60 fps or 1080x1920 30 fps, 10-minute cap, Chrome and Edge only, no watermark or title).</li>
+    <li><strong>Sync</strong>: an alignment map in two forms (offset plus holds, or one anchor per bar). The matcher compares chroma at 10 frames a second and then refines each bar on onsets (1.5 s window, peak of at least 3). Playback keeps the tab steady inside a bar and re-syncs at bar lines; a bar recorded 1 s or more longer is "extra playing". A section finder groups bars by repetition; a seek-exact WAV copy is built for compressed recordings; profiles are saved per recording content hash.</li>
+    <li>Stated boundaries in the plan docs: sections come from the recording, not the tab; manual control is nudge and remove only; web and desktop stay identical; out of scope there are per-loop offsets, multi-point anchors, device sync and beat-by-beat tempo following.</li>
+  </ul>
+  <h3>Evidence measured on the user's real song</h3>
+  <p>Ozzy Osbourne, "No More Tears": a 175-bar Guitar Pro tab, with a <code>.wav</code> and an <code>.mp3</code> of one mix.</p>
+  <ul class="tight">
+    <li>All 175 bars match the tab, but only 55 have an onset peak of at least 3 (median peak score 0 on dense distorted music). The other 120 sit on the matcher's 0.1 s grid, and about 1 bar in 10 shows a 0.1 s step. The section readout used to say "uncertain" for every section.</li>
+    <li>In a real browser the <code>.mp3</code> landed from 1.6 s early to 0.7 s late after a seek, different each time; the <code>.wav</code> landed within 1 ms. The exact-WAV-copy fix works but took about 5 s, and before it was swapped in, jumps landed 0.8 to 0.9 s off.</li>
+    <li>The desktop packaging script deletes and recreates its output folder on every rebuild, including the saved recording profiles. This happened during this session and the profiles had to be restored from a copy.</li>
+    <li>The user reported: sections individually fine, full play-through and export "not stitched" with the corrected timings, worse as they move around, "no single source of truth, just a bunch of chopped sections".</li>
+    <li>The tab has stepwise tempo changes (100, 65, 67, 70, 80, 90, 100, 105 bpm around bars 93 to 132) and mixed meters; the studio recording follows it within 10% on 173 of 175 bars.</li>
+  </ul>
+  <h3>External context</h3>
+  <ul class="tight">
+    <li>Soundslice: editable syncpoints; auto-sync from harmonic content; inner-bar points for rubato; recovery by "delete everything after the first wrong point, add 2 to 3 manual points, re-run".</li>
+    <li>Guitar Pro 8: audio-track sync points override tempo automations, and dragging a bar grid recalculates tempo locally. Songsterr audio is mostly not synced to the tab.</li>
+    <li>Dixon and Widmer's MATCH online alignment; 2024 research finds that light human repeat labels help more than DTW extensions for repeats and jumps. Neural-Fretboard shows Guitar Pro files on a fretboard and exports vertical or landscape video with a watermark on its free tier.</li>
+    <li>Gaps no tool was found to fill: a per-section or per-bar confidence view, a repeat- and skip-aware follow view, and a warning that MP3 seeking is inexact.</li>
+  </ul>
+  <h3>Past learnings</h3>
+  <p>None: this repo has no <code>docs/solutions</code> folder.</p>
+</section>
+
+<section id="topic-axes">
+  <h2>Topic Axes</h2>
+  <ol>
+    <li><strong>The neck photo as the stage</strong>: which photos, guitars and instruments the neck view can use, how it is calibrated, how sharp it looks.</li>
+    <li><strong>What the neck view says</strong>: ring and lit-string visuals, labels, timing cues, what is and is not shown (techniques, fingers, chords).</li>
+    <li><strong>The neck view as an output</strong>: full screen, video export, sharing, fidelity with live playback.</li>
+    <li><strong>The timing engine</strong>: how bars get placed on the recording, repeats and skipped bars, tempo, how playback and seeking follow it.</li>
+    <li><strong>Trust, correction and memory</strong>: what the app tells the player it knows, how errors get fixed, what is saved and restored.</li>
+  </ol>
+</section>
+
+<section id="ranked-ideas">
+  <h2>Ranked Ideas</h2>
+  <nav class="jump" aria-label="Jump to an idea">
+    <ol>
+      <li><a href="#i1">Show the weak bars, and let the ear pin them</a></li>
+      <li><a href="#i2">One committed bar map, with hand fixes as locked pins</a></li>
+      <li><a href="#i3">Stop rebuilds erasing corrections, then make the sync file portable</a></li>
+      <li><a href="#i4">Exact seeking from the first jump</a></li>
+      <li><a href="#i5">Calibrate any neck photo from a few taps</a></li>
+      <li><a href="#i6">Techniques on the neck: bends, slides and hammer-ons</a></li>
+      <li><a href="#i7">Stills, loop clips and one clip per section</a></li>
+    </ol>
+  </nav>
+
+  <article class="idea" id="i1">
+    <p class="eyebrow">Idea</p>
+    <h3>1. Show the weak bars, and let the ear pin them</h3>
+    <div class="chips"><span class="chip id">1.</span><span class="chip">Trust, correction and memory</span><span class="chip conf">Confidence 80%</span><span class="chip cx">Complexity: Medium</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Replace the per-section word ("confident", "uncertain") with a strip of every bar, coloured by how it was placed: pinned by an onset peak, on the 0.1 s grid, held (extra playing), skipped, or locked by the player. Clicking a weak bar jumps to it. A "mark this bar" key pressed while the recording plays records a hard anchor at that moment, and the matcher re-fits the stretch around it. The strip alone is display-only and cheap; the tap is the new correction control.</p></div>
+    <figure>
+      <svg viewBox="0 0 760 150" role="img" aria-label="A strip of bars coloured by how each was placed, with the bars the player tapped shown in green">
+        <text x="40" y="22" class="head">Bars 1 to 40 of the song, one cell per bar</text>
+        <g>
+          <rect class="c-grid" x="40" y="36" width="15" height="34"/><rect class="c-pin" x="57" y="36" width="15" height="34"/><rect class="c-grid" x="74" y="36" width="15" height="34"/><rect class="c-grid" x="91" y="36" width="15" height="34"/><rect class="c-pin" x="108" y="36" width="15" height="34"/><rect class="c-grid" x="125" y="36" width="15" height="34"/><rect class="c-grid" x="142" y="36" width="15" height="34"/><rect class="c-grid" x="159" y="36" width="15" height="34"/><rect class="c-pin" x="176" y="36" width="15" height="34"/><rect class="c-grid" x="193" y="36" width="15" height="34"/>
+          <rect class="c-grid" x="210" y="36" width="15" height="34"/><rect class="c-grid" x="227" y="36" width="15" height="34"/><rect class="c-you" x="244" y="36" width="15" height="34"/><rect class="c-you" x="261" y="36" width="15" height="34"/><rect class="c-pin" x="278" y="36" width="15" height="34"/><rect class="c-grid" x="295" y="36" width="15" height="34"/><rect class="c-grid" x="312" y="36" width="15" height="34"/><rect class="c-hold" x="329" y="36" width="15" height="34"/><rect class="c-grid" x="346" y="36" width="15" height="34"/><rect class="c-pin" x="363" y="36" width="15" height="34"/>
+          <rect class="c-grid" x="380" y="36" width="15" height="34"/><rect class="c-grid" x="397" y="36" width="15" height="34"/><rect class="c-grid" x="414" y="36" width="15" height="34"/><rect class="c-pin" x="431" y="36" width="15" height="34"/><rect class="c-grid" x="448" y="36" width="15" height="34"/><rect class="c-grid" x="465" y="36" width="15" height="34"/><rect class="c-grid" x="482" y="36" width="15" height="34"/><rect class="c-grid" x="499" y="36" width="15" height="34"/><rect class="c-pin" x="516" y="36" width="15" height="34"/><rect class="c-grid" x="533" y="36" width="15" height="34"/>
+          <rect class="c-grid" x="550" y="36" width="15" height="34"/><rect class="c-grid" x="567" y="36" width="15" height="34"/><rect class="c-pin" x="584" y="36" width="15" height="34"/><rect class="c-grid" x="601" y="36" width="15" height="34"/><rect class="c-grid" x="618" y="36" width="15" height="34"/><rect class="c-grid" x="635" y="36" width="15" height="34"/><rect class="c-pin" x="652" y="36" width="15" height="34"/><rect class="c-grid" x="669" y="36" width="15" height="34"/><rect class="c-grid" x="686" y="36" width="15" height="34"/><rect class="c-grid" x="703" y="36" width="15" height="34"/>
+        </g>
+        <text x="236" y="92" class="small">tapped by the player</text>
+        <rect class="c-pin" x="40" y="112" width="14" height="14"/><text x="60" y="124">onset-pinned</text>
+        <rect class="c-grid" x="170" y="112" width="14" height="14"/><text x="190" y="124">on the 0.1 s grid</text>
+        <rect class="c-hold" x="330" y="112" width="14" height="14"/><text x="350" y="124">extra playing</text>
+        <rect class="c-you" x="470" y="112" width="14" height="14"/><text x="490" y="124">locked by the player</text>
+      </svg>
+      <figcaption>Illustrative only. On the user's real song about a third of bars are pinned and the rest sit on the grid, so most of the strip would read grey.</figcaption>
+    </figure>
+    <div class="field"><h4>Axis</h4><p>Trust, correction and memory</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> measured on the user's song: only 55 of 175 bars are onset-pinned (median peak score 0 on dense music), 120 sit on the 0.1 s grid, and about 1 bar in 10 steps 0.1 s; the readout was a per-section share (<code>src/app/section-controls.ts</code>, <code>CONFIDENT_MATCHED = 0.9</code>) and manual control is "nudge and remove only" (<code>src/app/AlignmentPanel.tsx</code>).</p>
+      <p><code>external:</code> Soundslice's editable syncpoints and its recovery of "add 2 to 3 manual points, re-run"; DJ software's tap-to-anchor beatgrid fix; nautical charts that grade survey confidence per patch, not per chart.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>A section-level word told the user nothing, because it hid which bars were weak. A bar-level map shows where the doubt is, so a correction costs seconds on the five bars that matter. On dense, distorted music the ear beats the matcher, which is exactly where the onset peaks are weak. It is the one candidate that gives the user both a view of the problem and a tool to fix it.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>Tap-to-pin needs latency compensation so a tap lands where the player heard the beat. The matcher must treat a pin as a hard constraint, which depends on idea 2. It reverses two stated boundaries (manual control is nudge and remove only; multi-point anchors are out of scope), so that has to be decided on purpose. It is two ideas in one: the display strip can ship alone.</p></div>
+  </article>
+
+  <article class="idea" id="i2">
+    <p class="eyebrow">Idea</p>
+    <h3>2. One committed bar map, with hand fixes as locked pins</h3>
+    <div class="chips"><span class="chip id">2.</span><span class="chip">The timing engine</span><span class="chip conf">Confidence 70%</span><span class="chip cx">Complexity: High</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Make the per-bar anchor list the only thing that jumps, loops, play-through, sections and export read, and keep the older offset-plus-holds form as an import path only. Every hand fix (a nudge, a removal, a tap from idea 1) is stored as a locked pin, saved apart from the automatic result and re-applied after "Re-analyse". The unpinned bars are re-solved between the pins, and a whole-song check walks the map and reports any bar where neighbouring corrections now conflict. A check like this also covers the useful part of "verify an export before encoding".</p></div>
+    <figure>
+      <svg viewBox="0 0 760 215" role="img" aria-label="Before: two timing sources feeding jump, play-through and export. After: one bar map feeding the same three.">
+        <defs>
+          <marker id="tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#888"/></marker>
+          <marker id="tipa" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#c0304a"/></marker>
+        </defs>
+        <text x="10" y="18" class="head">Today: two sources, three readers</text>
+        <rect class="box" x="10" y="52" width="130" height="34" rx="6"/><text x="22" y="74">Offset + holds</text>
+        <rect class="box" x="10" y="132" width="130" height="34" rx="6"/><text x="22" y="154">Bar anchors</text>
+        <rect class="box" x="250" y="34" width="100" height="28" rx="6"/><text x="272" y="53">Jump</text>
+        <rect class="box" x="250" y="94" width="100" height="28" rx="6"/><text x="262" y="113">Play-through</text>
+        <rect class="box" x="250" y="154" width="100" height="28" rx="6"/><text x="272" y="173">Export</text>
+        <path class="arrow" d="M140,69 L248,50"/><path class="arrow" d="M140,69 L248,106"/><path class="arrow" d="M140,149 L248,110"/><path class="arrow" d="M140,149 L248,166"/>
+        <text x="10" y="205" class="small">Fixes land in one form; another path reads the other.</text>
+        <text x="410" y="18" class="head">Proposed: one source, three readers</text>
+        <rect class="box-accent" x="410" y="82" width="150" height="50" rx="6"/><text x="428" y="104">One bar map</text><text x="428" y="122" class="small">with locked pins</text>
+        <rect class="box" x="650" y="34" width="100" height="28" rx="6"/><text x="672" y="53">Jump</text>
+        <rect class="box" x="650" y="94" width="100" height="28" rx="6"/><text x="662" y="113">Play-through</text>
+        <rect class="box" x="650" y="154" width="100" height="28" rx="6"/><text x="672" y="173">Export</text>
+        <path class="arrow-accent" d="M560,100 L648,50"/><path class="arrow-accent" d="M560,107 L648,108"/><path class="arrow-accent" d="M560,115 L648,166"/>
+        <text x="410" y="205" class="small">Every correction edits the same map.</text>
+      </svg>
+      <figcaption>Illustrative only. The prose above is the idea; this just shows the before and after of who reads what.</figcaption>
+    </figure>
+    <div class="field"><h4>Axis</h4><p>The timing engine</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> the user's report that full play-through and export are "not stitched" with the corrected timings and that there is "no single source of truth, just a bunch of chopped sections"; <code>src/audio/alignment-map.ts</code> keeps two forms; <code>mapFromRecord</code> in <code>src/app/auto-align.ts</code> falls back to offset plus holds when stored anchors do not fit the tab; the exporter keeps the alignment only if <code>hasAnchors || holds.length &gt; 0</code>; on re-analysis only section names are carried forward.</p>
+      <p><code>external:</code> surveying's traverse closure, where fixed control points pin a network and the leftover error is spread between them.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>It removes the class of bug the user reported by removing the divergence, rather than patching each path. Export and live playback then match by construction, and a hand correction can no longer be undone by a re-run.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>It changes a core data structure and needs a matcher change (re-solving between locks). Pins keyed to bar numbers break if the tab is edited, so loading must check the pins still fit. Retiring the older form must keep old saved records readable. It is three ideas in one: retire the dual form, persist pins across re-analysis, and the whole-song check.</p></div>
+  </article>
+
+  <article class="idea" id="i3">
+    <p class="eyebrow">Idea</p>
+    <h3>3. Stop rebuilds erasing corrections, then make the sync file portable</h3>
+    <div class="chips"><span class="chip id">3.</span><span class="chip">Trust, correction and memory</span><span class="chip conf">Confidence 85%</span><span class="chip cx">Complexity: Low, then Medium</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Two steps. First, make the desktop packaging script keep the data folder so a rebuild no longer wipes saved profiles; this is a small script change. Second, write each recording's alignment to a small readable file (anchors, holds, section names, source, per-bar evidence), keyed by the recording's content hash and checked on load by hashing the audio and spot-checking a few anchors. When the tab has changed, show a diff such as "38 bars re-pinned" instead of silently falling back to offset plus holds.</p></div>
+    <div class="field"><h4>Axis</h4><p>Trust, correction and memory</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> the packaging script deletes and recreates the output folder on every rebuild, including saved recording profiles (this deleted the user's profiles during this session); <code>src/audio/recording-profile.ts</code> keys profiles by content hash, caps them at 200 and rejects a mismatched version; <code>mapFromRecord</code> falls back without telling the user when anchors do not fit.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>A player's corrections are the most expensive thing in the app to recreate, and today a routine rebuild can silently erase them. The first step is the cheapest valuable change in this whole list, and the second makes corrections survive tab edits and move between machines.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>Writing next to a recording needs file permissions in the desktop shell, and the web build has no such write access, so web would use download and upload to keep web and desktop identical. Two ideas in one: the script fix (do now) and the file format (a feature).</p></div>
+  </article>
+
+  <article class="idea" id="i4">
+    <p class="eyebrow">Idea</p>
+    <h3>4. Exact seeking from the first jump</h3>
+    <div class="chips"><span class="chip id">4.</span><span class="chip">The timing engine</span><span class="chip conf">Confidence 70%</span><span class="chip cx">Complexity: Medium</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Compressed recordings seek inexactly, so a jump in the first seconds after loading can land most of a second off. Start building the exact copy while the file loads, prefer the region the player is using, share one decoded copy between seeking, analysis and export, and say plainly in the interface which jumps are exact. The aim is that the "up to a second off" warning describes a state that no longer exists.</p></div>
+    <figure>
+      <svg viewBox="0 0 760 150" role="img" aria-label="Timeline of the first seconds after loading: today jumps are inexact until the copy is ready; proposed, the region in use is exact sooner.">
+        <text x="20" y="20" class="head">Seconds after loading a compressed recording</text>
+        <text x="20" y="48" class="small">Today</text>
+        <rect class="seg-bad" x="100" y="34" width="250" height="22" rx="4"/><text x="110" y="50">jumps can land 0.8 to 0.9 s off</text>
+        <rect class="seg-ok" x="350" y="34" width="390" height="22" rx="4"/><text x="360" y="50">exact copy in use</text>
+        <text x="20" y="100" class="small">Proposed</text>
+        <rect class="seg-bad" x="100" y="86" width="90" height="22" rx="4"/><text x="108" y="102" class="small">warned</text>
+        <rect class="seg-ok" x="190" y="86" width="550" height="22" rx="4"/><text x="200" y="102">exact where you are working, then everywhere</text>
+        <text x="100" y="134" class="small">0 s</text><text x="340" y="134" class="small">about 5 s</text><text x="700" y="134" class="small">later</text>
+      </svg>
+      <figcaption>Illustrative only. The 5 s is the measured time to build the whole copy in a real browser; the proposed bar is a direction, not a promise.</figcaption>
+    </figure>
+    <div class="field"><h4>Axis</h4><p>The timing engine</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> measured in a real browser: the <code>.mp3</code> landed from 1.6 s early to 0.7 s late after a seek while the <code>.wav</code> landed within 1 ms; the exact copy took about 5 s and, before it was swapped in, jumps landed 0.8 to 0.9 s off; <code>EXACT_COPY_MAX_SECONDS = 600</code> in <code>src/audio/exact-copy.ts</code>, and the copy can fail without a message until the status line was added.</p>
+      <p><code>external:</code> video editors cut with a quick proxy and conform to full media later; streaming decoders prioritise the segment nearest the playhead.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>The first jump after loading is exactly when a player checks whether the sync works, and it is the moment the file is least exact. The harm is measured, and every section jump and loop restart passes through it.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>The browser's <code>decodeAudioData</code> cannot decode a compressed file in pieces, so decoding "the region first" needs a streaming decoder (WebCodecs <code>AudioDecoder</code>) that is not available on every target. A 10-minute stereo decoded copy is about 212 MB, so raising the cap has a memory cost. Playing from a decoded buffer would also give up the pitch-preserving tempo control that the audio element provides today (a buffer source changes pitch when its rate changes), so this should stay an element-based copy, not a buffer player. Two ideas in one: background priority, and sharing one decoded copy.</p></div>
+  </article>
+
+  <article class="idea" id="i5">
+    <p class="eyebrow">Idea</p>
+    <h3>5. Calibrate any neck photo from a few taps</h3>
+    <div class="chips"><span class="chip id">5.</span><span class="chip">The neck photo as the stage</span><span class="chip conf">Confidence 65%</span><span class="chip cx">Complexity: Medium</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Move the nut, fret and string constants out of code into a small profile per photo, and add a calibration step: the player taps the nut, the 12th fret, the bridge and the outer strings on any neck photo, and the fret positions are fitted from the standard fret-spacing rule. The current photo ships as the default profile. A bass, a seven-string or a left-handed guitar then needs a photo and a calibration, not a code change.</p></div>
+    <div class="field"><h4>Axis</h4><p>The neck photo as the stage</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> <code>src/render/neck-view.ts</code> hardcodes <code>NUT_X = 137</code>, 24 <code>FRET_X</code> values, <code>BRIDGE_X = 1095</code> and six rows of string Y knots for one 1120x491 photo; the photo-stage dossier notes that adding a guitar "requires a full remeasure and code change"; the fretboard plan defers left-handed; the user asked to see their own real guitar.</p>
+      <p><code>reasoned:</code> equal-temperament fret spacing follows a closed rule (each fret is 2<sup>-1/12</sup> of the remaining scale length), so most of the hand-measured numbers are derivable.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>The view was built to look like the user's own guitar, but it can show only the one photo that was measured by hand. A calibration step turns that from a developer chore into something a player can do, and live view and export gain it together.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>A real photo has perspective, so the closed-form rule alone will not fit a tilted neck; the fit needs a per-fret correction or a perspective model. Tapping several points precisely is fiddly on a small screen. It does not fix the photo's softness when upscaled, which needs a higher-resolution photo.</p></div>
+  </article>
+
+  <article class="idea" id="i6">
+    <p class="eyebrow">Idea</p>
+    <h3>6. Techniques on the neck: bends, slides and hammer-ons</h3>
+    <div class="chips"><span class="chip id">6.</span><span class="chip">What the neck view says</span><span class="chip conf">Confidence 60%</span><span class="chip cx">Complexity: Medium</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Show on the neck what the highway already shows: a bend deflects the lit string, a slide is a bright comet along the real frets, hammer-ons and pull-offs arc between ring centres, palm mute dims the string glow, and harmonics get a diamond. A pulse travelling toward the next fret, arriving on the beat, could replace the dashed path as the "when to arrive" cue. A toggle keeps the clean look.</p></div>
+    <div class="field"><h4>Axis</h4><p>What the neck view says</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> the neck views show fret or note labels only, while <code>src/render/techniques.ts</code> draws bends, slides, hammer and pull arcs, palm mute, harmonics and vibrato for the highway and tab strip; the lit string already uses a three-layer glow and string Y is interpolated at any X; the look-ahead is a dashed path with a 0.5 s approach swell.</p>
+      <p><code>external:</code> runway approach lighting, a sequenced pulse that tells a pilot both distance and timing.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>In the full-screen view and the neck video, a bent or slid note looks identical to a plain one, so the viewer plays or reads it wrong. The geometry and the technique data already exist, so this is mostly adaptation.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>The neck draws on photo-space string curves, so the highway's geometry cannot be reused unchanged. It risks cluttering a deliberately minimal ring look. It is only loosely tied to the sync work, so it competes with the top ideas for time rather than building on them.</p></div>
+  </article>
+
+  <article class="idea" id="i7">
+    <p class="eyebrow">Idea</p>
+    <h3>7. Stills, loop clips and one clip per section</h3>
+    <div class="chips"><span class="chip id">7.</span><span class="chip">The neck view as an output</span><span class="chip conf">Confidence 60%</span><span class="chip cx">Complexity: Low to Medium</span></div>
+    <div class="field"><h4>Description</h4>
+      <p>Reuse the one neck frame function for a PNG still, a short clip of the active loop (loop-only export is audio-only today), and a batch export of one clip per named section, with the section name as the filename and chapter title.</p></div>
+    <div class="field"><h4>Axis</h4><p>The neck view as an output</p></div>
+    <div class="field"><h4>Basis</h4>
+      <p><code>direct:</code> the export worker calls <code>renderNeckFrame</code> with the tab time for each frame, so any time range can be rendered; in <code>src/app/ExportDialog.tsx</code> the loop-only option is audio-only; sections already carry names.</p>
+      <p><code>external:</code> Neural-Fretboard exports vertical and landscape video with a watermark on its free tier; this app exports with none.</p></div>
+    <div class="field"><h4>Rationale</h4>
+      <p>Short clips are what players share, and a section is the unit they practise. It reuses what exists and gives the exported frames a second way to be checked against the live view.</p></div>
+    <div class="field"><h4>Downsides</h4>
+      <p>Unrelated to the sync pain, and the per-section batch is a larger step than a still or a loop clip. Three ideas in one: a still, a loop clip, a batch.</p></div>
+  </article>
+</section>
+
+<section id="rejection-summary">
+  <h2>Rejection Summary</h2>
+  <table>
+    <thead><tr><th>#</th><th>Idea</th><th>Reason Rejected</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Recording leads: retime the tab to the recording and drop the extra-playing rule</td><td>Contradicts a deliberate plan decision (steady within a bar, re-sync at bar lines), warps the tab's own synth audio, and relies on bar lengths the matcher cannot yet give (120 of 175 bars sit on a 0.1 s grid). Worth revisiting if idea 2 lands.</td></tr>
+      <tr><td>2</td><td>A procedural neck with a photo as a skin</td><td>A different renderer (warping a photo onto a drawn neck is hard on a 2D canvas), and a higher-resolution photo fixes the softness more simply. Overlaps idea 5.</td></tr>
+      <tr><td>3</td><td>Rings drawn on the player's own neck footage (the first-down-line idea)</td><td>Keeping the fretting hand over the rings needs colour keying, which is unreliable on skin and strings under varying light; per-frame video decoding in the export worker is heavy; footage may not be a fixed camera. A large scope increase.</td></tr>
+      <tr><td>4</td><td>Verify an export before encoding, and a "proof" layout</td><td>Live and export call the same pure functions, so the audit would mostly confirm they agree; the fault is in the map, not the two clocks. The useful part is folded into idea 2's whole-song check.</td></tr>
+      <tr><td>5</td><td>A live replayable neck link instead of an MP4</td><td>Needs a server or ships the user's recording and tab inside a page, which raises copyright and size problems, and the app has no server. Reads as a different product.</td></tr>
+      <tr><td>6</td><td>Corrections as labels: a golden corpus to tune the matcher</td><td>One corrected song is one data point, so tuning to it overfits. Good as a regression test that grows with corrections, not as a feature.</td></tr>
+      <tr><td>7</td><td>Tab markers for sections, and a pass list for repeats and skips</td><td>Two ideas; the plan deliberately takes sections from the recording, and tab-marker naming is low value. The pass list is the one part worth revisiting after idea 2.</td></tr>
+      <tr><td>8</td><td>A beat-level layer in the tempo-step bars</td><td>The plan lists beat-by-beat following as out of scope, the evidence is one song, and steady-within-a-bar already copes with stepwise tempo.</td></tr>
+      <tr><td>9</td><td>The neck as the sync scope (rings at the recording's matched onset)</td><td>The map stores one anchor per bar, not a per-note onset time, and 120 of 175 bars are grid guesses, so the scope would show jitter that is not real.</td></tr>
+      <tr><td>10</td><td>Combination: corrections that compound (pins, saved file, matcher labels)</td><td>Adopted as the chain from idea 1 into idea 2 into idea 3; the matcher-label link is idea 6 above and is rejected.</td></tr>
+      <tr><td>11</td><td>Combination: sync you can watch (scope, proof layout, ribbon)</td><td>Only the ribbon survives, as idea 1; the other two parts were rejected above.</td></tr>
+      <tr><td>12</td><td>Combination: bring your own stage (calibration, procedural neck, own footage)</td><td>Only calibration survives, as idea 5; the other two were rejected above.</td></tr>
+    </tbody>
+  </table>
+  <p>All five axes ended with at least one survivor, so there are no coverage-gap rows.</p>
+</section>
+
+<section id="sources">
+  <h2>Sources</h2>
+  <ul class="tight">
+    <li><a href="https://www.soundslice.com/help/en/creating/syncing/296/automatic-syncpoints/">Soundslice: automatic syncpoints</a></li>
+    <li><a href="https://www.soundslice.com/help/en/creating/syncing/163/overview/">Soundslice: syncpoint editor overview</a></li>
+    <li><a href="https://www.soundslice.com/help/en/player/advanced/21/visual-fretboard/">Soundslice: visual fretboard</a></li>
+    <li><a href="https://www.guitar-pro.com/docs/gp8/audio/backing-track">Guitar Pro 8: audio track and sync points</a></li>
+    <li><a href="https://arxiv.org/html/2411.07428v1">Audio-to-score alignment with repeats (arXiv 2411.07428)</a></li>
+    <li><a href="https://arxiv.org/pdf/2205.03247">Score following survey (arXiv 2205.03247)</a></li>
+    <li><a href="https://code.soundsoftware.ac.uk/projects/match">MATCH toolkit (Dixon and Widmer)</a></li>
+    <li><a href="https://alternativeto.net/software/neural-fretboard/about/">Neural-Fretboard</a></li>
+  </ul>
+</section>
+
+<footer class="composition-signal">Composed 2026-10-06T04:19Z by ce-ideate from the focus "this feature", taken as the full-screen neck view with video export and the recording-to-tab sync in this repository.</footer>
+
+</main>
+</body>
+</html>
