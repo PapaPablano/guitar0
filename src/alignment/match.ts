@@ -2,6 +2,15 @@ import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
 import { OFFSET_MAX_SECONDS } from '../audio/offset-range';
 import { CHROMA_BINS, CHROMA_RATE, ONSET_RATE, type Chroma } from './features';
 
+/** What the tab says about one played bar beyond where it starts and ends: the whole-song pass reads tempo and meter steadiness from it. */
+export interface BarFacts {
+  readonly tempo: number;
+  /** Beats in the bar (the time signature's numerator). */
+  readonly beats: number;
+  /** The bar's place in the score; a score bar the tab plays twice carries the same number on both passes. */
+  readonly scoreBar: number;
+}
+
 export interface MatchInput {
   /** Pitch-class frames of the recording and of the tab's render, at `CHROMA_RATE` frames per second. */
   readonly recording: Chroma;
@@ -11,6 +20,8 @@ export interface MatchInput {
   readonly tabOnsets: Float32Array;
   /** The tab's played bars, in tab seconds; every bar gets an anchor. */
   readonly bars: readonly BarSpan[];
+  /** One record per bar of `bars`; absent for callers that do not pass the tab's tempo and meter. */
+  readonly barFacts?: readonly BarFacts[];
 }
 
 export type MatchResult =

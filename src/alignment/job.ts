@@ -1,7 +1,7 @@
 import { AlignmentMap, type AlignmentData, type BarSpan } from '../audio/alignment-map';
 import type { PcmAudio } from '../export/audio';
 import { chromaFrames, downsampleMono, FEATURE_RATE, onsetEnvelope } from './features';
-import { matchRecording } from './match';
+import { matchRecording, type BarFacts } from './match';
 import { findSections, type Section } from './sections';
 
 /** What the worker is given: the recording as mono samples at `FEATURE_RATE`, the tab's render at its own rate, and the tab's played bars. */
@@ -9,6 +9,8 @@ export interface MatchJob {
   readonly recording: Float32Array;
   readonly tab: PcmAudio;
   readonly bars: readonly BarSpan[];
+  /** One record per bar: tempo, beats and score-bar number, plain data like the rest. */
+  readonly barFacts?: readonly BarFacts[];
 }
 
 /** The matcher's answer as plain data, so it can cross the worker boundary. */
@@ -38,6 +40,7 @@ export function runMatchJob(job: MatchJob, onProgress: (fraction: number) => voi
     recordingOnsets: onsetEnvelope(recording, FEATURE_RATE),
     tabOnsets: onsetEnvelope(tab, FEATURE_RATE),
     bars: job.bars,
+    barFacts: job.barFacts,
   };
   onProgress(0.5);
   const result = matchRecording(features);

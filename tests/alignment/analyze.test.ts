@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { barSpansOf, MAX_ANALYSIS_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
+import { barFactsOf, barSpansOf, MAX_ANALYSIS_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
 import { FEATURE_RATE } from '../../src/alignment/features';
 import { runMatchJob, type MatchJob, type MatchJobResult } from '../../src/alignment/job';
 import { MAX_EXPORT_SECONDS } from '../../src/export/presets';
@@ -82,6 +82,17 @@ describe('startAnalysis', () => {
       expect(result.skippedStretches).toBe(1);
       expect(result.sections).toEqual([{ firstBar: 0, lastBar: 2, letter: 'A' }]);
     }
+  });
+
+  it('hands the per-bar facts to the match job as given', async () => {
+    const { deps } = fakes();
+    const barFacts = [{ tempo: 120, beats: 4, scoreBar: 0 }, { tempo: 90, beats: 3, scoreBar: 1 }, { tempo: 90, beats: 3, scoreBar: 1 }];
+    const job = startAnalysis(args({ barFacts }), deps);
+    await flush();
+    job.cancel();
+    expect(vi.mocked(deps.startMatch).mock.calls[0][0].barFacts).toEqual(barFacts);
+    const without = startAnalysis(args(), fakes().deps);
+    without.cancel();
   });
 
   it('decodes a file once for the session, so re-analysing it starts from what is already there', async () => {
@@ -227,5 +238,23 @@ describe('barSpansOf', () => {
   it('lists the start and end of every played bar', () => {
     const timeline = makeTimeline([], 2, 3);
     expect(barSpansOf(timeline)).toEqual(timeline.bars.map((b) => ({ start: b.startSeconds, end: b.endSeconds })));
+  });
+});
+
+describe('barFactsOf', () => {
+  it('gives each played bar its tempo, beats and score bar, across a tempo step, a meter change and a repeat', () => {
+    const timeline = makeTimeline([], 2, 4);
+    const bars = timeline.bars.map((bar, k) => ({
+      ...bar,
+      tempo: k < 2 ? 120 : 90,
+      timeSignature: { numerator: k === 3 ? 3 : 4, denominator: 4 },
+      scoreBar: k === 3 ? 2 : k, // the tab plays score bar 2 twice
+    }));
+    expect(barFactsOf({ ...timeline, bars })).toEqual([
+      { tempo: 120, beats: 4, scoreBar: 0 },
+      { tempo: 120, beats: 4, scoreBar: 1 },
+      { tempo: 90, beats: 4, scoreBar: 2 },
+      { tempo: 90, beats: 3, scoreBar: 2 },
+    ]);
   });
 });

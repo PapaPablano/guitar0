@@ -248,3 +248,19 @@ describe('matchRecording anchors', { timeout: 60000 }, () => {
     expect(result.barMatched).toHaveLength(BARS);
   });
 });
+
+describe('matchRecording with the tab\'s per-bar facts', { timeout: 30000 }, () => {
+  it('gives the same anchors with or without them while the facts are not yet read', () => {
+    const recording = shifted(recordingOfSong, 1.5, R);
+    const features = {
+      recording: chromaFrames(recording, R),
+      tab: chromaFrames(tab, R),
+      recordingOnsets: onsetEnvelope(recording, R),
+      tabOnsets: onsetEnvelope(tab, R),
+      bars: barLines(),
+    };
+    const plain = aligned(matchRecording(features));
+    const withFacts = aligned(matchRecording({ ...features, barFacts: barLines().map((_, k) => ({ tempo: 120, beats: 4, scoreBar: k })) }));
+    expect(withFacts.map.toData()).toEqual(plain.map.toData());
+  });
+});

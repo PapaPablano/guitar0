@@ -3,7 +3,7 @@ import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
-import { barSpansOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
+import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
 import { copyStateText, startExactCopy, type CopyState } from './exact-copy-load';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -205,6 +205,7 @@ export function App() {
       durationSeconds: clockForRun.element.duration,
       tabSeconds: current.timeline.durationSeconds,
       bars: barSpansOf(current.timeline),
+      barFacts: barFactsOf(current.timeline),
       renderTab: (onProgress) => current.clock.exportAudio(onProgress),
       onProgress: (progress) => {
         if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress });

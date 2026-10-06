@@ -5,6 +5,7 @@ import type { Timeline } from '../model/score';
 import type { WorkerMessage, WorkerReply } from './alignment.worker';
 import { FEATURE_RATE } from './features';
 import { mapOfResult, type MatchJob, type MatchJobResult } from './job';
+import type { BarFacts } from './match';
 import type { Section } from './sections';
 
 /** Recordings longer than this are not analysed, so memory stays bounded. */
@@ -53,6 +54,8 @@ export interface AnalysisArgs {
   /** The tab's length, to refuse a render the page could not hold. */
   readonly tabSeconds: number;
   readonly bars: readonly BarSpan[];
+  /** The tab's tempo, beats and score bar for each of `bars`. */
+  readonly barFacts?: readonly BarFacts[];
   /** Renders the whole tab at its original tempo; the app passes the synthesizer's export. */
   readonly renderTab: (onProgress: (fraction: number) => void) => Promise<PcmAudio>;
   /** Called with 0..1, only ever upward. */
@@ -62,6 +65,11 @@ export interface AnalysisArgs {
 /** The tab's played bars in tab seconds; each gets an anchor. */
 export function barSpansOf(timeline: Timeline): BarSpan[] {
   return timeline.bars.map((bar) => ({ start: bar.startSeconds, end: bar.endSeconds }));
+}
+
+/** The tab's tempo, meter and score-bar number for each played bar, in the order of `barSpansOf`. */
+export function barFactsOf(timeline: Timeline): BarFacts[] {
+  return timeline.bars.map((bar) => ({ tempo: bar.tempo, beats: bar.timeSignature.numerator, scoreBar: bar.scoreBar }));
 }
 
 const browserDeps: AnalysisDeps = {
@@ -150,7 +158,7 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
     if (cancelled) return;
     report(0.7);
     try {
-      run = deps.startMatch({ recording, tab, bars: args.bars }, (fraction) => report(0.7 + 0.3 * fraction));
+      run = deps.startMatch({ recording, tab, bars: args.bars, barFacts: args.barFacts }, (fraction) => report(0.7 + 0.3 * fraction));
       const answer = await run.result;
       if (cancelled) return;
       report(1);
