@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { startExactCopy } from '../../src/app/exact-copy-load';
+import { copyStateText, startExactCopy, type CopyState } from '../../src/app/exact-copy-load';
 import { ExactCopyBuilder, type ExactCopyDeps, type ExactCopyResult } from '../../src/audio/exact-copy';
 import type { AudioLike } from '../../src/audio/user-audio';
 
@@ -109,5 +109,51 @@ describe('startExactCopy', () => {
     expect(deps.decode).toHaveBeenCalledTimes(1);
     expect(first.offerElement).toHaveBeenCalledTimes(1);
     expect(second.offerElement).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the copy state the player is told about', () => {
+  const states = async (result: ExactCopyResult, makeElement: () => Promise<AudioLike> = async () => audio()) => {
+    const seen: CopyState[] = [];
+    startExactCopy(file(), clockFor(), copyBuilder(result), makeElement, (s) => seen.push(s));
+    await flush();
+    return seen;
+  };
+
+  it('is preparing at first, then exact once the copy is in use', async () => {
+    expect(await states({ kind: 'copy', url: 'blob:x', release: vi.fn() })).toEqual(['preparing', 'exact']);
+  });
+
+  it('is exact straight away for a file that is already a WAV', async () => {
+    expect(await states({ kind: 'skipped', reason: 'already-wav' })).toEqual(['preparing', 'exact']);
+  });
+
+  it('says so when the recording is too long for a copy, or the copy could not be made', async () => {
+    expect(await states({ kind: 'skipped', reason: 'too-long' })).toEqual(['preparing', 'too-long']);
+    expect(await states({ kind: 'failed' })).toEqual(['preparing', 'failed']);
+    expect(
+      await states({ kind: 'copy', url: 'blob:x', release: vi.fn() }, async () => {
+        throw new Error('cannot load');
+      }),
+    ).toEqual(['preparing', 'failed']);
+  });
+
+  it('says nothing after the recording was replaced', async () => {
+    const seen: CopyState[] = [];
+    let finish: (r: ExactCopyResult) => void = () => {};
+    const builder = { build: vi.fn(() => new Promise<ExactCopyResult>((resolve) => (finish = resolve))) };
+    const cancel = startExactCopy(file(), clockFor(), builder, async () => audio(), (s) => seen.push(s));
+    cancel();
+    finish({ kind: 'failed' });
+    await flush();
+    expect(seen).toEqual(['preparing']);
+  });
+
+  it('words each state, and has nothing to say once the copy is in use', () => {
+    expect(copyStateText('preparing')).toMatch(/Preparing an exact copy/);
+    expect(copyStateText('failed')).toMatch(/WAV/);
+    expect(copyStateText('too-long')).toMatch(/too long/);
+    expect(copyStateText('exact')).toBe('');
+    expect(copyStateText(null)).toBe('');
   });
 });

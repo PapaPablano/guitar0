@@ -4,7 +4,7 @@ import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
 import { barSpansOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
-import { startExactCopy } from './exact-copy-load';
+import { copyStateText, startExactCopy, type CopyState } from './exact-copy-load';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
 import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/file-tuning';
@@ -100,6 +100,8 @@ export function App() {
   const [stems, setStems] = useState<ActiveStems | null>(null);
   const [mix, setMix] = useState<MixState>(() => initialMix());
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
+  /** Whether the loaded recording seeks exactly: a compressed file only does once its exact copy is in use. */
+  const [copyState, setCopyState] = useState<CopyState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [neckFullscreen, setNeckFullscreen] = useState(false);
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
@@ -354,6 +356,7 @@ export function App() {
     cancelAlignment();
     stopExactCopy.current?.();
     stopExactCopy.current = null;
+    setCopyState(null);
     stemsRef.current?.clock.dispose();
     stemsRef.current = null;
     setStems(null);
@@ -495,7 +498,8 @@ export function App() {
       next.seek(position);
       replaceUserClock(next);
       next.setLandingListener(recordLanding);
-      stopExactCopy.current = startExactCopy(file, next);
+      stopExactCopy.current?.();
+      stopExactCopy.current = startExactCopy(file, next, undefined, undefined, setCopyState);
       resetProfile();
       void restoreProfile(file, next);
     } catch (e) {
@@ -732,6 +736,11 @@ export function App() {
         }}
         onRemove={onRemoveRecording}
       />
+      {userClock && copyStateText(copyState) && (
+        <p className={copyState === 'preparing' ? 'muted note' : 'notice'} role="status">
+          {copyStateText(copyState)}
+        </p>
+      )}
       {(userClock || stems) && (
         <AlignmentPanel
           status={alignStatus}
