@@ -12,3 +12,6 @@ src-tauri/gen/
 dist-desktop/
 __pycache__/
 .pytest_cache/
+
+# Local song files for the dev-only measurement page
+dev/local/

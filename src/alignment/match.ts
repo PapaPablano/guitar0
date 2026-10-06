@@ -1,6 +1,8 @@
 import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
 import { OFFSET_MAX_SECONDS } from '../audio/offset-range';
+import { evidenceCurve, onsetPeaks, peakOf } from './evidence';
 import { CHROMA_BINS, CHROMA_RATE, ONSET_RATE, type Chroma } from './features';
+import { solveChain, type ChainBar } from './whole-song';
 
 /** What the tab says about one played bar beyond where it starts and ends: the whole-song pass reads tempo and meter steadiness from it. */
 export interface BarFacts {
@@ -22,6 +24,8 @@ export interface MatchInput {
   readonly bars: readonly BarSpan[];
   /** One record per bar of `bars`; absent for callers that do not pass the tab's tempo and meter. */
   readonly barFacts?: readonly BarFacts[];
+  /** Measurement only: bars whose own onsets are hidden from the whole-song pass, to see how well their neighbours predict them. */
+  readonly heldOut?: ReadonlySet<number>;
 }
 
 export type MatchResult =
@@ -38,6 +42,15 @@ export type MatchResult =
       readonly barConfidence: readonly number[];
       /** Whether the path matched most of each bar's sounding frames; false for a stretch played differently. */
       readonly barMatched: readonly boolean[];
+      /**
+       * The same recording placed bar by bar, each bar on its own evidence, with no whole-song pass: what a first open falls
+       * back on when the whole-song result does not pass the check.
+       */
+      readonly perBarMap: AlignmentMap;
+      /** Seconds of uncertainty of each bar's anchor from the whole-song pass; a bar that shares the next one's position shares its value. */
+      readonly uncertainty: readonly number[];
+      /** Whether each bar's own onsets, alone, agree with where the whole-song pass put it. */
+      readonly evidenceAgrees: readonly boolean[];
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -73,10 +86,14 @@ export const MATCH_OPTIONS = {
   anchorPeakMin: 3,
   /** A refinement closer than this to where the previous bar's steady run predicts is snapped to it, so a steady band shows no step; the error it allows never builds up past this. */
   snapSeconds: 0.02,
-  /** How many bars either side of an unpinned bar are averaged with it. */
-  settleBars: 3,
-  /** How far a bar's offset may sit from its neighbours' median and still count as the same steady stretch. */
-  settleSeconds: 0.15,
+  /** A bar's own onsets agree with the whole-song position when the peak is this close to it. */
+  agreeSeconds: 0.03,
+  /** Least peak standard score of a bar's own evidence for it to count as pinning the bar. */
+  agreePeakMin: 3,
+  /** A change of the tab's tempo by at least this many beats a minute, or of its beats per bar, lets the pace change more easily at that bar. */
+  tempoStepBpm: 0.5,
+  /** How many times looser the pace prior is at a change of tempo or meter. */
+  changeLooseness: 4,
 } as const;
 
 type Options = typeof MATCH_OPTIONS;
@@ -278,29 +295,6 @@ function refineAnchor(barStart: number, guess: number, input: MatchInput, o: Opt
   return { seconds: barStart + (centre + best - reach) / ONSET_RATE, prominence: std > 0 ? (scores[best] - mean) / std : 0 };
 }
 
-/**
- * A bar the onsets could not pin down keeps the path's value, and the path moves in whole frames, so from one bar to the
- * next it can flip between two neighbouring offsets even when the band is steady. Each such bar takes the mean offset of the
- * bars around it that sit within a frame and a half of it, which is finer than a frame and leaves a real jump (extra
- * or skipped playing, a change of tempo) alone because the bars across it are not counted.
- */
-function settleUnpinned(raw: number[], bars: readonly BarSpan[], confidence: readonly number[], fromPath: readonly number[], o: Options): void {
-  const offsets = raw.map((anchor, k) => anchor - bars[k].start);
-  const skipped = bars.map((_, k) => k + 1 < bars.length && fromPath[k + 1] - fromPath[k] < 0.1);
-  const reach = o.settleBars;
-  const tolerance = o.settleSeconds;
-  for (let k = 0; k < bars.length; k++) {
-    if (confidence[k] > 0 || skipped[k]) continue;
-    const near: number[] = [];
-    for (let j = Math.max(0, k - reach); j <= Math.min(bars.length - 1, k + reach); j++) if (!skipped[j]) near.push(offsets[j]);
-    const sorted = [...near].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    if (Math.abs(offsets[k] - median) > tolerance) continue;
-    const alike = near.filter((offset) => Math.abs(offset - median) <= tolerance);
-    raw[k] = bars[k].start + alike.reduce((sum, offset) => sum + offset, 0) / alike.length;
-  }
-}
-
 const round2 = (x: number): number => Math.round(x * 100) / 100;
 
 /** Runs of path cells of one kind: a wait (the recording plays on at one tab frame) or a skip (the tab runs on at one recording frame). */
@@ -394,6 +388,83 @@ function barMatchedFlags(sums: readonly number[], counts: readonly number[], mar
 }
 
 /**
+ * One anchor per bar from the whole-song pass. Bars the recording skips take no part (they share the next bar's anchor);
+ * a jump of a second or more between two bars is a run of extra or skipped playing, taken out of the offsets before the
+ * pass and put back after, so the chain sees the band's pace and not the run. Each bar's evidence is its onsets over the
+ * whole bar up to the start of a wait in it.
+ */
+function wholeSongAnchors(
+  input: MatchInput,
+  fromPath: readonly number[],
+  skipped: readonly boolean[],
+  waitStarts: readonly number[],
+  endAnchor: number,
+  o: Options,
+): { anchors: number[]; uncertainty: number[]; agrees: boolean[] } {
+  const { bars } = input;
+  const tabPeaks = onsetPeaks(input.tabOnsets);
+  const recordingPeaks = onsetPeaks(input.recordingOnsets);
+  const chain: ChainBar[] = [];
+  const members: number[] = [];
+  const shifts: number[] = [];
+  const peaks: { offset: number; z: number }[] = [];
+  let shift = 0;
+  let previous = -1;
+  for (let k = 0; k < bars.length; k++) {
+    if (skipped[k]) continue;
+    const offset = fromPath[k] - bars[k].start;
+    let free = false;
+    if (previous >= 0) {
+      const jump = offset - (fromPath[previous] - bars[previous].start);
+      if (Math.abs(jump) >= o.minHoldSeconds) {
+        shift += jump;
+        free = true;
+      }
+    }
+    const wait = waitStarts.find((at) => at >= bars[k].start - 1e-9 && at < bars[k].end - 1e-9);
+    const seen = evidenceCurve(tabPeaks, recordingPeaks, bars[k], offset, wait ?? bars[k].end);
+    if (!seen) continue;
+    const curve = input.heldOut?.has(k) ? { offsets: seen.offsets, z: new Float64Array(seen.z.length) } : seen;
+    const facts = input.barFacts;
+    const changed =
+      facts !== undefined &&
+      k > 0 &&
+      facts[k] !== undefined &&
+      facts[k - 1] !== undefined &&
+      (Math.abs(facts[k].tempo - facts[k - 1].tempo) >= o.tempoStepBpm || facts[k].beats !== facts[k - 1].beats);
+    const applied = shift;
+    chain.push({
+      offsets: curve.offsets.map((value) => value - applied),
+      z: curve.z,
+      gap: previous >= 0 ? bars[k].start - bars[previous].start : bars[k].end - bars[k].start,
+      looseness: changed ? o.changeLooseness : 1,
+      free,
+    });
+    members.push(k);
+    shifts.push(shift);
+    peaks.push(peakOf(seen));
+    previous = k;
+  }
+  if (chain.length === 0) return { anchors: fromPath.slice(), uncertainty: fromPath.map(() => Infinity), agrees: fromPath.map(() => false) };
+  const solved = solveChain(chain);
+  const anchors = fromPath.slice();
+  const uncertainty = fromPath.map(() => Infinity);
+  const agrees = fromPath.map(() => false);
+  members.forEach((k, c) => {
+    const offset = solved[c].offset + shifts[c];
+    anchors[k] = bars[k].start + offset;
+    uncertainty[k] = solved[c].spread;
+    agrees[k] = peaks[c].z >= o.agreePeakMin && Math.abs(peaks[c].offset - offset) <= o.agreeSeconds;
+  });
+  for (let k = bars.length - 1; k >= 0; k--) {
+    if (!skipped[k]) continue;
+    anchors[k] = k + 1 < bars.length ? anchors[k + 1] : endAnchor;
+    uncertainty[k] = k + 1 < bars.length ? uncertainty[k + 1] : Infinity;
+  }
+  return { anchors, uncertainty, agrees };
+}
+
+/**
  * Finds where a recording sits against the tab, one anchor per bar. The anchors are read off one path through
  * the two signals' pitch content (the BBC offset finder and Audalign only find a single offset), then each is
  * sharpened on the onsets to about 10 ms and scored, matching bar by bar as pyCrossfade does. Returns not-found
@@ -456,36 +527,45 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
   });
   placeSkipsOnBars(fromPath, path, bars, Math.round(o.minHoldSeconds * CHROMA_RATE), endFromPath);
   const raw = fromPath.slice();
+  const skipped = bars.map((_, k) => k + 1 < bars.length && fromPath[k + 1] - fromPath[k] < 0.1);
   const barConfidence = new Array<number>(bars.length).fill(0);
   for (let k = 0; k < bars.length; k++) {
-    const skipped = k + 1 < bars.length && fromPath[k + 1] - fromPath[k] < 0.1;
-    if (skipped) continue; // a bar the recording does not play has nothing to line up
+    if (skipped[k]) continue; // a bar the recording does not play has nothing to line up
     const refined = refineAnchor(bars[k].start, fromPath[k], input, o);
     if (refined.prominence >= o.anchorPeakMin && Math.abs(refined.seconds - fromPath[k]) <= o.fineSeconds + 1e-9) {
       raw[k] = refined.seconds;
       barConfidence[k] = refined.prominence;
     }
   }
-  settleUnpinned(raw, bars, barConfidence, fromPath, o);
-  // A band that is steady shows no steps: a refinement within a few milliseconds of where the previous bar's run predicts is that prediction.
+  // Placed bar by bar, as a fallback: a band that is steady shows no steps, so a refinement within a few milliseconds of where the previous bar's run predicts is that prediction.
   const anchors: number[] = [raw[0]];
   for (let k = 1; k < bars.length; k++) {
     const predicted = anchors[k - 1] + (bars[k - 1].end - bars[k - 1].start);
     anchors.push(Math.abs(raw[k] - predicted) < o.snapSeconds ? predicted : raw[k]);
   }
-  const rounded = anchors.map(round2);
-  for (let k = 1; k < rounded.length; k++) rounded[k] = Math.max(rounded[k], rounded[k - 1]);
-  const endAnchor = round2(Math.max(endFromPath, rounded[rounded.length - 1]));
+  const perBar = anchors.map(round2);
+  for (let k = 1; k < perBar.length; k++) perBar[k] = Math.max(perBar[k], perBar[k - 1]);
+  const endAnchor = round2(Math.max(endFromPath, perBar[perBar.length - 1]));
 
-  if (Math.abs(rounded[0] - bars[0].start) > OFFSET_MAX_SECONDS) return { kind: 'not-found', reason: 'out-of-range' };
-  const map = AlignmentMap.fromAnchors(bars, rounded, endAnchor);
-  if (!map) return { kind: 'not-found', reason: 'not-confident' };
+  if (Math.abs(perBar[0] - bars[0].start) > OFFSET_MAX_SECONDS) return { kind: 'not-found', reason: 'out-of-range' };
+  const perBarMap = AlignmentMap.fromAnchors(bars, perBar, endAnchor);
+  if (!perBarMap) return { kind: 'not-found', reason: 'not-confident' };
+
+  // The whole-song pass: every bar's evidence at once, with the band's steady pace as the prior.
+  const waitStarts = runsOf(path, 2, Math.round(o.minHoldSeconds * CHROMA_RATE)).map((run) => run.first.tab / CHROMA_RATE);
+  const whole = wholeSongAnchors(input, fromPath, skipped, waitStarts, endAnchor, o);
+  const rounded = whole.anchors.map(round2);
+  for (let k = 1; k < rounded.length; k++) rounded[k] = Math.max(rounded[k], rounded[k - 1]);
+  const map = AlignmentMap.fromAnchors(bars, rounded, endAnchor) ?? perBarMap;
+  const finalAnchors = map === perBarMap ? perBar : rounded;
+  // A bar counts as pinned by its onsets only when they agree with where the whole-song pass put it.
+  for (let k = 0; k < bars.length; k++) if (!whole.agrees[k]) barConfidence[k] = 0;
 
   // Stretches of bars the recording played much shorter than the tab's, which the tab jumps past.
   let skippedStretches = 0;
   let inSkip = false;
   for (let k = 0; k < bars.length; k++) {
-    const recorded = (k + 1 < bars.length ? rounded[k + 1] : endAnchor) - rounded[k];
+    const recorded = (k + 1 < bars.length ? finalAnchors[k + 1] : endAnchor) - finalAnchors[k];
     const short = recorded < bars[k].end - bars[k].start - o.minHoldSeconds;
     if (short && !inSkip) skippedStretches += 1;
     inSkip = short;
@@ -498,5 +578,8 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
     skippedStretches,
     barConfidence,
     barMatched: barMatchedFlags(barSimilaritySum, barSimilarityCount, o.matchedMargin),
+    perBarMap,
+    uncertainty: whole.uncertainty,
+    evidenceAgrees: whole.agrees,
   };
 }

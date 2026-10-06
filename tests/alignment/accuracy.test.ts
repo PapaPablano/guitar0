@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { chromaFrames, FEATURE_RATE, onsetEnvelope } from '../../src/alignment/features';
 import { matchRecording } from '../../src/alignment/match';
-import { renderSong } from '../helpers/synthetic-audio';
+import { renderSong, songNotes } from '../helpers/synthetic-audio';
 import {
   accuracyOf,
+  barsOfLengths,
   busyTab,
   driftingLengths,
   performanceOf,
@@ -56,8 +57,8 @@ const fixtures = {
 /**
  * Baseline of the detector before the whole-song pass (commit 583c00a), on `fixtures` played at the tab's own bar lengths:
  * every fixture but `sustainedLong` is exact, `sustainedLong` has 78% of bars within 40 ms (worst 90 ms), and a band whose
- * bar length drifts 3% over sustained chords has 38% within 40 ms (median 71 ms, worst 261 ms), while the same drift with a chord on every bar already passes. The tests below that the baseline misses are
- * `it.fails`, so they pass today and turn red the moment the whole-song pass meets them; U9 flips them to `it`.
+ * bar length drifts 3% over sustained chords has 38% within 40 ms (median 71 ms, worst 261 ms), while the same drift with a chord on every bar already passes.  The tests below that the baseline missed are
+ * the two that the whole-song pass turned from failing to passing.
  */
 const TIGHT = 0.03;
 const DRIFT = 0.04;
@@ -93,13 +94,13 @@ describe('timeline accuracy on generated recordings', { timeout: 60000 }, () => 
   });
 
   // The baseline's gap: bars inside a long sustained chord have no onset to pin them.
-  it.fails('lands bars between strong bars within 40 ms when chords are held for eight bars', () => {
+  it('lands bars between strong bars within 40 ms when chords are held for eight bars', () => {
     const tab = fixtures.sustainedLong();
     expect(sharesAt(detect(tab, steadyLengths(tab.bars)), DRIFT)).toBe(1);
   });
 
   // The baseline's bias: a band whose bar length drifts exposes any fit that treats the whole bar as one length.
-  it.fails("lands bars within 40 ms when the band's bar length drifts by up to 3%", () => {
+  it("lands bars within 40 ms when the band's bar length drifts by up to 3%", () => {
     const tab = sustainedTab(steady(32), 4);
     expect(sharesAt(detect(tab, driftingLengths(tab.bars)), DRIFT)).toBe(1);
   });
@@ -135,12 +136,35 @@ describe('timeline accuracy on generated recordings', { timeout: 60000 }, () => 
     for (const k of [10, 13, 15, 16, 20, 25]) expect(Math.abs(run.found[k] - run.truth[k]), `bar ${k}`).toBeLessThanOrEqual(TIGHT);
   });
 
-  it('shows less within 40 ms for sustained chords than for a chord on every bar, which is the baseline gap', () => {
-    const sustained = fixtures.sustainedLong();
-    const busy = busyTab(steady(32));
-    const a = sharesAt(detect(sustained, steadyLengths(sustained.bars)), DRIFT);
-    const b = sharesAt(detect(busy, steadyLengths(busy.bars)), DRIFT);
-    expect(a).toBeLessThan(b);
+  it('keeps each pass of a section the tab writes out twice on its own positions, with the second pass played slower', () => {
+    const bars = barsOfLengths(steady(16));
+    const eight = songNotes(8, 2, 61);
+    const notes = [...eight, ...eight.map((n) => ({ ...n, start: n.start + 16 }))];
+    const tab = { bars, notes, seconds: 32 };
+    const lengths = bars.map((_, k) => (k < 8 ? 2 : 2.02));
+    const run = detect(tab, lengths);
+    for (let k = 0; k < 16; k++) expect(Math.abs(run.found[k] - run.truth[k]), `bar ${k}`).toBeLessThanOrEqual(DRIFT);
+  });
+
+  it('returns the per-bar placement, an uncertainty for every bar and a flag for whether its own onsets agree', () => {
+    const tab = fixtures.sustained();
+    const performance = performanceOf(tab, steadyLengths(tab.bars), LEAD);
+    const tabSamples = renderSong(tab.notes, tab.seconds, R, 'plain');
+    const recording = renderSong(performance.notes, performance.seconds, R, 'rich', 17);
+    const result = matchRecording({
+      recording: chromaFrames(recording, R),
+      tab: chromaFrames(tabSamples, R),
+      recordingOnsets: onsetEnvelope(recording, R),
+      tabOnsets: onsetEnvelope(tabSamples, R),
+      bars: spansOf(tab.bars),
+    });
+    if (result.kind !== 'aligned') throw new Error('not aligned');
+    expect(result.uncertainty).toHaveLength(tab.bars.length);
+    expect(result.evidenceAgrees).toHaveLength(tab.bars.length);
+    expect(result.perBarMap.hasAnchors).toBe(true);
+    // Bars on a chord's attack agree with their own onsets; the bars held through it have none to agree with.
+    expect(result.evidenceAgrees[0]).toBe(true);
+    expect(result.evidenceAgrees[2]).toBe(false);
   });
 
   it('gives identical anchors when the matcher runs twice on one drifting fixture', () => {
