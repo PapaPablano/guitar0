@@ -26,7 +26,7 @@ Requirements: Node, Rust, and the Tauri CLI (`cargo install tauri-cli --version 
 scripts/package-windows.ps1
 ```
 
-The script builds the page and the shell, downloads the StemDeck release named in `engine/stemdeck.version`, checks it against the checksum StemDeck publishes, and stages the package under `dist-desktop/`. To update StemDeck, change the tag in that file and run the saved-stems flow once by hand.
+The script builds the page and the shell, downloads the StemDeck release named in `engine/stemdeck.version`, checks it against the checksum StemDeck publishes, and stages the package under `dist-desktop/`. A rebuild keeps an existing `data/` folder (saved profiles, alignments, stems and downloaded models); delete it by hand to start clean. To update StemDeck, change the tag in that file and run the saved-stems flow once by hand.
 
 ## Tests
 

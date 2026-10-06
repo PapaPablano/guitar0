@@ -62,8 +62,10 @@ foreach ($dir in "python", "backend") {
   if (-not (Test-Path (Join-Path $Inner.FullName $dir))) { throw "StemDeck package has no '$dir' folder" }
 }
 
-# 3. Stage the package.
-if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
+# 3. Stage the package. Everything is replaced except data/, which holds saved profiles, stems and downloaded models.
+if (Test-Path $Stage) {
+  Get-ChildItem -LiteralPath $Stage -Force | Where-Object { $_.Name -ne "data" } | Remove-Item -Recurse -Force
+}
 New-Item -ItemType Directory -Force $Stage | Out-Null
 Copy-Item -Recurse (Join-Path $Inner.FullName "python") (Join-Path $Stage "python")
 Copy-Item -Recurse (Join-Path $Inner.FullName "backend") (Join-Path $Stage "backend")
