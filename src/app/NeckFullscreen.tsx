@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Clock } from '../audio/clock';
 import type { LabelMode } from '../render/fretboard';
-import { photoPlacement, renderNeckView } from '../render/neck-view';
+import { drawNeckPhoto, renderNeckView } from '../render/neck-view';
 import photoUrl from '../assets/guitar-photo.jpg';
 import type { Timeline } from '../model/score';
 
@@ -89,7 +89,7 @@ export function NeckFullscreen({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          drawPhoto(ctx, photoRef.current, width, height);
+          drawNeckPhoto(ctx, photoRef.current, width, height);
           renderNeckView(ctx, timeline, trackIndex, clock.time(), width, height, {
             lookahead: lookaheadRef.current,
             labelMode: labelModeRef.current,
@@ -118,18 +118,4 @@ export function NeckFullscreen({
       {!playing && canPlay && <p className="neck-fullscreen-hint">Tap or press space to play · Esc to exit</p>}
     </div>
   );
-}
-
-/** The photo of the guitar, placed so the neck fills the screen; plain dark until it has loaded. */
-function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement | null, width: number, height: number): void {
-  ctx.fillStyle = '#03141a';
-  ctx.fillRect(0, 0, width, height);
-  if (!image) return;
-  const place = photoPlacement(width, height);
-  ctx.save();
-  ctx.translate(width / 2, height / 2);
-  if (place.rotated) ctx.rotate(Math.PI / 2);
-  ctx.scale(place.scale, place.scale);
-  ctx.drawImage(image, -place.centreX, -place.centreY);
-  ctx.restore();
 }

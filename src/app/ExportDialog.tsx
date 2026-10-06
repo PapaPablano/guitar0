@@ -4,7 +4,8 @@ import { exportLength, type PcmAudio } from '../export/audio';
 import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../export/audio-file';
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
-import { estimateMegabytes, MAX_EXPORT_SECONDS, PRESETS, presetById, type ExportPreset } from '../export/presets';
+import { loadNeckPhoto } from '../export/neck-photo';
+import { estimateMegabytes, MAX_EXPORT_SECONDS, PRESETS, presetById, type ExportLayout, type ExportPreset } from '../export/presets';
 import type { BottomOptions } from '../render/composite';
 import type { Timeline } from '../model/score';
 
@@ -42,6 +43,7 @@ function formatDuration(seconds: number): string {
 export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
+  const [layout, setLayout] = useState<ExportLayout>('practice');
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
   const job = useRef<ExportJob | null>(null);
@@ -124,6 +126,11 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
     try {
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
+      const photo = layout === 'neck' ? await loadNeckPhoto() : undefined;
+      if (!current()) {
+        photo?.close();
+        return;
+      }
       setPhase({ name: 'exporting', fraction: 0 });
       const running = startExport({
         timeline,
@@ -131,6 +138,8 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
         preset,
         audio,
         bottom,
+        layout,
+        photo,
         alignment,
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
@@ -183,6 +192,13 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
                         {p.label}
                       </option>
                     ))}
+                  </select>
+                </label>
+                <label className="field">
+                  Video layout
+                  <select value={layout} onChange={(e) => setLayout(e.target.value === 'neck' ? 'neck' : 'practice')}>
+                    <option value="practice">Practice screen (highway and tab or fretboard)</option>
+                    <option value="neck">Full screen neck (guitar photo)</option>
                   </select>
                 </label>
                 <p className="muted">

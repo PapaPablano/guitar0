@@ -1,3 +1,6 @@
+/** What the video shows: the practice screen (highway over the tab or fretboard), or the neck filling the frame. */
+export type ExportLayout = 'practice' | 'neck';
+
 export interface ExportPreset {
   readonly id: 'landscape' | 'vertical';
   readonly label: string;

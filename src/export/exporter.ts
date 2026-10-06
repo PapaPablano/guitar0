@@ -5,7 +5,7 @@ import type { PcmAudio } from './audio';
 import { exportLength, fitPcm } from './audio';
 import type { StartMessage, WorkerReply } from './encoder.worker';
 import type { BottomOptions } from '../render/composite';
-import type { ExportPreset } from './presets';
+import type { ExportLayout, ExportPreset } from './presets';
 
 export interface ExportJob {
   /** Resolves with the finished MP4, or rejects with `ExportCancelled` or an Error. */
@@ -26,6 +26,9 @@ export function startExport(args: {
   preset: ExportPreset;
   audio: PcmAudio;
   bottom: BottomOptions;
+  /** What each frame shows; the neck layout needs `photo`. */
+  layout?: ExportLayout;
+  photo?: ImageBitmap;
   /** Where the recording sits against the tab; the video lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
   onProgress: (fraction: number) => void;
@@ -68,10 +71,12 @@ export function startExport(args: {
         preset: args.preset,
         audio,
         bottom: args.bottom,
+        layout: args.layout,
+        photo: args.photo,
         outputSeconds,
         alignment,
       };
-      worker.postMessage(start, [audio.left.buffer, audio.right.buffer]);
+      worker.postMessage(start, [audio.left.buffer, audio.right.buffer, ...(args.photo ? [args.photo] : [])]);
     } catch (e) {
       worker.terminate();
       reject(e instanceof Error ? e : new Error(String(e)));

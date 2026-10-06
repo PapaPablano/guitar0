@@ -107,6 +107,44 @@ export function photoRingRadius(fret: number): number {
   return Math.max(3.5, Math.min((FRET_X[shown - 1] - before) * 0.36, 6.5));
 }
 
+/** Extra drawing calls a surface needs to place the photo; canvases provide these. */
+export interface PhotoContext extends DrawContext {
+  translate(x: number, y: number): void;
+  rotate(angle: number): void;
+  scale(x: number, y: number): void;
+  drawImage(image: CanvasImageSource, x: number, y: number): void;
+  fillRect(x: number, y: number, w: number, h: number): void;
+}
+
+/** The photo of the guitar, placed so the neck fills the screen; plain dark when it is not available yet. */
+export function drawNeckPhoto(ctx: PhotoContext, image: CanvasImageSource | null, width: number, height: number): void {
+  ctx.fillStyle = '#03141a';
+  ctx.fillRect(0, 0, width, height);
+  if (!image) return;
+  const place = photoPlacement(width, height);
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  if (place.rotated) ctx.rotate(Math.PI / 2);
+  ctx.scale(place.scale, place.scale);
+  ctx.drawImage(image, -place.centreX, -place.centreY);
+  ctx.restore();
+}
+
+/** One whole frame of the neck view: the photo, then the rings over it. The video export draws each frame through this. */
+export function renderNeckFrame(
+  ctx: PhotoContext,
+  image: CanvasImageSource | null,
+  timeline: Timeline,
+  trackIndex: number,
+  t: number,
+  width: number,
+  height: number,
+  options: NeckViewOptions = {},
+): void {
+  drawNeckPhoto(ctx, image, width, height);
+  renderNeckView(ctx, timeline, trackIndex, t, width, height, options);
+}
+
 export interface NeckViewOptions {
   readonly theme?: HighwayTheme;
   readonly lookahead?: number;

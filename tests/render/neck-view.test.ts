@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  drawNeckPhoto,
   PHOTO_FRET_COUNT,
   photoNoteX,
   photoPlacement,
   photoRingRadius,
   photoStringY,
   photoToScreen,
+  renderNeckFrame,
   renderNeckView,
+  type PhotoContext,
 } from '../../src/render/neck-view';
 import { emphasisAt } from '../../src/render/emphasis';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
@@ -109,5 +112,44 @@ describe('renderNeckView', () => {
 
   it('draws the same calls twice for the same time', () => {
     expect(draw(specs, 1.2, 540, 1170)).toEqual(draw(specs, 1.2, 540, 1170));
+  });
+});
+
+describe('the photo and the whole frame', () => {
+  const image = {} as CanvasImageSource;
+  const specs: NoteSpec[] = [{ start: 1, end: 2, string: 3, fret: 5 }];
+  const frame = (w: number, h: number, photo: CanvasImageSource | null = image) => {
+    const { ctx, calls } = createRecordingContext();
+    renderNeckFrame(ctx as PhotoContext, photo, makeTimeline(specs), 0, 1.2, w, h);
+    return calls;
+  };
+
+  it('draws the photo first, centred and scaled to the placement, then the rings', () => {
+    const calls = frame(1920, 1080);
+    const place = photoPlacement(1920, 1080);
+    const drawn = calls.findIndex((c) => c.name === 'drawImage');
+    expect(drawn).toBeGreaterThanOrEqual(0);
+    expect(calls[drawn].args).toEqual([image, -place.centreX, -place.centreY]);
+    expect(calls.findIndex((c) => c.name === 'arc')).toBeGreaterThan(drawn);
+    expect(calls.some((c) => c.name === 'rotate')).toBe(false);
+  });
+
+  it('turns the photo upright for a tall frame', () => {
+    expect(frame(1080, 1920).some((c) => c.name === 'rotate' && c.args[0] === Math.PI / 2)).toBe(true);
+  });
+
+  it('draws a plain dark frame, with the rings, before the photo has loaded', () => {
+    const calls = frame(1920, 1080, null);
+    expect(calls.some((c) => c.name === 'drawImage')).toBe(false);
+    expect(calls.some((c) => c.name === 'arc')).toBe(true);
+  });
+
+  it('draws the same frame twice', () => {
+    expect(frame(1080, 1920)).toEqual(frame(1080, 1920));
+  });
+
+  it('can be drawn straight onto a canvas surface', () => {
+    const { ctx } = createRecordingContext();
+    drawNeckPhoto(ctx as PhotoContext, null, 100, 100);
   });
 });
