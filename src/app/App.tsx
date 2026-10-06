@@ -20,8 +20,10 @@ import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
-import { revertToManual } from './alignment-controls';
-import { decideAutoAlign, mapFromRecord, needsBaseline, recordFromMap, settleAnalysis, type AlignStatus } from './auto-align';
+import { controlsFor } from './alignment-controls';
+import { decideOnOpen, recordFromMap, settleAnalysis, withAttempt, type AlignStatus } from './auto-align';
+import { tabFingerprint } from '../audio/tab-fingerprint';
+import type { OutcomeTier } from '../alignment/timeline-check';
 import { SectionPanel } from './SectionPanel';
 import {
   carryNames,
@@ -86,7 +88,7 @@ export function App() {
   const support = useMemo(() => assessSupport(readSupportEnvironment()), []);
   const [userClock, setUserClock] = useState<UserAudioClock | null>(null);
   const [offset, setOffset] = useState(0);
-  /** How the recording sits against the tab: the base offset plus any extra playing where the tab waits. */
+  /** How the recording sits against the tab: a committed per-bar timeline, or only the global offset while there is none. */
   const [alignment, setAlignment] = useState<AlignmentMap>(() => AlignmentMap.fromOffset(0));
   const [alignStatus, setAlignStatus] = useState<AlignStatus>({ phase: 'idle' });
   /** The recording's parts found by the warm-up, with the names the user gave them. */
@@ -144,6 +146,12 @@ export function App() {
   const alignJob = useRef<AnalysisJob | null>(null);
   /** Where the alignment came from; null means the offset was set by hand and no record is saved. */
   const alignSource = useRef<AlignmentRecord['source'] | null>(null);
+  /** What the saved record says about the committed timeline (revision, fingerprint, tier, previous offset); null for an offset alone or an older record. */
+  const alignStamp = useRef<{ fingerprint: string; tier: OutcomeTier; previousOffset?: number } | null>(null);
+  /** A failed detection for this recording and tab, to be saved so opening it again does not repeat the run. */
+  const alignAttempt = useRef<string | null>(null);
+  /** True once the owner moved the offset after the latest detection began; only then is its result dropped. */
+  const offsetMovedSinceRun = useRef(false);
   const profileSaver = useRef<ReturnType<
     typeof createDebouncer<{ hash: string; offset: number; mix?: MixState; alignment?: AlignmentRecord }>
   > | null>(null);
@@ -162,7 +170,10 @@ export function App() {
   function scheduleProfileSave(offsetSeconds: number) {
     const hash = profileHash.current;
     const source = alignSource.current;
-    const alignmentRecord = source ? recordFromMap(live.current.alignment, source, live.current.sections) : undefined;
+    let alignmentRecord = source
+      ? recordFromMap(live.current.alignment, source, live.current.sections, alignStamp.current ?? undefined)
+      : undefined;
+    if (alignAttempt.current) alignmentRecord = withAttempt(alignmentRecord, alignAttempt.current);
     if (hash) profileSaver.current?.push({ hash, offset: offsetSeconds, mix: profileMix.current, alignment: alignmentRecord });
   }
 
@@ -199,16 +210,19 @@ export function App() {
     alignJob.current?.cancel();
     const run = alignRuns.current.begin();
     const token = sessionToken.current;
-    setAlignStatus({ phase: 'analysing', progress: 0 });
+    offsetMovedSinceRun.current = false;
+    const again = live.current.alignment.hasAnchors;
+    const bars = barSpansOf(current.timeline);
+    setAlignStatus({ phase: 'analysing', progress: 0, again });
     const job = startAnalysis({
       file,
       durationSeconds: clockForRun.element.duration,
       tabSeconds: current.timeline.durationSeconds,
-      bars: barSpansOf(current.timeline),
+      bars,
       barFacts: barFactsOf(current.timeline),
       renderTab: (onProgress) => current.clock.exportAudio(onProgress),
       onProgress: (progress) => {
-        if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress });
+        if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress, again });
       },
     });
     alignJob.current = job;
@@ -217,16 +231,25 @@ export function App() {
     const settled = settleAnalysis(
       {
         stillCurrent: alignRuns.current.isCurrent(run) && token === sessionToken.current && userClockRef.current === clockForRun,
-        offsetMoved: offsetMoved.current,
+        offsetMovedSinceStart: offsetMovedSinceRun.current,
+        bars,
+        hasTimeline: live.current.alignment.hasAnchors,
       },
       result,
     );
     if (!settled) return;
     setAlignStatus(settled.status);
-    if (settled.map) {
+    if (settled.map && settled.tier) {
+      // The one place a detected timeline becomes the timeline in use: it replaces the owner's offset, which is kept in the record.
+      const hadOffset = !live.current.alignment.hasAnchors && live.current.offset !== 0 ? live.current.offset : undefined;
+      alignStamp.current = { fingerprint: tabFingerprint(bars), tier: settled.tier, previousOffset: hadOffset ?? alignStamp.current?.previousOffset };
+      alignAttempt.current = null;
       setBarHealth({ barConfidence: settled.barConfidence, barMatched: settled.barMatched });
       setLandings({});
       applyAlignment(settled.map, 'auto', true, carryNames(live.current.sections, settled.sections));
+    } else if (settled.remember) {
+      alignAttempt.current = tabFingerprint(bars);
+      scheduleProfileSave(live.current.offset);
     }
   }
 
@@ -269,6 +292,8 @@ export function App() {
     profileMix.current = undefined;
     cancelAlignment();
     alignSource.current = null;
+    alignStamp.current = null;
+    alignAttempt.current = null;
     live.current.alignment = AlignmentMap.fromOffset(0);
     live.current.sections = [];
     setAlignment(live.current.alignment);
@@ -295,20 +320,20 @@ export function App() {
       },
       profile,
     );
-    if (plan?.offset !== undefined) {
-      // Anchors that fit this tab's bars come back as the bar-level baseline; anything else as the offset and extra playing it also carries.
-      const saved = live.current.session?.timeline;
-      const map = mapFromRecord(plan.offset, plan.alignment, saved ? barSpansOf(saved) : []);
-      applyAlignment(map, plan.alignment?.source ?? null, false, plan.alignment?.sections ?? []);
-      setAlignStatus(
-        !plan.alignment
-          ? { phase: 'manual' }
-          : needsBaseline(plan.alignment)
-            ? { phase: 'baseline-missing' }
-            : plan.alignment.source === 'auto'
-              ? { phase: 'found', sections: map.holds.length, skipped: 0 }
-              : { phase: 'manual' },
-      );
+    const bars = live.current.session ? barSpansOf(live.current.session.timeline) : [];
+    const decision = decideOnOpen(profile, bars);
+    const record = profile?.alignment;
+    if (plan?.offset !== undefined && profile) {
+      // What plays now: a current timeline, or the older record where its anchors still fit, or the saved offset alone.
+      const play = decision.action === 'reuse' ? decision.map : decision.play;
+      applyAlignment(play, record?.source ?? null, false, record?.sections ?? []);
+      if (decision.action === 'reuse' && record) {
+        alignStamp.current = { fingerprint: record.fingerprint ?? tabFingerprint(bars), tier: decision.tier, previousOffset: record.previousOffset };
+        setAlignStatus(decision.tier === 'lined-up' ? { phase: 'lined-up', skipped: 0 } : { phase: 'roughly', skipped: 0 });
+      } else if (decision.action === 'stay') {
+        alignAttempt.current = tabFingerprint(bars);
+        setAlignStatus({ phase: 'not-found', reason: 'not-confident' });
+      }
     }
     if (plan?.mix) {
       profileMix.current = plan.mix;
@@ -320,13 +345,9 @@ export function App() {
     if (hash && userClockRef.current === clockForLoad && (offsetMoved.current || mixMoved.current)) {
       scheduleProfileSave(live.current.offset);
     }
-    // Anything saved or moved by the user wins; otherwise the recording is lined up with the tab (KTD8).
-    if (userClockRef.current === clockForLoad) {
-      if (decideAutoAlign({ hasProfile: profile !== null, offsetMoved: offsetMoved.current }) === 'run') {
-        setAlignRequest({ file, clock: clockForLoad });
-      } else if (!plan?.alignment) {
-        setAlignStatus({ phase: 'manual' });
-      }
+    // Detection is automatic (KD6): a saved timeline that is current is reused, and everything else is detected, with no prompt.
+    if (userClockRef.current === clockForLoad && decision.action === 'detect') {
+      setAlignRequest({ file, clock: clockForLoad });
     }
   }
 
@@ -479,6 +500,8 @@ export function App() {
   }, [timeline, trackIndex, loop, exportAlignment]);
 
   const audioReady = audio.status === 'ready' || userClock !== null || stems !== null;
+  /** What each control does in the current state, derived once so the offset control, playback and export agree. */
+  const stateControls = controlsFor(alignStatus, { hasTimeline: alignment.hasAnchors, hasRecordingFile: userClock?.file != null });
   useEffect(() => {
     if (audioReady) clock?.setRate(tempoPercent / 100);
   }, [clock, tempoPercent, audioReady]);
@@ -665,7 +688,7 @@ export function App() {
         <button type="button" onClick={() => setNeckFullscreen(true)}>
           Full screen
         </button>
-        <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady}>
+        <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady || stateControls.exportBlockedReason !== null} title={stateControls.exportBlockedReason ?? undefined}>
           Export video
         </button>
         <button
@@ -727,12 +750,14 @@ export function App() {
       />
       <OffsetSlider
         offsetSeconds={userClock || stems ? offset : null}
+        offsetControl={stateControls.showOffset}
         fileName={userClock?.file?.name ?? stems?.title ?? null}
         error={userAudioError}
         onLoad={onLoadRecording}
         onOffsetChange={(raw) => {
           const seconds = clampOffset(raw);
           offsetMoved.current = true;
+          offsetMovedSinceRun.current = true;
           applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
         }}
         onRemove={onRemoveRecording}
@@ -745,22 +770,12 @@ export function App() {
       {(userClock || stems) && (
         <AlignmentPanel
           status={alignStatus}
-          alignment={alignment}
-          timeline={timeline}
-          canReanalyse={userClock?.file != null && alignStatus.phase !== 'analysing' && alignStatus.phase !== 'waiting'}
-          onChange={(map) => {
-            offsetMoved.current = true;
-            applyAlignment(map, alignSource.current ?? 'auto', true);
-          }}
-          onRevert={() => {
-            offsetMoved.current = true;
-            applyAlignment(revertToManual(live.current.alignment), 'manual', true);
-            setAlignStatus({ phase: 'manual' });
-          }}
+          canReanalyse={stateControls.canReanalyse && !exportOpen}
           onReanalyse={() => {
             if (!userClock?.file) return;
-            // A run the user asks for starts from a clean slate: only a move made while it runs discards its result.
+            // A run the owner asks for starts clean: a failed attempt no longer holds it back.
             offsetMoved.current = false;
+            alignAttempt.current = null;
             setAlignRequest({ file: userClock.file, clock: userClock });
           }}
         />

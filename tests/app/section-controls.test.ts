@@ -98,13 +98,13 @@ describe('precisionOf', () => {
   const sec = { firstBar: 2, lastBar: 5, letter: 'A' };
   const matched = new Array<boolean>(10).fill(true);
 
-  it('says how many bars were placed to the beat and that the rest are within about a tenth of a second', () => {
+  it('says how many bars were confirmed by onsets and that the rest were settled from the whole song', () => {
     const confidence = new Array<number>(10).fill(0);
-    expect(precisionOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('4 bars placed within about 0.1 s');
+    expect(precisionOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('4 bars settled from the whole song');
     confidence[2] = 4;
     confidence[5] = 3.2;
-    expect(precisionOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('2 of 4 bars placed to the beat, the rest within about 0.1 s');
-    expect(precisionOf(sec, { barConfidence: new Array<number>(10).fill(5), barMatched: matched })).toBe('all 4 bars placed to the beat');
+    expect(precisionOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('2 of 4 bars confirmed by onsets, the rest settled from the whole song');
+    expect(precisionOf(sec, { barConfidence: new Array<number>(10).fill(5), barMatched: matched })).toBe('all 4 bars confirmed by onsets');
   });
 });
 

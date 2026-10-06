@@ -86,32 +86,12 @@ describe('AlignmentMap with anchors', () => {
     expect(AlignmentMap.fromOffset(2).outputLength(12)).toBe(12);
   });
 
-  it('shifts every anchor with the base offset', () => {
-    const map = drifting().withBase(2.5);
-    expect(map.base).toBeCloseTo(2.5, 9);
-    expect(map.toRec(2, 'start')).toBeCloseTo(4.6, 9);
-    expect(map.toRec(12, 'start')).toBeCloseTo(22.3, 9);
-  });
-
-  it('resizes and removes a derived section by shifting only the anchors after it', () => {
-    const longer = drifting().withHoldLength(0, 10);
-    expect(longer.holds[0].length).toBeCloseTo(10, 9);
-    expect(longer.toRec(8, 'start')).toBeCloseTo(9.3, 9);
-    expect(longer.toRec(10, 'start')).toBeCloseTo(21.3, 9);
-    expect(longer.toRec(12, 'start')).toBeCloseTo(23.3, 9);
-
-    const removed = drifting().withoutHold(0);
-    expect(removed.holds).toEqual([]);
-    expect(removed.toRec(10, 'start')).toBeCloseTo(11.3, 9);
-    expect(removed.toRec(12, 'start')).toBeCloseTo(13.3, 9);
-  });
-
-  it('adds extra playing to the bar before a line', () => {
-    const added = AlignmentMap.fromAnchors(bars, [0, 2, 4, 6, 8, 10], 12)!.withHold({ at: 6, length: 3 });
-    expect(added.holds).toEqual([{ at: 6, length: 3 }]);
-    expect(added.toRec(6, 'start')).toBeCloseTo(9, 9);
-    // a line that is not a bar line changes nothing
-    expect(added.withHold({ at: 5.5, length: 1 }).holds).toEqual([{ at: 6, length: 3 }]);
+  it('is not given another base offset: a timeline of per-bar positions is committed whole, and the offset belongs to the form without one', () => {
+    const map = drifting();
+    const moved = map.withBase(2.5);
+    expect(moved).toBe(map);
+    expect(moved.toRec(2, 'start')).toBeCloseTo(map.toRec(2, 'start'), 9);
+    expect(AlignmentMap.of(1, []).withBase(2.5).base).toBeCloseTo(2.5, 9);
   });
 
   it('refuses anchors that do not fit the bars and repairs a decreasing run', () => {

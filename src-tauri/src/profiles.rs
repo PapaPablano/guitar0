@@ -40,6 +40,20 @@ mod tests {
     }
 
     #[test]
+    fn extra_fields_inside_an_entry_survive_a_read_and_write() {
+        let text = r#"{"version":1,"entries":[{"hash":"h","profile":{"version":1,"offset":0.5,"alignment":{"source":"auto","holds":[],"anchors":[1.0,3.0],"endAnchor":5.0,"revision":1,"fingerprint":"6:0f0f0f0f","tier":"lined-up","attempt":{"revision":1,"fingerprint":"6:0f0f0f0f"},"previousOffset":0.4}}}]}"#;
+        let parsed = parse_profiles(text);
+        let out = serialize_profiles(&parsed).unwrap();
+        let back = parse_profiles(&out);
+        let alignment = &back["entries"][0]["profile"]["alignment"];
+        assert_eq!(alignment["revision"], 1);
+        assert_eq!(alignment["fingerprint"], "6:0f0f0f0f");
+        assert_eq!(alignment["tier"], "lined-up");
+        assert_eq!(alignment["attempt"]["revision"], 1);
+        assert_eq!(alignment["previousOffset"], 0.4);
+    }
+
+    #[test]
     fn unreadable_text_reads_as_empty() {
         assert_eq!(parse_profiles("{not json"), empty_file());
         assert_eq!(parse_profiles(""), empty_file());

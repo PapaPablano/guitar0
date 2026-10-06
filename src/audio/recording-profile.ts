@@ -23,6 +23,16 @@ export interface AlignmentRecord {
   endAnchor?: number;
   /** The recording's parts, with the names the user gave them. */
   sections?: readonly SectionRecord[];
+  /** Which build of the whole-song pass placed `anchors`; a record without the current one is detected again when it opens. */
+  revision?: number;
+  /** The tab the anchors were placed against (its bar count and a hash of its bar boundaries); another tab means detecting again. */
+  fingerprint?: string;
+  /** Whether most bars were supported when the timeline was committed. */
+  tier?: 'lined-up' | 'roughly';
+  /** A detection that failed for this revision and tab, so opening the recording does not repeat it. */
+  attempt?: { revision: number; fingerprint: string };
+  /** The offset the owner had set when a detected timeline replaced it, kept so there is something to fall back to. */
+  previousOffset?: number;
 }
 
 /** A part of the song as a run of played bars; the letter is by repetition, the name is the user's. */
@@ -117,6 +127,20 @@ function normalizeAlignment(raw: unknown, offset: number): AlignmentRecord | und
   }
   const sections = normalizeSections(raw.sections);
   if (sections) record.sections = sections;
+  // The fields added with the whole-song timeline are optional and read with type checks: a bad one reads as absent and never costs the rest.
+  if (Number.isInteger(raw.revision) && (raw.revision as number) > 0) record.revision = raw.revision as number;
+  if (typeof raw.fingerprint === 'string' && raw.fingerprint.length > 0 && raw.fingerprint.length <= 64) record.fingerprint = raw.fingerprint;
+  if (raw.tier === 'lined-up' || raw.tier === 'roughly') record.tier = raw.tier;
+  if (
+    isRecord(raw.attempt) &&
+    Number.isInteger(raw.attempt.revision) &&
+    typeof raw.attempt.fingerprint === 'string' &&
+    raw.attempt.fingerprint.length > 0 &&
+    raw.attempt.fingerprint.length <= 64
+  ) {
+    record.attempt = { revision: raw.attempt.revision as number, fingerprint: raw.attempt.fingerprint };
+  }
+  if (typeof raw.previousOffset === 'number' && Number.isFinite(raw.previousOffset)) record.previousOffset = clampOffset(raw.previousOffset);
   return record;
 }
 
@@ -161,6 +185,9 @@ export interface ProfileFileBackend {
 
 /** A ProfileStore over a whole-file backend (the desktop shell). Every failure is "no profile" or a skipped save. */
 export class FileProfileStore implements ProfileStore {
+  /** Saves read the whole file, change one entry and write it back, so two at once would drop one: each waits for the one before it. */
+  private queue: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly backend: ProfileFileBackend,
     private readonly cap: number = PROFILE_CAP,
@@ -174,12 +201,17 @@ export class FileProfileStore implements ProfileStore {
     }
   }
 
-  async save(hash: string, profile: RecordingProfile): Promise<void> {
-    try {
-      const file = parseProfileFile(await this.backend.read());
-      await this.backend.write(withProfile(file, hash, profile, this.cap));
-    } catch {
-      // Saved state is a convenience; a failed save must never reach the user.
-    }
+  save(hash: string, profile: RecordingProfile): Promise<void> {
+    const run = async (): Promise<void> => {
+      try {
+        const file = parseProfileFile(await this.backend.read());
+        await this.backend.write(withProfile(file, hash, profile, this.cap));
+      } catch {
+        // Saved state is a convenience; a failed save must never reach the user.
+      }
+    };
+    const next = this.queue.then(run, run);
+    this.queue = next;
+    return next;
   }
 }

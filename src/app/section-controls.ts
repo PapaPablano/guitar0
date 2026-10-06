@@ -26,7 +26,7 @@ export interface SectionRow {
   /** The bar numbers as the tab shows them. */
   readonly bars: string;
   readonly readout: Readout;
-  /** How finely the bars were placed, such as "17 of 23 bars placed to the beat, the rest within about 0.1 s". */
+  /** How finely the bars were placed, such as "17 of 23 bars confirmed by onsets, the rest settled from the whole song". */
   readonly precision: string;
   /** How far the latest jump into the section landed from its anchor, or nothing before the first jump. */
   readonly landing: string;
@@ -47,7 +47,7 @@ function countBars(section: SectionRecord, health: BarHealth): { bars: number; m
 /**
  * Whether the recording plays what the tab says, in words: not matched when most of the section's bars were played
  * differently from the tab, uncertain when a good share were, confident otherwise. How finely each bar was placed is a
- * separate matter (`precisionOf`): most bars of loud, dense music are matched surely but placed only to about a tenth of a second.
+ * separate matter (`precisionOf`): most bars of loud, dense music are matched surely but have no onset of their own to confirm them, and take their place from the whole song.
  */
 export function readoutOf(section: SectionRecord, health: BarHealth): Readout {
   if (health.barMatched.length === 0 || health.barConfidence.length === 0) return 'not measured';
@@ -61,9 +61,9 @@ export function precisionOf(section: SectionRecord, health: BarHealth): string {
   if (health.barMatched.length === 0 || health.barConfidence.length === 0) return '';
   const { bars, pinned } = countBars(section, health);
   const noun = bars === 1 ? 'bar' : 'bars';
-  if (pinned === bars) return `all ${bars} ${noun} placed to the beat`;
-  if (pinned === 0) return `${bars} ${noun} placed within about 0.1 s`;
-  return `${pinned} of ${bars} ${noun} placed to the beat, the rest within about 0.1 s`;
+  if (pinned === bars) return `all ${bars} ${noun} confirmed by onsets`;
+  if (pinned === 0) return `${bars} ${noun} settled from the whole song`;
+  return `${pinned} of ${bars} ${noun} confirmed by onsets, the rest settled from the whole song`;
 }
 
 export function landingText(errorSeconds: number): string {

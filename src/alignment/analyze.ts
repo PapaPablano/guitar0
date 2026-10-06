@@ -1,4 +1,4 @@
-import type { AlignmentMap, BarSpan } from '../audio/alignment-map';
+import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
 import type { PcmAudio } from '../export/audio';
 import { MAX_EXPORT_SECONDS } from '../export/presets';
 import type { Timeline } from '../model/score';
@@ -7,6 +7,7 @@ import { FEATURE_RATE } from './features';
 import { mapOfResult, type MatchJob, type MatchJobResult } from './job';
 import type { BarFacts } from './match';
 import type { Section } from './sections';
+import type { OutcomeTier } from './timeline-check';
 
 /** Recordings longer than this are not analysed, so memory stays bounded. */
 export const MAX_ANALYSIS_SECONDS = 30 * 60;
@@ -23,6 +24,9 @@ export type AnalysisResult =
       readonly barMatched: readonly boolean[];
       /** The recording's parts, as runs of played bars. */
       readonly sections: readonly Section[];
+      /** The bar-by-bar placement, for a first open whose whole-song result fails the check. */
+      readonly perBarMap: AlignmentMap;
+      readonly tier: OutcomeTier;
     }
   | { readonly kind: 'not-found'; readonly reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-range' }
   | { readonly kind: 'failed'; readonly reason: 'decode' | 'render' | 'worker' }
@@ -163,9 +167,10 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
       if (cancelled) return;
       report(1);
       const map = mapOfResult(answer);
+      const perBarMap = answer.kind === 'aligned' ? AlignmentMap.normalize(answer.perBarData) : null;
       settle(
-        map && answer.kind === 'aligned'
-          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched, sections: answer.sections }
+        map && perBarMap && answer.kind === 'aligned'
+          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched, sections: answer.sections, perBarMap, tier: answer.tier }
           : answer.kind === 'not-found'
             ? { kind: 'not-found', reason: answer.reason }
             : { kind: 'failed', reason: 'worker' },

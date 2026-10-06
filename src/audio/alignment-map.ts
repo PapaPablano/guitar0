@@ -225,53 +225,12 @@ export class AlignmentMap {
     return false;
   }
 
+  /**
+   * The same extra playing at another base offset. Only the offset-and-extra-playing form takes one: a timeline of per-bar
+   * positions is detected and committed whole, so it is returned unchanged (the global offset belongs to a recording with no timeline).
+   */
   withBase(offset: number): AlignmentMap {
-    if (!this.anchored) return AlignmentMap.of(offset, this.firstHolds);
-    return this.shifted(0, offset - this.offset);
-  }
-
-  /** Adds extra playing; in the first form a hold on a bar line already there grows, in the anchors form it goes into the bar that ends at `at`. */
-  withHold(hold: Hold): AlignmentMap {
-    if (!this.anchored) return AlignmentMap.of(this.offset, [...this.firstHolds, hold]);
-    if (!isUsable(hold.length) || hold.length <= 0) return this;
-    const k = this.anchored.bars.findIndex((b) => Math.abs(b.end - hold.at) < 0.001);
-    return k < 0 ? this : this.shifted(k + 1, hold.length);
-  }
-
-  withoutHold(index: number): AlignmentMap {
-    if (!this.anchored) {
-      return AlignmentMap.of(
-        this.offset,
-        this.firstHolds.filter((_, i) => i !== index),
-      );
-    }
-    const k = this.barOfHold(index);
-    return k < 0 ? this : this.shifted(k + 1, -this.holds[index].length);
-  }
-
-  withHoldLength(index: number, length: number): AlignmentMap {
-    if (!this.anchored) {
-      return AlignmentMap.of(
-        this.offset,
-        this.firstHolds.map((h, i) => (i === index ? { at: h.at, length } : h)),
-      );
-    }
-    const k = this.barOfHold(index);
-    return k < 0 ? this : this.shifted(k + 1, length - this.holds[index].length);
-  }
-
-  /** The bar a derived hold belongs to: the one that ends on its line. */
-  private barOfHold(index: number): number {
-    const hold = this.holds[index];
-    if (!this.anchored || !hold) return -1;
-    return this.anchored.bars.findIndex((b) => Math.abs(b.end - hold.at) < 0.001);
-  }
-
-  /** The anchors form with every anchor from bar `from` on, and the end anchor, moved by `delta`. */
-  private shifted(from: number, delta: number): AlignmentMap {
-    const a = this.anchored!;
-    const anchors = a.anchors.map((x, i) => (i >= from ? x + delta : x));
-    return AlignmentMap.fromAnchors(a.bars, anchors, a.endAnchor + delta) ?? this;
+    return this.anchored ? this : AlignmentMap.of(offset, this.firstHolds);
   }
 
   private anchoredToTab(a: Anchored, recording: number): number {

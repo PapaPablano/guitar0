@@ -74,30 +74,10 @@ describe('AlignmentMap', () => {
     expect(AlignmentMap.normalize({ base: 1 })?.holds).toEqual([]);
   });
 
-  it('removes a hold, shifting later positions back by its length', () => {
+  it('changes the base offset without touching the original', () => {
     const map = example();
-    const without = map.withoutHold(0);
-    expect(without.holds).toEqual([]);
-    expect(without.toRec(45, 'start')).toBeCloseTo(46.5, 9);
-    // reverting to the plain offset is the same as removing every hold
-    expect(without.toRec(45, 'start')).toBeCloseTo(AlignmentMap.fromOffset(1.5).toRec(45, 'start'), 9);
-  });
-
-  it('resizes a hold and changes the base offset without touching the original', () => {
-    const map = example();
-    const longer = map.withHoldLength(0, 8.3);
-    expect(longer.holds[0].length).toBeCloseTo(8.3, 9);
-    expect(map.holds[0].length).toBe(8.2);
     expect(map.withBase(2).toRec(0, 'start')).toBeCloseTo(2, 9);
     expect(map.withBase(2).holds).toEqual(map.holds);
-  });
-
-  it('adds a hold in order and adds its length to one already on that bar line', () => {
-    const map = example().withHold({ at: 20, length: 3 }).withHold({ at: 40, length: 1 });
-    expect(map.holds).toEqual([
-      { at: 20, length: 3 },
-      { at: 40, length: 9.2 },
-    ]);
   });
 
   it('adds up the length of every hold', () => {

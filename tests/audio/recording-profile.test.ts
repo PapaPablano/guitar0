@@ -166,3 +166,79 @@ describe('FileProfileStore', () => {
     expect(PROFILE_CAP).toBeGreaterThan(10);
   });
 });
+
+describe('the fields added with the whole-song timeline', () => {
+  const base = {
+    version: PROFILE_VERSION,
+    offset: 1.2,
+    alignment: {
+      source: 'auto',
+      holds: [{ at: 8, length: 2 }],
+      anchors: [1, 3, 5],
+      endAnchor: 7,
+      sections: [{ firstBar: 0, lastBar: 2, letter: 'A', name: 'Intro' }],
+    },
+  };
+  const withFields = (fields: Record<string, unknown>) => ({ ...base, alignment: { ...base.alignment, ...fields } });
+
+  it('reads the revision, fingerprint, tier, attempt and previous offset when they are well formed', () => {
+    const profile = normalizeProfile(
+      withFields({ revision: 1, fingerprint: '6:0f0f0f0f', tier: 'roughly', attempt: { revision: 1, fingerprint: '6:0f0f0f0f' }, previousOffset: 0.4 }),
+    );
+    expect(profile?.alignment).toMatchObject({
+      revision: 1,
+      fingerprint: '6:0f0f0f0f',
+      tier: 'roughly',
+      attempt: { revision: 1, fingerprint: '6:0f0f0f0f' },
+      previousOffset: 0.4,
+    });
+  });
+
+  it('a field with a bad type reads as absent and keeps the alignment, the mix and the section names', () => {
+    const mix = initialMix();
+    const profile = normalizeProfile({
+      ...withFields({ revision: 'one', fingerprint: 42, tier: 'great', attempt: { revision: 1 }, previousOffset: 'x' }),
+      mix,
+    });
+    expect(profile?.mix).toEqual(mix);
+    expect(profile?.alignment?.anchors).toEqual([1, 3, 5]);
+    expect(profile?.alignment?.sections?.[0].name).toBe('Intro');
+    for (const key of ['revision', 'fingerprint', 'tier', 'attempt', 'previousOffset']) expect(profile?.alignment).not.toHaveProperty(key);
+  });
+
+  it('a profile saved before the change loads unchanged, and survives a save and a read with a new field added', async () => {
+    const backend = memoryBackend({ version: PROFILE_VERSION, entries: [{ hash: 'old', profile: base }, { hash: 'plain', profile: { version: PROFILE_VERSION, offset: 0.5 } }] });
+    const store = new FileProfileStore(backend);
+    await expect(store.load('old')).resolves.toMatchObject({ offset: 1.2, alignment: { anchors: [1, 3, 5] } });
+    await store.save('new', normalizeProfile(withFields({ revision: 1, fingerprint: 'f' }))!);
+    await expect(store.load('plain')).resolves.toEqual({ version: PROFILE_VERSION, offset: 0.5 });
+    await expect(store.load('old')).resolves.toMatchObject({ alignment: { sections: [{ name: 'Intro' }] } });
+    await expect(store.load('new')).resolves.toMatchObject({ alignment: { revision: 1 } });
+  });
+
+  it('a frozen copy of the old normaliser still loads a new record, and the offset stays usable', () => {
+    // The old reader rebuilt each record from the fields it knew; the new ones are simply not there for it.
+    const legacy = (raw: any) => ({ offset: raw.offset, anchors: raw.alignment.anchors, holds: raw.alignment.holds });
+    const stored = JSON.parse(JSON.stringify(normalizeProfile(withFields({ revision: 1, fingerprint: 'f', tier: 'lined-up' }))));
+    expect(legacy(stored)).toEqual({ offset: 1.2, anchors: [1, 3, 5], holds: [{ at: 8, length: 2 }] });
+  });
+
+  it('saving recording A and then recording B in quick succession leaves both entries', async () => {
+    const slow = memoryBackend(null);
+    const read = slow.read.bind(slow);
+    slow.read = async () => {
+      const value = await read();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return value;
+    };
+    const store = new FileProfileStore(slow);
+    await Promise.all([
+      store.save('a', { version: PROFILE_VERSION, offset: 1 }),
+      store.save('b', { version: PROFILE_VERSION, offset: 2 }),
+      store.save('c', { version: PROFILE_VERSION, offset: 3 }),
+    ]);
+    await expect(store.load('a')).resolves.toMatchObject({ offset: 1 });
+    await expect(store.load('b')).resolves.toMatchObject({ offset: 2 });
+    await expect(store.load('c')).resolves.toMatchObject({ offset: 3 });
+  });
+});

@@ -49,6 +49,8 @@ describe('startAnalysis', () => {
       barConfidence: [],
       barMatched: [],
       sections: [],
+      perBarData: { base: 1.5, holds: [] },
+      tier: 'lined-up',
     });
     const result = await job.result;
     expect(result.kind).toBe('aligned');
@@ -73,6 +75,8 @@ describe('startAnalysis', () => {
       barConfidence: [5, 0, 4],
       barMatched: [true, false, true],
       sections: [{ firstBar: 0, lastBar: 2, letter: 'A' }],
+      perBarData: { base: 1, holds: [] },
+      tier: 'roughly',
     });
     const result = await job.result;
     expect(result.kind).toBe('aligned');
@@ -183,7 +187,7 @@ describe('startAnalysis', () => {
     expect(await job.result).toEqual({ kind: 'cancelled' });
     expect(terminate).toHaveBeenCalled();
     const reported = seen.length;
-    answer({ kind: 'aligned', data: { base: 1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [], sections: [] });
+    answer({ kind: 'aligned', data: { base: 1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [], sections: [], perBarData: { base: 1, holds: [] }, tier: 'lined-up' });
     await flush();
     expect(seen.length).toBe(reported);
   });

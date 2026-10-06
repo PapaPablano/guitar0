@@ -3,6 +3,7 @@ import type { PcmAudio } from '../export/audio';
 import { chromaFrames, downsampleMono, FEATURE_RATE, onsetEnvelope } from './features';
 import { matchRecording, type BarFacts } from './match';
 import { findSections, type Section } from './sections';
+import { outcomeTier, type OutcomeTier } from './timeline-check';
 
 /** What the worker is given: the recording as mono samples at `FEATURE_RATE`, the tab's render at its own rate, and the tab's played bars. */
 export interface MatchJob {
@@ -26,6 +27,10 @@ export type MatchJobResult =
       readonly barMatched: readonly boolean[];
       /** The recording's parts, as runs of played bars. */
       readonly sections: readonly Section[];
+      /** The bar-by-bar placement, which a first open falls back on when `data` does not pass the check. */
+      readonly perBarData: AlignmentData;
+      /** Whether most bars are supported by their own onsets or by the whole-song pass (see `outcomeTier`). */
+      readonly tier: OutcomeTier;
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -57,6 +62,8 @@ export function runMatchJob(job: MatchJob, onProgress: (fraction: number) => voi
     barConfidence: result.barConfidence,
     barMatched: result.barMatched,
     sections,
+    perBarData: result.perBarMap.toData(),
+    tier: data.anchors && data.endAnchor !== undefined ? outcomeTier(result.uncertainty, result.evidenceAgrees, data.anchors, data.endAnchor) : 'roughly',
   };
 }
 
