@@ -84,6 +84,7 @@ describe('statusText', () => {
     expect(statusText({ phase: 'discarded' })).toMatch(/Re-analyse/);
     expect(statusText({ phase: 'manual' })).toMatch(/by hand/);
     expect(statusText({ phase: 'waiting' })).toMatch(/sound/);
+    expect(statusText({ phase: 'baseline-missing' })).toMatch(/Re-analyse/);
   });
 
   it('counts the sections the alignment has now, not the ones that were found', () => {

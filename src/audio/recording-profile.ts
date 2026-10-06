@@ -18,7 +18,25 @@ export interface AlignmentRecord {
   source: 'auto' | 'manual';
   /** Extra playing: tab time on a bar line and how long the tab waits there. */
   holds: readonly Hold[];
+  /** The bar-level baseline: the recording second at which each played bar starts, and where the tab ends. */
+  anchors?: readonly number[];
+  endAnchor?: number;
+  /** The recording's parts, with the names the user gave them. */
+  sections?: readonly SectionRecord[];
 }
+
+/** A part of the song as a run of played bars; the letter is by repetition, the name is the user's. */
+export interface SectionRecord {
+  firstBar: number;
+  lastBar: number;
+  letter: string;
+  name?: string;
+}
+
+/** Longest name a section may be given. */
+export const SECTION_NAME_MAX = 40;
+/** Most anchors a saved record may carry, well past any tab. */
+const MAX_ANCHORS = 5000;
 
 /** What is remembered per recording. There is deliberately no loop or tempo field (R19). */
 export interface RecordingProfile {
@@ -64,10 +82,42 @@ function normalizeMix(raw: unknown): MixState | undefined {
   return mix;
 }
 
+/** Sections that are whole numbers of bars, in order and not overlapping; anything else is no sections at all. */
+function normalizeSections(raw: unknown): SectionRecord[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 64) return undefined;
+  const sections: SectionRecord[] = [];
+  let previousLast = -1;
+  for (const s of raw) {
+    if (!isRecord(s) || !Number.isInteger(s.firstBar) || !Number.isInteger(s.lastBar) || typeof s.letter !== 'string' || s.letter.length !== 1) return undefined;
+    const firstBar = s.firstBar as number;
+    const lastBar = s.lastBar as number;
+    if (firstBar < 0 || lastBar < firstBar || firstBar <= previousLast) return undefined;
+    previousLast = lastBar;
+    const name = typeof s.name === 'string' ? s.name.trim() : '';
+    sections.push(name && name.length <= SECTION_NAME_MAX ? { firstBar, lastBar, letter: s.letter, name } : { firstBar, lastBar, letter: s.letter });
+  }
+  return sections;
+}
+
 function normalizeAlignment(raw: unknown, offset: number): AlignmentRecord | undefined {
   if (!isRecord(raw) || (raw.source !== 'auto' && raw.source !== 'manual')) return undefined;
   const map = AlignmentMap.normalize({ base: offset, holds: raw.holds });
-  return map ? { source: raw.source, holds: map.holds } : undefined;
+  if (!map) return undefined;
+  const record: AlignmentRecord = { source: raw.source, holds: map.holds };
+  const anchored =
+    Array.isArray(raw.anchors) &&
+    raw.anchors.length > 0 &&
+    raw.anchors.length <= MAX_ANCHORS &&
+    raw.anchors.every((a) => typeof a === 'number' && Number.isFinite(a)) &&
+    typeof raw.endAnchor === 'number' &&
+    Number.isFinite(raw.endAnchor);
+  if (anchored) {
+    record.anchors = raw.anchors as number[];
+    record.endAnchor = raw.endAnchor as number;
+  }
+  const sections = normalizeSections(raw.sections);
+  if (sections) record.sections = sections;
+  return record;
 }
 
 /** A trusted profile from untrusted stored data: unknown version or bad offset is null; offset is clamped; a bad mix or alignment record is dropped. */

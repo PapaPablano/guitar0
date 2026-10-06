@@ -88,5 +88,7 @@ export function statusText(status: AlignStatus, sections?: number): string {
       return 'You moved the offset while the recording was being lined up, so the result was not applied. Use Re-analyse to apply it.';
     case 'manual':
       return 'Using the offset set by hand.';
+    case 'baseline-missing':
+      return 'This recording was lined up before bar-level alignment, so jumps may land a little off. Use Re-analyse to build it.';
   }
 }
