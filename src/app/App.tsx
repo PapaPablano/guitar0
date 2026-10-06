@@ -3,7 +3,7 @@ import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
-import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
+import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob, decodeRecording } from '../alignment/analyze';
 import { copyStateText, startExactCopy, type CopyState } from './exact-copy-load';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -21,7 +21,9 @@ import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
 import { controlsFor } from './alignment-controls';
-import { decideOnOpen, evidenceFor, recordFromMap, settleAnalysis, withAttempt, type AlignStatus, type AlignStamp } from './auto-align';
+import { decideOnOpen, evidenceFor, recordFromMap, settleAnalysis, withAttempt, type AlignStatus, type AlignStamp, type RedetectCause } from './auto-align';
+import { describeDiff, diffAlignments } from './alignment-diff';
+import { checkRecord } from '../alignment/spot-check';
 import { tabFingerprint } from '../audio/tab-fingerprint';
 import { SectionPanel } from './SectionPanel';
 import {
@@ -154,6 +156,12 @@ export function App() {
   const alignStamp = useRef<AlignStamp | null>(null);
   /** A failed detection for this recording and tab, to be saved so opening it again does not repeat the run. */
   const alignAttempt = useRef<string | null>(null);
+  /** The saved timeline a running detection replaces, so what changed can be reported when it commits. */
+  const alignPrevious = useRef<AlignmentRecord | null>(null);
+  /** Why a saved timeline is being detected again without the owner asking: the tab changed, or it no longer matched the recording. */
+  const redetectCause = useRef<RedetectCause | null>(null);
+  /** What the latest detection changed against the saved timeline, for the panel; null when there is nothing to say. */
+  const [alignChange, setAlignChange] = useState<string | null>(null);
   /** True once the owner moved the offset after the latest detection began; only then is its result dropped. */
   const offsetMovedSinceRun = useRef(false);
   const profileSaver = useRef<ReturnType<
@@ -212,6 +220,10 @@ export function App() {
     const token = sessionToken.current;
     offsetMovedSinceRun.current = false;
     const again = live.current.alignment.hasAnchors;
+    // A timeline already in use is what this run replaces, whether it was restored from its file or placed a moment ago.
+    if (!alignPrevious.current && again) {
+      alignPrevious.current = recordFromMap(live.current.alignment, alignSource.current ?? 'auto', live.current.sections, alignStamp.current ?? undefined);
+    }
     const bars = barSpansOf(current.timeline);
     setAlignStatus({ phase: 'analysing', progress: 0, again });
     const job = startAnalysis({
@@ -238,7 +250,8 @@ export function App() {
       result,
     );
     if (!settled) return;
-    setAlignStatus(settled.status);
+    const cause = redetectCause.current;
+    setAlignStatus(settled.status.phase === 'kept-previous' && cause ? { phase: 'kept-previous', cause } : settled.status);
     if (settled.map && settled.tier) {
       // The one place a detected timeline becomes the timeline in use: it replaces the owner's offset, which is kept in the record.
       const hadOffset = !live.current.alignment.hasAnchors && live.current.offset !== 0 ? live.current.offset : undefined;
@@ -251,10 +264,20 @@ export function App() {
       alignAttempt.current = null;
       setBarHealth({ barConfidence: settled.barConfidence, barMatched: settled.barMatched });
       setLandings({});
-      applyAlignment(settled.map, 'auto', true, carryNames(live.current.sections, settled.sections));
+      const nextSections = carryNames(live.current.sections, settled.sections);
+      const detected = recordFromMap(settled.map, 'auto', nextSections, alignStamp.current);
+      const diff = diffAlignments(alignPrevious.current, detected);
+      setAlignChange(diff ? describeDiff(diff) : null);
+      alignPrevious.current = null;
+      redetectCause.current = null;
+      applyAlignment(settled.map, 'auto', true, nextSections);
     } else if (settled.remember) {
       alignAttempt.current = tabFingerprint(bars);
       scheduleProfileSave(live.current.offset);
+    }
+    if (!settled.map) {
+      alignPrevious.current = null;
+      redetectCause.current = null;
     }
   }
 
@@ -299,6 +322,9 @@ export function App() {
     alignSource.current = null;
     alignStamp.current = null;
     alignAttempt.current = null;
+    alignPrevious.current = null;
+    redetectCause.current = null;
+    setAlignChange(null);
     live.current.alignment = AlignmentMap.fromOffset(0);
     live.current.sections = [];
     setAlignment(live.current.alignment);
@@ -364,7 +390,20 @@ export function App() {
     }
     // Detection is automatic (KD6): a saved timeline that is current is reused, and everything else is detected, with no prompt.
     if (userClockRef.current === clockForLoad && decision.action === 'detect') {
+      if (record?.anchors) {
+        alignPrevious.current = record;
+        redetectCause.current = record.fingerprint && record.fingerprint !== tabFingerprint(bars) ? 'tab-changed' : null;
+      }
       setAlignRequest({ file, clock: clockForLoad });
+    }
+    // A reused timeline plays at once and is checked against the audio meanwhile; one that no longer fits is detected again.
+    if (userClockRef.current === clockForLoad && decision.action === 'reuse' && record) {
+      void checkRecord(file, record, decodeRecording).then((checked) => {
+        if (!checked || checked.ok || !profileRuns.current.isCurrent(run) || userClockRef.current !== clockForLoad) return;
+        alignPrevious.current = record;
+        redetectCause.current = 'check-failed';
+        setAlignRequest({ file, clock: clockForLoad });
+      });
     }
   }
 
@@ -788,11 +827,14 @@ export function App() {
         <AlignmentPanel
           status={alignStatus}
           canReanalyse={stateControls.canReanalyse && !exportOpen}
+          change={alignChange}
+          onDismissChange={() => setAlignChange(null)}
           onReanalyse={() => {
             if (!userClock?.file) return;
             // A run the owner asks for starts clean: a failed attempt no longer holds it back.
             offsetMoved.current = false;
             alignAttempt.current = null;
+            redetectCause.current = null;
             setAlignRequest({ file: userClock.file, clock: userClock });
           }}
         />

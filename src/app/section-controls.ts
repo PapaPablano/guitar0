@@ -1,10 +1,9 @@
 import type { Section } from '../alignment/sections';
+import { PINNED_PEAK } from '../alignment/spot-check';
 import { SECTION_NAME_MAX, type SectionRecord } from '../audio/recording-profile';
 import type { Timeline } from '../model/score';
 import type { LoopBars } from '../render/tab-strip';
 
-/** Least standard score of a bar's onset peak for the bar to count as placed to the beat; the matcher's own cutoff. */
-const PINNED_PEAK = 3;
 /** The share of a section's bars that must match the tab for the section to read as confident. */
 const CONFIDENT_MATCHED = 0.9;
 /** Below this share the section was mostly played differently from the tab. */

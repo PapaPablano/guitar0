@@ -120,6 +120,15 @@ const browserDeps: AnalysisDeps = {
 /** Each recording's decoded samples for the page session, so analysing it again does not decode it again. */
 const decodedRecordings = new WeakMap<Blob, Float32Array>();
 
+/** The recording as mono samples at `FEATURE_RATE`, decoded once for the page session and shared by the analysis and the check of a saved timeline. */
+export async function decodeRecording(file: Blob, deps: Pick<AnalysisDeps, 'decode'> = browserDeps): Promise<Float32Array> {
+  const kept = decodedRecordings.get(file);
+  if (kept) return kept;
+  const decoded = await deps.decode(file);
+  decodedRecordings.set(file, decoded);
+  return decoded;
+}
+
 /**
  * Compares a recording with the tab's render in the background. Stages: decode the recording (to 10%), render
  * the tab (to 70%), match in a worker (the rest). Every failure is a result, never a thrown error.
@@ -145,9 +154,7 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
     }
     let recording: Float32Array;
     try {
-      const kept = decodedRecordings.get(args.file);
-      recording = kept ?? (await deps.decode(args.file));
-      if (!kept) decodedRecordings.set(args.file, recording);
+      recording = await decodeRecording(args.file, deps);
     } catch {
       return settle({ kind: 'failed', reason: 'decode' });
     }

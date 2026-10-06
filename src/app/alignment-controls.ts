@@ -43,7 +43,14 @@ export function statusText(status: AlignStatus): string {
         ? "Lining up needs the tab's sound, which could not be loaded. The recording plays against the offset alone."
         : 'Lining the recording up failed. The recording plays against the offset alone.';
     case 'kept-previous':
-      return 'Detecting again did not give a consistent result, so the timeline already in use was kept.';
+      switch (status.cause) {
+        case 'tab-changed':
+          return 'The tab has changed since this recording was lined up, and detecting again did not give a consistent result, so the earlier timeline was kept.';
+        case 'check-failed':
+          return 'The saved timeline no longer matched this recording, and detecting again did not give a consistent result, so the earlier timeline was kept.';
+        default:
+          return 'Detecting again did not give a consistent result, so the timeline already in use was kept.';
+      }
   }
 }
 

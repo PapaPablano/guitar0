@@ -8,6 +8,9 @@ import { barSignature, tabFingerprint } from '../audio/tab-fingerprint';
 /** Which build of the whole-song pass a saved timeline came from. A record without this one is detected again when it opens. */
 export const TIMELINE_REVISION = 1;
 
+/** Why a saved timeline was detected again without being asked to be: the tab changed since it was placed, or it no longer matched the recording. */
+export type RedetectCause = 'tab-changed' | 'check-failed';
+
 export type NotFoundReason = 'too-long' | 'silent' | 'not-confident' | 'out-of-range' | 'inconsistent';
 
 /** What the alignment panel says about the loaded recording. */
@@ -24,8 +27,8 @@ export type AlignStatus =
   /** No timeline: the recording plays against the global offset alone. */
   | { readonly phase: 'not-found'; readonly reason: NotFoundReason }
   | { readonly phase: 'failed'; readonly reason: 'decode' | 'render' | 'worker' | 'no-sound' }
-  /** A new detection failed the check, so the timeline already in use stays. */
-  | { readonly phase: 'kept-previous' };
+  /** A new detection failed the check, so the timeline already in use stays. `cause` says why it was detected again, when it was not the player's own request. */
+  | { readonly phase: 'kept-previous'; readonly cause?: RedetectCause };
 
 const nothing = { sections: [], barConfidence: [], barMatched: [] } as const;
 

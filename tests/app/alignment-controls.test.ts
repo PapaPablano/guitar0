@@ -32,6 +32,11 @@ describe('statusText', () => {
     expect(statusText({ phase: 'kept-previous' })).toMatch(/kept/);
   });
 
+  it('says why the earlier timeline was kept when detection ran because the tab changed or the saved one no longer matched', () => {
+    expect(statusText({ phase: 'kept-previous', cause: 'tab-changed' })).toMatch(/tab has changed.*kept/);
+    expect(statusText({ phase: 'kept-previous', cause: 'check-failed' })).toMatch(/no longer matched this recording.*kept/);
+  });
+
   it('no longer promises correction by hand in any state', () => {
     const states: AlignStatus[] = [
       { phase: 'lined-up', skipped: 0 },

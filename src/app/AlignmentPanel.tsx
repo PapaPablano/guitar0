@@ -6,16 +6,27 @@ interface AlignmentPanelProps {
   /** False when there is no recording file to analyse or an analysis is already running. */
   canReanalyse: boolean;
   onReanalyse: () => void;
+  /** What the latest detection changed against the saved timeline, such as "38 bars re-pinned"; null when nothing is worth saying. */
+  change?: string | null;
+  onDismissChange?: () => void;
 }
 
 /** What the app found when it lined the recording up with the tab. Nothing here needs correcting by hand. */
-export function AlignmentPanel({ status, canReanalyse, onReanalyse }: AlignmentPanelProps) {
+export function AlignmentPanel({ status, canReanalyse, onReanalyse, change, onDismissChange }: AlignmentPanelProps) {
   const text = statusText(status);
   return (
     <div className="alignment" role="group" aria-label="Alignment with the tab">
       {text && (
         <p className="muted note" role="status">
           {text}
+        </p>
+      )}
+      {change && (
+        <p className="muted note" role="status">
+          Detected again: {change}.{' '}
+          <button type="button" onClick={onDismissChange}>
+            Dismiss
+          </button>
         </p>
       )}
       <span className="alignment-actions">
