@@ -137,10 +137,23 @@ export function findSections(recording: Chroma, bars: readonly BarSpan[], anchor
   const edges = [0, ...cuts, count];
   const parts = edges.slice(0, -1).map((first, n) => ({ first, last: edges[n + 1] - 1 }));
   const reps: { first: number; last: number; letter: string }[] = [];
-  return parts.map((part) => {
-    const same = reps.find((r) => partSimilarity(distinct, r, part) >= SAME_PART);
-    const letter = same ? same.letter : String.fromCharCode(65 + reps.length);
-    if (!same) reps.push({ ...part, letter });
-    return { firstBar: part.first, lastBar: part.last, letter };
-  });
+  return mergeNeighbours(
+    parts.map((part) => {
+      const same = reps.find((r) => partSimilarity(distinct, r, part) >= SAME_PART);
+      const letter = same ? same.letter : String.fromCharCode(65 + reps.length);
+      if (!same) reps.push({ ...part, letter });
+      return { firstBar: part.first, lastBar: part.last, letter };
+    }),
+  );
+}
+
+/** Two parts next to each other with the same letter are one part that a stray cut split. */
+export function mergeNeighbours(sections: readonly Section[]): Section[] {
+  const merged: Section[] = [];
+  for (const s of sections) {
+    const last = merged[merged.length - 1];
+    if (last && last.letter === s.letter) merged[merged.length - 1] = { ...last, lastBar: s.lastBar };
+    else merged.push({ ...s });
+  }
+  return merged;
 }

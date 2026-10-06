@@ -13,6 +13,7 @@ import {
   shifted,
   silence,
   songNotes,
+  structuredSong,
   unrelatedMusic,
 } from '../helpers/synthetic-audio';
 
@@ -224,6 +225,20 @@ describe('matchRecording anchors', { timeout: 60000 }, () => {
     const anchors = result.map.anchorData!.anchors;
     expect(Math.abs(anchors[6] - played.anchors[6])).toBeLessThanOrEqual(0.05);
     expect(Math.abs(anchors[20] - played.anchors[20])).toBeLessThanOrEqual(0.05);
+  });
+
+  it('follows a song built from repeating loops, where several offsets look nearly as good as the right one', () => {
+    const loops = structuredSong('ABABC', 8);
+    const loopTab = renderSong(loops, 80, R, 'plain');
+    const spans = barSpans(40, BAR_SECONDS);
+    const lengths = spans.map((_, k) => BAR_SECONDS * (1 + 0.015 * Math.sin(k / 3)));
+    lengths[20] += 6;
+    const played = bandPerformance(loops, spans, lengths, 1);
+    const recording = renderSong(played.notes, played.seconds, R, 'rich', 9);
+    const result = aligned(run(recording, loopTab, spans));
+    const anchors = result.map.anchorData!.anchors;
+    const worst = Math.max(...anchors.map((a, k) => Math.abs(a - played.anchors[k])));
+    expect(worst).toBeLessThanOrEqual(0.05);
   });
 
   it('rounds anchors to 10 ms and gives a confidence for every bar', () => {

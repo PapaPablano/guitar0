@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chromaFrames, FEATURE_RATE as R } from '../../src/alignment/features';
-import { MAX_SECTIONS, MIN_SECTION_BARS, findSections } from '../../src/alignment/sections';
+import { MAX_SECTIONS, MIN_SECTION_BARS, findSections, mergeNeighbours } from '../../src/alignment/sections';
 import { bandPerformance, barSpans, renderSong, silence, songNotes, structuredSong, type SongNote } from '../helpers/synthetic-audio';
 
 const BAR = 2;
@@ -64,5 +64,21 @@ describe('findSections', { timeout: 60000 }, () => {
     // anchors that all coincide, as for a recording that skips everything
     const stacked = findSections(chromaFrames(renderSong(songNotes(10, BAR, 3), 20, R), R), barSpans(10, BAR), Array.from({ length: 10 }, () => 3), 3);
     expect(stacked).toEqual([{ firstBar: 0, lastBar: 9, letter: 'A' }]);
+  });
+});
+
+describe('mergeNeighbours', () => {
+  it('joins neighbours that share a letter and leaves repeats that are apart', () => {
+    const merged = mergeNeighbours([
+      { firstBar: 0, lastBar: 7, letter: 'A' },
+      { firstBar: 8, lastBar: 12, letter: 'B' },
+      { firstBar: 13, lastBar: 15, letter: 'B' },
+      { firstBar: 16, lastBar: 23, letter: 'A' },
+    ]);
+    expect(merged).toEqual([
+      { firstBar: 0, lastBar: 7, letter: 'A' },
+      { firstBar: 8, lastBar: 15, letter: 'B' },
+      { firstBar: 16, lastBar: 23, letter: 'A' },
+    ]);
   });
 });

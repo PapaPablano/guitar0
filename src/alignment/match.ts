@@ -48,8 +48,12 @@ export const MATCH_OPTIONS = {
   fineSeconds: 0.15,
   /** Least share of sounding tab frames that must be matched. */
   minMatchedFraction: 0.3,
-  /** Least standard score of the best offset. */
+  /** Standard score of the best offset that is convincing on its own. */
   minProminence: 4,
+  /** A lower score still counts when most of the tab was matched: a song built from repeating loops has several nearly equal offsets, which lowers the score of the right one. */
+  floorProminence: 2,
+  /** The share of sounding tab frames matched that makes a score between the floor and `minProminence` enough. */
+  confidentMatched: 0.6,
   /** How much of each bar's start the onset stage compares: long enough for a few notes, short enough to stay inside the bar. */
   anchorWindowSeconds: 1.5,
   /** A bar counts as matched while its mean similarity is within this of the typical bar's. */
@@ -358,7 +362,7 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
   if (sounding === 0 || recSilent.every((s) => s === 1) || bars.length === 0) return { kind: 'not-found', reason: 'silent' };
 
   const coarse = coarseLag(recording, tab);
-  if (!coarse || coarse.prominence < o.minProminence) return { kind: 'not-found', reason: 'not-confident' };
+  if (!coarse || coarse.prominence < o.floorProminence) return { kind: 'not-found', reason: 'not-confident' };
 
   const path = alignPath(recording, tab, recSilent, tabSilent, coarse.lag, o);
   const cover = coverageOf(path);
@@ -389,6 +393,7 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
   }
   const matchedFraction = matched / sounding;
   if (matchedFraction < o.minMatchedFraction) return { kind: 'not-found', reason: 'not-confident' };
+  if (coarse.prominence < o.minProminence && matchedFraction < o.confidentMatched) return { kind: 'not-found', reason: 'not-confident' };
 
   // One anchor per bar from the path, then sharpened on the onsets where that is convincing.
   const fromPath = bars.map((b) => recordingAt(b.start, cover));
