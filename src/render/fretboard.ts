@@ -126,9 +126,9 @@ export function renderFretboard(
 
   ctx.save();
   ctx.globalAlpha = 1;
-  ctx.fillStyle = '#1b1e26';
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, width, height);
   drawNeck(ctx, neck, theme, naming);
+  drawLitStrings(ctx, neck, steps.playing, steps.upcoming, theme, t);
 
   steps.trail.forEach((step, i) => {
     for (const note of step.notes) drawDot(ctx, neck, note, neck.dotRadius * 0.8, theme, 0.35 - i * 0.1, 'solid', naming);
@@ -161,14 +161,57 @@ export function renderFretboard(
   ctx.restore();
 }
 
+/** A dark teal studio backdrop with a soft pool of light behind the neck, built from stacked bands. */
+function drawBackdrop(ctx: DrawContext, width: number, height: number): void {
+  ctx.fillStyle = '#04161c';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#1d5560';
+  const bands = 8;
+  for (let i = 0; i < bands; i++) {
+    const inset = (height / 2) * (i / bands);
+    ctx.globalAlpha = 0.07;
+    ctx.fillRect(0, inset, width, height - inset * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme, naming: Naming): void {
   const boardTop = neck.top - neck.stringGap * 0.5 - 6;
   const boardBottom = neck.bottom + neck.stringGap * 0.5 + 6;
-  ctx.fillStyle = '#2a2118';
-  ctx.fillRect(neck.nutX, boardTop, neck.boardRight - neck.nutX, boardBottom - boardTop);
+  const boardHeight = boardBottom - boardTop;
+  const boardWidth = neck.boardRight - neck.nutX;
+
+  // rosewood: a dark base, lit across the middle, with fine grain along the length
+  ctx.fillStyle = '#3b2e30';
+  ctx.fillRect(neck.nutX, boardTop, boardWidth, boardHeight);
+  ctx.fillStyle = '#6b5558';
+  const shades = 6;
+  for (let i = 0; i < shades; i++) {
+    const inset = (boardHeight / 2) * (i / shades);
+    ctx.globalAlpha = 0.09;
+    ctx.fillRect(neck.nutX, boardTop + inset, boardWidth, boardHeight - inset * 2);
+  }
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 26; i++) {
+    const y = boardTop + ((i * 0.6180339887) % 1) * boardHeight;
+    const from = neck.nutX + ((i * 0.7548776662) % 1) * boardWidth * 0.5;
+    ctx.strokeStyle = i % 3 === 0 ? '#8a7377' : '#1f1517';
+    ctx.globalAlpha = i % 3 === 0 ? 0.16 : 0.28;
+    ctx.beginPath();
+    ctx.moveTo(from, y);
+    ctx.lineTo(Math.min(neck.boardRight, from + boardWidth * (0.3 + ((i * 0.5698402909) % 1) * 0.5)), y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // pale binding along both edges of the board
+  ctx.fillStyle = '#dfe5e8';
+  ctx.fillRect(neck.nutX, boardTop - 3, boardWidth, 3);
+  ctx.fillRect(neck.nutX, boardBottom, boardWidth, 3);
 
   // position markers
-  ctx.fillStyle = '#4a3f30';
+  ctx.fillStyle = '#c9c4d4';
+  ctx.globalAlpha = 0.35;
   const midY = (neck.top + neck.bottom) / 2;
   for (const fret of POSITION_MARKS) {
     if (fret > neck.fretCount) continue;
@@ -180,11 +223,22 @@ function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme, namin
     dot(ctx, x, midY - neck.stringGap * 0.9, neck.dotRadius * 0.45);
     dot(ctx, x, midY + neck.stringGap * 0.9, neck.dotRadius * 0.45);
   }
+  ctx.globalAlpha = 1;
 
-  // frets and nut
+  // frets and nut: a thin bright wire with a shadow just past it
   for (let f = 0; f <= neck.fretCount; f++) {
     const x = fretLineX(neck, f);
-    ctx.strokeStyle = f === 0 ? '#e8e8e8' : '#8a8f9c';
+    if (f > 0) {
+      ctx.strokeStyle = '#000000';
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x + 2, boardTop);
+      ctx.lineTo(x + 2, boardBottom);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = f === 0 ? '#eef0f0' : '#b9bfc6';
     ctx.lineWidth = f === 0 ? 5 : 2;
     ctx.beginPath();
     ctx.moveTo(x, boardTop);
@@ -192,11 +246,20 @@ function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme, namin
     ctx.stroke();
   }
 
-  // strings, thicker toward the bass
-  ctx.strokeStyle = '#c9c9c9';
+  // strings, thicker toward the bass, each over a faint shadow
   for (let s = 1; s <= neck.stringCount; s++) {
     const y = stringLineY(neck, s);
-    ctx.lineWidth = 1 + (s - 1) * 0.5;
+    const width = 1 + (s - 1) * 0.5;
+    ctx.strokeStyle = '#000000';
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = width + 1;
+    ctx.beginPath();
+    ctx.moveTo(neck.nutX, y + 2);
+    ctx.lineTo(neck.boardRight, y + 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#cfd3d8';
+    ctx.lineWidth = width;
     ctx.beginPath();
     ctx.moveTo(neck.nutX - neck.dotRadius * 2 - 16, y);
     ctx.lineTo(neck.boardRight, y);
@@ -218,7 +281,41 @@ function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme, namin
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  for (let f = 1; f <= neck.fretCount; f++) ctx.fillText(String(f), noteDotX(neck, f), boardBottom + 6);
+  for (let f = 1; f <= neck.fretCount; f++) ctx.fillText(String(f), noteDotX(neck, f), boardBottom + 8);
+}
+
+/**
+ * Lights the string under each marker in the note's colour, from the marker toward the bridge: a
+ * wide soft glow under a bright core for the note being played, a faint line for the ones coming.
+ */
+function drawLitStrings(
+  ctx: DrawContext,
+  neck: NeckLayout,
+  playing: Step | null,
+  upcoming: readonly Step[],
+  theme: HighwayTheme,
+  t: number,
+): void {
+  const light = (note: NoteEvent, strength: number) => {
+    const x = noteDotX(neck, note.fret);
+    const y = stringLineY(neck, note.string);
+    ctx.strokeStyle = stringColor(theme, note.string);
+    for (const [grow, alpha] of [[7, 0.1], [4, 0.2], [1.5, 0.9]] as const) {
+      ctx.globalAlpha = alpha * strength;
+      ctx.lineWidth = grow;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(neck.boardRight, y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  };
+  upcoming.forEach((step, i) => {
+    for (const note of step.notes) light(note, Math.max(0, 0.3 - i * 0.07));
+  });
+  if (playing) {
+    for (const note of playing.notes) light(note, emphasisAt(note.startSeconds, note.endSeconds, t).sounding ? 1 : 0.5);
+  }
 }
 
 function dot(ctx: DrawContext, x: number, y: number, r: number): void {
@@ -242,19 +339,18 @@ function drawDot(
   ctx.globalAlpha = Math.max(0, alpha);
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
-  if (kind === 'solid') {
-    ctx.fillStyle = stringColor(theme, note.string);
-    ctx.fill();
-  } else {
-    ctx.fillStyle = '#101216';
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
+  // A thin glowing ring around a dark centre; an upcoming marker is the same ring, dimmer.
+  ctx.fillStyle = '#04161c';
+  ctx.globalAlpha = Math.max(0, alpha) * (kind === 'solid' ? 0.7 : 0.55);
+  ctx.fill();
+  ctx.globalAlpha = Math.max(0, alpha) * (kind === 'solid' ? 1 : 0.8);
+  ctx.strokeStyle = stringColor(theme, note.string);
+  ctx.lineWidth = Math.max(2, radius * 0.14);
+  ctx.stroke();
+  ctx.globalAlpha = Math.max(0, alpha);
   // label: dark text on a solid dot, light on an outlined one
   if (alpha > 0.05) {
-    ctx.fillStyle = kind === 'solid' ? theme.noteText : '#ffffff';
+    ctx.fillStyle = '#ffffff';
     ctx.font = `bold ${Math.round(radius * 1.1)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -280,12 +376,13 @@ function drawHalo(
 ): void {
   const x = noteDotX(neck, note.fret);
   const y = stringLineY(neck, note.string);
-  ctx.fillStyle = stringColor(theme, note.string);
-  for (const [extra, alpha] of [[10 + 10 * pop, 0.12], [5 + 5 * pop, 0.2]] as const) {
+  ctx.strokeStyle = stringColor(theme, note.string);
+  for (const [extra, alpha, width] of [[8 + 10 * pop, 0.14, 6], [4 + 5 * pop, 0.28, 3]] as const) {
     ctx.globalAlpha = alpha;
+    ctx.lineWidth = width;
     ctx.beginPath();
     ctx.arc(x, y, radius + extra, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.stroke();
   }
   ctx.globalAlpha = 1;
 }
@@ -313,9 +410,9 @@ function drawPath(
     return { x: noteDotX(neck, note.fret), y: stringLineY(neck, note.string) };
   });
   ctx.strokeStyle = theme.strikeline;
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.6;
-  ctx.setLineDash([6, 5]);
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.4;
+  ctx.setLineDash([5, 6]);
   for (let i = 1; i < chain.length; i++) {
     const from = chain[i - 1];
     const to = chain[i];
