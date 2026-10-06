@@ -25,6 +25,7 @@ describe('settleAnalysis', () => {
     skippedStretches: 2,
     barConfidence: [],
     barMatched: [],
+    sections: [],
   };
 
   it('applies a confident result and counts the sections', () => {

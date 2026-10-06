@@ -48,6 +48,7 @@ describe('startAnalysis', () => {
       skippedStretches: 0,
       barConfidence: [],
       barMatched: [],
+      sections: [],
     });
     const result = await job.result;
     expect(result.kind).toBe('aligned');
@@ -57,6 +58,63 @@ describe('startAnalysis', () => {
     }
     for (let i = 1; i < seen.length; i++) expect(seen[i]).toBeGreaterThan(seen[i - 1]);
     expect(seen[seen.length - 1]).toBe(1);
+  });
+
+  it('carries the anchors, per-bar confidence and sections of the answer through', async () => {
+    const { deps, answer } = fakes();
+    const job = startAnalysis(args(), deps);
+    await flush();
+    answer({
+      kind: 'aligned',
+      data: { base: 1, holds: [] },
+      confidence: 6,
+      matchedFraction: 1,
+      skippedStretches: 1,
+      barConfidence: [5, 0, 4],
+      barMatched: [true, false, true],
+      sections: [{ firstBar: 0, lastBar: 2, letter: 'A' }],
+    });
+    const result = await job.result;
+    expect(result.kind).toBe('aligned');
+    if (result.kind === 'aligned') {
+      expect(result.barConfidence).toEqual([5, 0, 4]);
+      expect(result.barMatched).toEqual([true, false, true]);
+      expect(result.skippedStretches).toBe(1);
+      expect(result.sections).toEqual([{ firstBar: 0, lastBar: 2, letter: 'A' }]);
+    }
+  });
+
+  it('decodes a file once for the session, so re-analysing it starts from what is already there', async () => {
+    const { deps } = fakes();
+    const file = new Blob(['same bytes']);
+    const first = startAnalysis(args({ file }), deps);
+    await flush();
+    first.cancel();
+    const second = startAnalysis(args({ file }), deps);
+    await flush();
+    second.cancel();
+    expect(deps.decode).toHaveBeenCalledTimes(1);
+    const other = startAnalysis(args({ file: new Blob(['other bytes']) }), deps);
+    await flush();
+    other.cancel();
+    expect(deps.decode).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not keep a failed decode, so the next try decodes again', async () => {
+    let calls = 0;
+    const { deps } = fakes({
+      decode: vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('bad file');
+        return new Float32Array(FEATURE_RATE);
+      }),
+    });
+    const file = new Blob(['bytes']);
+    expect(await startAnalysis(args({ file }), deps).result).toEqual({ kind: 'failed', reason: 'decode' });
+    const again = startAnalysis(args({ file }), deps);
+    await flush();
+    again.cancel();
+    expect(calls).toBe(2);
   });
 
   it('passes a not-found answer through', async () => {
@@ -114,7 +172,7 @@ describe('startAnalysis', () => {
     expect(await job.result).toEqual({ kind: 'cancelled' });
     expect(terminate).toHaveBeenCalled();
     const reported = seen.length;
-    answer({ kind: 'aligned', data: { base: 1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [] });
+    answer({ kind: 'aligned', data: { base: 1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [], sections: [] });
     await flush();
     expect(seen.length).toBe(reported);
   });
@@ -156,6 +214,11 @@ describe('startAnalysis', () => {
       expect(result.map.holds).toHaveLength(1);
       expect(result.map.holds[0].at).toBe(20);
       expect(Math.abs(result.map.holds[0].length - 12)).toBeLessThanOrEqual(0.05);
+      expect(result.map.hasAnchors).toBe(true);
+      expect(result.barConfidence).toHaveLength(24);
+      expect(result.sections.length).toBeGreaterThanOrEqual(1);
+      expect(result.sections[0].firstBar).toBe(0);
+      expect(result.sections[result.sections.length - 1].lastBar).toBe(23);
     }
   });
 });

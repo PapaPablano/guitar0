@@ -2,6 +2,7 @@ import { AlignmentMap, type AlignmentData, type BarSpan } from '../audio/alignme
 import type { PcmAudio } from '../export/audio';
 import { chromaFrames, downsampleMono, FEATURE_RATE, onsetEnvelope } from './features';
 import { matchRecording } from './match';
+import { findSections, type Section } from './sections';
 
 /** What the worker is given: the recording as mono samples at `FEATURE_RATE`, the tab's render at its own rate, and the tab's played bars. */
 export interface MatchJob {
@@ -21,6 +22,8 @@ export type MatchJobResult =
       readonly skippedStretches: number;
       readonly barConfidence: readonly number[];
       readonly barMatched: readonly boolean[];
+      /** The recording's parts, as runs of played bars. */
+      readonly sections: readonly Section[];
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -40,14 +43,17 @@ export function runMatchJob(job: MatchJob, onProgress: (fraction: number) => voi
   const result = matchRecording(features);
   onProgress(1);
   if (result.kind === 'not-found') return result;
+  const data = result.map.toData();
+  const sections = data.anchors && data.bars && data.endAnchor !== undefined ? findSections(features.recording, data.bars, data.anchors, data.endAnchor) : [];
   return {
     kind: 'aligned',
-    data: result.map.toData(),
+    data,
     confidence: result.confidence,
     matchedFraction: result.matchedFraction,
     skippedStretches: result.skippedStretches,
     barConfidence: result.barConfidence,
     barMatched: result.barMatched,
+    sections,
   };
 }
 

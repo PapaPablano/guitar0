@@ -5,6 +5,7 @@ import type { Timeline } from '../model/score';
 import type { WorkerMessage, WorkerReply } from './alignment.worker';
 import { FEATURE_RATE } from './features';
 import { mapOfResult, type MatchJob, type MatchJobResult } from './job';
+import type { Section } from './sections';
 
 /** Recordings longer than this are not analysed, so memory stays bounded. */
 export const MAX_ANALYSIS_SECONDS = 30 * 60;
@@ -19,6 +20,8 @@ export type AnalysisResult =
       readonly skippedStretches: number;
       readonly barConfidence: readonly number[];
       readonly barMatched: readonly boolean[];
+      /** The recording's parts, as runs of played bars. */
+      readonly sections: readonly Section[];
     }
   | { readonly kind: 'not-found'; readonly reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-range' }
   | { readonly kind: 'failed'; readonly reason: 'decode' | 'render' | 'worker' }
@@ -91,14 +94,19 @@ const browserDeps: AnalysisDeps = {
         worker.terminate();
         reject(new Error(e.message || 'The alignment worker stopped unexpectedly.'));
       };
-      const transfer: Transferable[] = [job.recording.buffer, job.tab.left.buffer];
+      // The recording is kept for the session (see `decodedRecordings`), so the worker gets a copy to take over.
+      const recording = job.recording.slice();
+      const transfer: Transferable[] = [recording.buffer, job.tab.left.buffer];
       if (job.tab.right.buffer !== job.tab.left.buffer) transfer.push(job.tab.right.buffer);
-      const message: WorkerMessage = { type: 'run', job };
+      const message: WorkerMessage = { type: 'run', job: { ...job, recording } };
       worker.postMessage(message, transfer);
     });
     return { result, terminate: () => worker.terminate() };
   },
 };
+
+/** Each recording's decoded samples for the page session, so analysing it again does not decode it again. */
+const decodedRecordings = new WeakMap<Blob, Float32Array>();
 
 /**
  * Compares a recording with the tab's render in the background. Stages: decode the recording (to 10%), render
@@ -125,7 +133,9 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
     }
     let recording: Float32Array;
     try {
-      recording = await deps.decode(args.file);
+      const kept = decodedRecordings.get(args.file);
+      recording = kept ?? (await deps.decode(args.file));
+      if (!kept) decodedRecordings.set(args.file, recording);
     } catch {
       return settle({ kind: 'failed', reason: 'decode' });
     }
@@ -147,7 +157,7 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
       const map = mapOfResult(answer);
       settle(
         map && answer.kind === 'aligned'
-          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched }
+          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched, sections: answer.sections }
           : answer.kind === 'not-found'
             ? { kind: 'not-found', reason: answer.reason }
             : { kind: 'failed', reason: 'worker' },
