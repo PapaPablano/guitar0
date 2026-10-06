@@ -7,6 +7,7 @@ import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob, decodeRecordin
 import { startExactCopy, type CopyState, type ExactSession } from './exact-copy-load';
 import { copyStateText, exactLine, holdText } from './exactness-text';
 import { ExactnessStrip } from './ExactnessStrip';
+import { addLanding, emptyLandingStats, type LandingStats } from './landing-stats';
 import { ClickCountIn } from '../audio/count-in';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -117,6 +118,8 @@ export function App() {
   /** The decoded audio of the loaded recording and what is exact of it; `exactTick` changes whenever that does. */
   const [exactSession, setExactSession] = useState<ExactSession | null>(null);
   const [, setExactTick] = useState(0);
+  /** How jumps have landed this session, before and after the exact copy was in use. */
+  const [landingStats, setLandingStats] = useState<LandingStats>(emptyLandingStats);
   /** Counts the player in when a held jump has paused playback. */
   const countIn = useRef(new ClickCountIn());
   const [exportOpen, setExportOpen] = useState(false);
@@ -465,6 +468,7 @@ export function App() {
     setCopyState(null);
     setHold(null);
     setExactSession(null);
+    setLandingStats(emptyLandingStats);
     stemsRef.current?.clock.dispose();
     stemsRef.current = null;
     setStems(null);
@@ -517,6 +521,7 @@ export function App() {
 
   /** Notes how far a jump or loop restart landed from its anchor, against the section the bar belongs to. */
   function recordLanding(report: LandingReport) {
+    setLandingStats((stats) => addLanding(stats, report));
     const tab = live.current.session?.timeline;
     if (!tab) return;
     const index = sectionIndexAt(live.current.sections, playbackBarIndexAt(tab, report.tab));
@@ -881,6 +886,7 @@ export function App() {
           status={alignStatus}
           canReanalyse={stateControls.canReanalyse && !exportOpen}
           change={alignChange}
+          landingStats={landingStats}
           onDismissChange={() => setAlignChange(null)}
           onReanalyse={() => {
             if (!userClock?.file) return;

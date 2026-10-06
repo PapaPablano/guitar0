@@ -40,6 +40,8 @@ export class StemMixClock implements Clock {
     source?: TimeSource,
   ) {
     this.leader = new UserAudioClock(channels[0].element, durationSeconds, null, null, source);
+    // Stems are WAV files, which seek to the sample.
+    this.leader.setSeekExact(true);
     this.followers = channels.slice(1);
     for (const c of channels) c.element.preservesPitch = true;
     this.leader.setLoopWrapListener(() => {

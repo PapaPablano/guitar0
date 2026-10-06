@@ -27,6 +27,8 @@ export interface LandingReport {
   readonly tab: number;
   /** Seconds between where the element was and where it should have been, before any correction. */
   readonly error: number;
+  /** True when the element that landed seeks exactly: an exact copy, or a file that is exact already (WAV, stems). */
+  readonly exact: boolean;
 }
 
 /** Seconds from a monotonic clock; the lead-in advances tab time from it. */
@@ -91,7 +93,11 @@ export class UserAudioClock implements Clock {
     sawSeeking: boolean;
     /** True once the landing error has been reported, so each landing is reported once. */
     reported: boolean;
+    /** Whether the element the placement was made on seeks exactly. */
+    exact: boolean;
   } | null = null;
+  /** True for a clock whose files all seek exactly (stems, a WAV recording), which needs no exact copy. */
+  private seekExact = false;
   private onLanding: ((report: LandingReport) => void) | null = null;
   private onAdopt: ((element: AudioLike) => void) | null = null;
   /** Says which elements are exact copies and which parts they have; without one every jump is placed at once, as before. */
@@ -353,6 +359,11 @@ export class UserAudioClock implements Clock {
     this.gate = gate;
   }
 
+  /** Says that this clock's own files seek exactly, so every landing is reported as exact. */
+  setSeekExact(exact: boolean): void {
+    this.seekExact = exact;
+  }
+
   /** What counts the player in when a held jump has paused playback. */
   setCountIn(countIn: CountIn | null): void {
     this.countIn = countIn;
@@ -468,7 +479,8 @@ export class UserAudioClock implements Clock {
     this.leadIn = null;
     this.heldTab = null;
     this.current.currentTime = recording;
-    this.landing = playing ? { target: recording, tab, at: this.source(), corrections: 0, sawSeeking: false, reported: false } : null;
+    const exact = this.seekExact || (this.gate?.owns(this.current) ?? false);
+    this.landing = playing ? { target: recording, tab, at: this.source(), corrections: 0, sawSeeking: false, reported: false, exact } : null;
     if (playing && this.current.paused) void this.current.play();
   }
 
@@ -500,7 +512,7 @@ export class UserAudioClock implements Clock {
       // The first measurement of a landing is the one that says how good the placement was.
       landing = { ...landing, reported: true };
       this.landing = landing;
-      this.onLanding?.({ tab: landing.tab, error: Math.abs(this.current.currentTime - expected) });
+      this.onLanding?.({ tab: landing.tab, error: Math.abs(this.current.currentTime - expected), exact: landing.exact });
     }
     if (Math.abs(this.current.currentTime - expected) <= LANDING_TOLERANCE_SECONDS) {
       this.landing = null;

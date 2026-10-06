@@ -14,6 +14,8 @@ export interface CopyTarget {
   setAdoptListener?(listener: ((element: AudioLike) => void) | null): void;
   /** Where jumps ask whether the element in use can land them exactly; see `UserAudioClock.setGate`. */
   setGate?(gate: ExactGate | null): void;
+  /** Says the clock's own file seeks exactly already, as a WAV does. */
+  setSeekExact?(exact: boolean): void;
 }
 
 /**
@@ -95,10 +97,12 @@ export function startExactCopy(
     if (cancelled) return;
     if (opened.kind === 'not-possible') {
       // A WAV needs no copy to seek exactly, so being unable to keep its decode says nothing about seeking.
+      if (isWav(file)) clock.setSeekExact?.(true);
       return report(isWav(file) ? 'exact' : opened.reason === 'too-long' ? 'too-long' : 'failed');
     }
     const pcm = opened.pcm;
     if (isWav(file)) {
+      clock.setSeekExact?.(true);
       onSession({ pcm, queue: new RegionQueue(pcm) });
       return report('exact');
     }

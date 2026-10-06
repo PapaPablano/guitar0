@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AlignmentMap } from '../../src/audio/alignment-map';
-import { loadUserAudio, MAX_AUDIO_BYTES, UserAudioClock, type AudioLike, type HoldState } from '../../src/audio/user-audio';
+import { loadUserAudio, MAX_AUDIO_BYTES, UserAudioClock, type AudioLike, type HoldState, type LandingReport } from '../../src/audio/user-audio';
 
 function fakeAudio(): AudioLike & { paused: boolean; ended: boolean; duration: number } {
   return {
@@ -1121,5 +1121,51 @@ describe('UserAudioClock held jumps', () => {
     const calls = (gate.prepare as ReturnType<typeof vi.fn>).mock.calls.length;
     await advance(1);
     expect((gate.prepare as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+  });
+});
+
+describe('UserAudioClock landing reports say whether the element seeks exactly', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A clock playing from a jump, with its first landing report collected once the element has settled. */
+  async function jump(prepare: (clock: UserAudioClock, el: ReturnType<typeof fakeAudio>) => void = () => undefined) {
+    vi.useFakeTimers();
+    let now = 100;
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, 60, null, null, () => now);
+    const reports: LandingReport[] = [];
+    clock.setLandingListener((r) => reports.push(r));
+    prepare(clock, el);
+    clock.play();
+    clock.seek(20);
+    for (let i = 0; i < 6; i++) {
+      now += 0.02;
+      if (!el.paused) el.currentTime += 0.02;
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    return reports;
+  }
+
+  it('says no for the recording\'s own file', async () => {
+    expect(await jump()).toEqual([expect.objectContaining({ tab: 20, exact: false })]);
+  });
+
+  it('says yes on an exact copy, which the gate owns', async () => {
+    const reports = await jump((clock, el) => {
+      clock.setGate({ owns: (e) => e === el, covers: () => true, prepare: async () => true });
+    });
+    expect(reports[0].exact).toBe(true);
+  });
+
+  it('says no on the recording\'s own file even when a gate is set, until a copy is in use', async () => {
+    const reports = await jump((clock) => {
+      clock.setGate({ owns: () => false, covers: () => true, prepare: async () => true });
+    });
+    expect(reports[0].exact).toBe(false);
+  });
+
+  it('says yes for a clock whose files seek exactly already', async () => {
+    const reports = await jump((clock) => clock.setSeekExact(true));
+    expect(reports[0].exact).toBe(true);
   });
 });
