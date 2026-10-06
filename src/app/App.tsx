@@ -4,7 +4,9 @@ import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
 import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob, decodeRecording } from '../alignment/analyze';
-import { copyStateText, startExactCopy, type CopyState } from './exact-copy-load';
+import { startExactCopy, type CopyState } from './exact-copy-load';
+import { copyStateText, holdText } from './exactness-text';
+import { ClickCountIn } from '../audio/count-in';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
 import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/file-tuning';
@@ -36,6 +38,7 @@ import {
   type BarHealth,
 } from './section-controls';
 import { clampOffset } from '../audio/offset-range';
+import type { HoldState } from '../audio/user-audio';
 import { PROFILE_VERSION, type AlignmentRecord, type ProfileStore, type RestoredProfile, type SectionRecord } from '../audio/recording-profile';
 import type { AlignmentStore } from '../audio/alignment-store';
 import { WebAlignmentStore } from '../audio/alignment-store-web';
@@ -108,6 +111,10 @@ export function App() {
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
   /** Whether the loaded recording seeks exactly: a compressed file only does once its exact copy is in use. */
   const [copyState, setCopyState] = useState<CopyState | null>(null);
+  /** A jump waiting for the part of the recording it lands in to be exact. */
+  const [hold, setHold] = useState<HoldState | null>(null);
+  /** Counts the player in when a held jump has paused playback. */
+  const countIn = useRef(new ClickCountIn());
   const [exportOpen, setExportOpen] = useState(false);
   const [neckFullscreen, setNeckFullscreen] = useState(false);
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
@@ -435,6 +442,7 @@ export function App() {
     stopExactCopy.current?.();
     stopExactCopy.current = null;
     setCopyState(null);
+    setHold(null);
     stemsRef.current?.clock.dispose();
     stemsRef.current = null;
     setStems(null);
@@ -578,8 +586,15 @@ export function App() {
       next.seek(position);
       replaceUserClock(next);
       next.setLandingListener(recordLanding);
+      next.setCountIn(countIn.current);
+      next.setTempoSource((tab) => {
+        const { session: tabSession, tempoPercent: percent } = live.current;
+        const bars = tabSession?.timeline.bars;
+        return bars && bars.length > 0 ? bars[playbackBarIndexAt(tabSession.timeline, tab)].tempo * (percent / 100) : 120;
+      });
+      next.setHoldListener(setHold);
       stopExactCopy.current?.();
-      stopExactCopy.current = startExactCopy(file, next, undefined, undefined, setCopyState);
+      stopExactCopy.current = startExactCopy(file, next, setCopyState);
       resetProfile();
       void restoreProfile(file, next);
     } catch (e) {
@@ -818,9 +833,9 @@ export function App() {
         }}
         onRemove={onRemoveRecording}
       />
-      {userClock && copyStateText(copyState) && (
-        <p className={copyState === 'preparing' ? 'muted note' : 'notice'} role="status">
-          {copyStateText(copyState)}
+      {userClock && (holdText(hold) || copyStateText(copyState)) && (
+        <p className={hold || copyState === 'preparing' ? 'muted note' : 'notice'} role="status">
+          {holdText(hold) || copyStateText(copyState)}
         </p>
       )}
       {(userClock || stems) && (

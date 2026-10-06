@@ -1,6 +1,8 @@
 import { AlignmentMap } from './alignment-map';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 import { clampOffset } from './offset-range';
+import type { CountIn } from './count-in';
+import type { ExactGate } from './exact-copy';
 
 /** Largest recording the page will accept. The file is streamed, not decoded, but export reads it whole. */
 export const MAX_AUDIO_BYTES = 400 * 1024 * 1024;
@@ -31,6 +33,26 @@ export interface LandingReport {
 export type TimeSource = () => number;
 
 const performanceSource: TimeSource = () => performance.now() / 1000;
+
+/** Seconds a held jump plays on from the old spot before the recording and the tab pause. */
+export const HOLD_PLAY_ON_SECONDS = 1;
+/** Chunks of the recording a jump needs exact: the one it lands in and the one after, so playing on does not at once reach a gap. */
+const JUMP_CHUNKS = 2;
+/** How far ahead of the element playback is checked to be on exact audio, in seconds of the recording. */
+const GUARD_SECONDS = 3;
+/** Beats of the count-in before a held jump resumes. */
+export const COUNT_IN_BEATS = 4;
+/** After a part could not be made exact, the guard leaves playback alone for this long, so it does not hold again at once. */
+const GUARD_BACKOFF_SECONDS = 5;
+
+/** Where a jump into a part that is not exact yet stands: waiting while playback goes on, paused, counting in, or given up. */
+export type HoldPhase = 'waiting' | 'paused' | 'counting' | 'failed';
+
+export interface HoldState {
+  readonly phase: HoldPhase;
+  /** The tab time the jump is heading for. */
+  readonly tab: number;
+}
 
 /** How far the element may sit from where a loop restart should have put it before it is moved back. */
 const LANDING_TOLERANCE_SECONDS = 0.025;
@@ -71,6 +93,17 @@ export class UserAudioClock implements Clock {
     reported: boolean;
   } | null = null;
   private onLanding: ((report: LandingReport) => void) | null = null;
+  private onAdopt: ((element: AudioLike) => void) | null = null;
+  /** Says which elements are exact copies and which parts they have; without one every jump is placed at once, as before. */
+  private gate: ExactGate | null = null;
+  private countIn: CountIn | null = null;
+  private tempoAt: (tab: number) => number = () => 120;
+  /** A jump waiting for the part of the recording it lands in to be exact. */
+  private hold: { id: number; tab: number; phase: HoldPhase; since: number; resume: boolean } | null = null;
+  private holdCount = 0;
+  private onHold: ((state: HoldState | null) => void) | null = null;
+  /** Source time before which the coverage guard leaves playback alone. */
+  private guardResumesAt = 0;
 
   /** The element in use; it can be replaced once with a seek-exact copy, see `offerElement`. */
   private current: AudioLike;
@@ -113,6 +146,7 @@ export class UserAudioClock implements Clock {
     if (carryPosition) next.currentTime = old.currentTime;
     old.pause();
     this.current = next;
+    this.onAdopt?.(next);
   }
 
   get playing(): boolean {
@@ -160,6 +194,7 @@ export class UserAudioClock implements Clock {
   }
 
   play(): void {
+    this.cancelHold();
     if (this.time() >= this.duration) this.seek(this.loopRange?.start ?? 0);
     if (this.playing) {
       this.startWatcher();
@@ -178,6 +213,11 @@ export class UserAudioClock implements Clock {
   }
 
   pause(): void {
+    this.cancelHold();
+    this.pauseElement();
+  }
+
+  private pauseElement(): void {
     if (this.leadIn) {
       this.heldTab = this.leadInTime();
       this.leadIn = null;
@@ -189,7 +229,105 @@ export class UserAudioClock implements Clock {
   }
 
   seek(seconds: number): void {
-    this.place(clamp(seconds, 0, this.duration), this.playing);
+    const tab = clamp(seconds, 0, this.duration);
+    this.cancelHold();
+    if (this.needsExactCopy(tab)) {
+      this.beginHold(tab);
+      return;
+    }
+    this.place(tab, this.playing);
+  }
+
+  /** Whether a jump to `tab` would land on the recording's own file, or on a copy that lacks the part it points at. */
+  private needsExactCopy(tab: number): boolean {
+    const gate = this.gate;
+    if (!gate) return false;
+    const recording = this.map.toRec(tab, 'start');
+    // Before the recording starts the element waits at zero, which every file reaches exactly.
+    if (recording < 0) return false;
+    return !gate.covers(this.pendingElement ?? this.current, recording, JUMP_CHUNKS);
+  }
+
+  /**
+   * Holds a jump until the part it lands in is exact. A playing recording plays on from the old spot for a moment; if the part is
+   * still not ready, it and the tab pause, and resume at the target after a count-in. A paused one just waits.
+   */
+  private beginHold(tab: number): void {
+    const gate = this.gate!;
+    const id = ++this.holdCount;
+    this.hold = { id, tab, phase: 'waiting', since: this.source(), resume: this.playing };
+    this.emitHold();
+    if (this.playing) this.startWatcher();
+    void gate.prepare(this.map.toRec(tab, 'start'), JUMP_CHUNKS).then((ready) => this.holdReady(id, ready));
+  }
+
+  private holdReady(id: number, ready: boolean): void {
+    const hold = this.hold;
+    if (!hold || hold.id !== id) return;
+    if (!ready) {
+      // The part could not be made exact: the jump lands on the element in use, and the player is told it may be off.
+      this.hold = null;
+      this.guardResumesAt = this.source() + GUARD_BACKOFF_SECONDS;
+      this.onHold?.({ phase: 'failed', tab: hold.tab });
+      this.place(hold.tab, hold.resume);
+      if (hold.resume) this.startWatcher();
+      return;
+    }
+    if (hold.phase === 'paused' && hold.resume) {
+      void this.countInThenResume(hold.id);
+      return;
+    }
+    this.hold = null;
+    this.emitHold();
+    this.place(hold.tab, hold.resume);
+  }
+
+  private async countInThenResume(id: number): Promise<void> {
+    const hold = this.hold;
+    if (!hold || hold.id !== id) return;
+    hold.phase = 'counting';
+    this.emitHold();
+    if (this.countIn) await this.countIn.play(COUNT_IN_BEATS, this.tempoAt(hold.tab));
+    if (!this.hold || this.hold.id !== id) return;
+    this.hold = null;
+    this.emitHold();
+    this.place(hold.tab, true);
+    this.startWatcher();
+  }
+
+  /** Gives up a held jump, as when the player pauses, plays or jumps somewhere else. */
+  private cancelHold(): void {
+    if (!this.hold) return;
+    this.hold = null;
+    this.countIn?.cancel();
+    this.emitHold();
+  }
+
+  private emitHold(): void {
+    this.onHold?.(this.holding);
+  }
+
+  /** Pauses a held jump's recording once the play-on has run out. */
+  private checkHold(): void {
+    const hold = this.hold;
+    if (!hold || hold.phase !== 'waiting' || !hold.resume) return;
+    if (this.source() - hold.since < HOLD_PLAY_ON_SECONDS) return;
+    hold.phase = 'paused';
+    this.pauseElement();
+    this.emitHold();
+  }
+
+  /**
+   * Playing on an exact copy runs into a part it does not have, which it would play as silence. Looking a little ahead, that
+   * is held like a jump to the same spot, which lands on a newer copy when there is one.
+   */
+  private checkCoverage(): void {
+    const gate = this.gate;
+    if (!gate || this.hold || this.leadIn || this.current.paused || this.source() < this.guardResumesAt) return;
+    const element = this.current;
+    if (!gate.owns(element)) return;
+    if (gate.covers(element, element.currentTime + GUARD_SECONDS * this.currentRate, 1)) return;
+    this.beginHold(this.map.toTab(element.currentTime));
   }
 
   setRate(rate: number): void {
@@ -208,6 +346,36 @@ export class UserAudioClock implements Clock {
   /** Called once each time playback wraps from the loop end to its start, including during the lead-in silence. */
   setLoopWrapListener(listener: (() => void) | null): void {
     this.onLoopWrap = listener;
+  }
+
+  /** Where jumps ask whether the element in use can land them exactly; null puts every jump straight where it points. */
+  setGate(gate: ExactGate | null): void {
+    this.gate = gate;
+  }
+
+  /** What counts the player in when a held jump has paused playback. */
+  setCountIn(countIn: CountIn | null): void {
+    this.countIn = countIn;
+  }
+
+  /** The tempo, in beats a minute, of the tab at a tab time; the count-in follows it. */
+  setTempoSource(tempoAt: (tab: number) => number): void {
+    this.tempoAt = tempoAt;
+  }
+
+  /** Called whenever a held jump changes state: held, paused, counting in, given up (once), and null when it ends. */
+  setHoldListener(listener: ((state: HoldState | null) => void) | null): void {
+    this.onHold = listener;
+  }
+
+  /** The held jump, or null when nothing is held. */
+  get holding(): HoldState | null {
+    return this.hold ? { phase: this.hold.phase, tab: this.hold.tab } : null;
+  }
+
+  /** Called each time a waiting element takes over, with the element now in use. */
+  setAdoptListener(listener: ((element: AudioLike) => void) | null): void {
+    this.onAdopt = listener;
   }
 
   /** Called once for each jump or loop restart, with how far the element landed from where it was meant to. */
@@ -352,7 +520,9 @@ export class UserAudioClock implements Clock {
     this.watcher = setInterval(() => {
       this.time();
       this.checkLanding();
-      if (!this.playing) this.stopWatcher();
+      this.checkHold();
+      this.checkCoverage();
+      if (!this.playing && !this.hold) this.stopWatcher();
     }, 20);
   }
 
@@ -362,6 +532,7 @@ export class UserAudioClock implements Clock {
   }
 
   dispose(): void {
+    this.cancelHold();
     this.stopWatcher();
     this.leadIn = null;
     this.landing = null;

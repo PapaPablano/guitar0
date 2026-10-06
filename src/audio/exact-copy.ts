@@ -1,121 +1,149 @@
-import { encodeWav } from '../export/audio-file';
-import { AUDIO_SAMPLE_RATE } from '../export/presets';
-import type { PcmAudio } from '../export/audio';
-import { hashFile } from '../stems/file-hash';
+import { buildExactWav } from './exact-wav';
+import type { RecordingPcm } from './recording-pcm';
+import type { AudioLike } from './user-audio';
 
-/** Recordings longer than this are not copied: the decode would cost more memory than the copy is worth. */
-export const EXACT_COPY_MAX_SECONDS = 600;
-/** How many copies are kept at once, so memory stays bounded across songs in one session. */
-const KEPT_COPIES = 2;
+/** What the clock asks of the exact copy: which of its elements can play where, and a way to get one that can. */
+export interface ExactGate {
+  /** Whether `element` is one of the exact copies, as opposed to the recording's own file. */
+  owns(element: AudioLike): boolean;
+  /** Whether `element` has the audio for the `count` chunks from `seconds` on (counting the one at `seconds`), so a jump there lands exactly. */
+  covers(element: AudioLike, seconds: number, count?: number): boolean;
+  /**
+   * Makes the chunks from `seconds` exact and offers the clock an element that has them, resolving true once it is offered, or
+   * false when they could not be made exact. An element already offered that has them is not made again.
+   */
+  prepare(seconds: number, count?: number): Promise<boolean>;
+}
 
-/** The outcome of asking for a copy. A copy that was not made is never an error the caller must handle. */
-export type ExactCopyResult =
-  | { readonly kind: 'copy'; readonly url: string; readonly release: () => void }
-  | { readonly kind: 'skipped'; readonly reason: 'already-wav' | 'too-long' }
-  | { readonly kind: 'failed' };
-
-/** The browser pieces the builder uses, so tests pass fakes. */
+/** The browser pieces the copy uses, so tests pass fakes. */
 export interface ExactCopyDeps {
-  decode(file: Blob): Promise<PcmAudio>;
-  encode(pcm: PcmAudio): Uint8Array<ArrayBuffer>;
-  hash(file: File): Promise<string>;
   createUrl(blob: Blob): string;
   revokeUrl(url: string): void;
+  /** An audio element on the url, ready once its length is known. */
+  makeElement(url: string): Promise<AudioLike>;
 }
 
-const browserDeps: ExactCopyDeps = {
-  async decode(file) {
-    const offline = new OfflineAudioContext(2, 1, AUDIO_SAMPLE_RATE);
-    const decoded = await offline.decodeAudioData(await file.arrayBuffer());
-    // Encoding only reads the samples, so the decoded buffer's own channel data is used without a second copy.
-    const left = decoded.getChannelData(0);
-    const right = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : left;
-    return { left, right, sampleRate: decoded.sampleRate };
-  },
-  encode: encodeWav,
-  hash: hashFile,
-  createUrl: (blob) => URL.createObjectURL(blob),
-  revokeUrl: (url) => URL.revokeObjectURL(url),
-};
-
-function isWav(file: File): boolean {
-  return /^audio\/(x-)?wav(e)?$/i.test(file.type) || /\.wav$/i.test(file.name);
+/** The part of the region queue the copy uses. */
+export interface ChunkRequests {
+  request(seconds: number, count?: number): Promise<boolean>;
 }
 
-interface Entry {
-  readonly url: string;
-  claims: number;
-}
+/** Quiet time between making one copy and the next as more of the recording becomes exact, so a run of new chunks makes one copy. */
+const REFRESH_AFTER_MS = 400;
 
 /**
- * Makes seek-exact WAV copies of recordings. Compressed files such as MP3 seek inexactly, so a loop that
- * restarts by seeking can land on a slightly different spot each pass; a WAV copy seeks to the sample. Copies
- * are kept in memory for the page session, at most a few at a time, and keyed by file content.
+ * Seek-exact playback of a recording that is decoded a region at a time. An audio element cannot be extended, so the copy is a
+ * series of full-length WAV elements, each made of the chunks that were exact when it was built. The clock takes a new one at
+ * a jump, pause or loop restart (`offerElement`), and this keeps count of which chunks each has.
  */
-export class ExactCopyBuilder {
-  private readonly entries = new Map<string, Entry>();
-  private readonly pending = new Map<string, Promise<Entry | null>>();
+export class ExactCopy implements ExactGate {
+  private readonly coverage = new WeakMap<AudioLike, readonly boolean[]>();
+  private readonly urls = new Map<AudioLike, string>();
+  private latest: AudioLike | null = null;
+  private inUse: AudioLike | null = null;
+  private building: Promise<boolean> = Promise.resolve(true);
+  private lastBuilt = 0;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+  private readonly off: () => void;
 
   constructor(
-    private readonly deps: ExactCopyDeps = browserDeps,
-    private readonly keep: number = KEPT_COPIES,
-  ) {}
+    private readonly pcm: RecordingPcm,
+    private readonly requests: ChunkRequests,
+    private readonly offer: (element: AudioLike) => void,
+    private readonly deps: ExactCopyDeps,
+    private readonly now: () => number = () => Date.now(),
+  ) {
+    this.off = pcm.onChange(() => this.scheduleRefresh());
+  }
 
-  /** `durationSeconds` is the recording's length from its audio element, known before anything is decoded. */
-  async build(file: File, durationSeconds: number): Promise<ExactCopyResult> {
-    if (isWav(file)) return { kind: 'skipped', reason: 'already-wav' };
-    if (durationSeconds > EXACT_COPY_MAX_SECONDS) return { kind: 'skipped', reason: 'too-long' };
-    try {
-      const key = await this.deps.hash(file);
-      const entry = await this.entryFor(key, file);
-      if (!entry) return { kind: 'failed' };
-      entry.claims += 1;
-      let released = false;
-      return {
-        kind: 'copy',
-        url: entry.url,
-        release: () => {
-          if (released) return;
-          released = true;
-          entry.claims -= 1;
-        },
-      };
-    } catch {
-      return { kind: 'failed' };
+  owns(element: AudioLike): boolean {
+    return this.coverage.has(element);
+  }
+
+  covers(element: AudioLike, seconds: number, count = 1): boolean {
+    const covered = this.coverage.get(element);
+    if (!covered) return false;
+    const first = this.pcm.chunkAt(seconds);
+    for (let i = first; i < first + count && i < this.pcm.chunkCount; i++) if (!covered[i]) return false;
+    return true;
+  }
+
+  /** The clock took `element` over from `previous`; a copy it has left is no longer needed. */
+  adopted(element: AudioLike): void {
+    this.inUse = element;
+    this.discard();
+  }
+
+  async prepare(seconds: number, count = 2): Promise<boolean> {
+    if (this.stopped) return false;
+    if (!(await this.requests.request(seconds, count))) return false;
+    if (this.latest && this.covers(this.latest, seconds, count)) return true;
+    return this.build();
+  }
+
+  /** Gives up the copies and stops following the store. */
+  stop(): void {
+    this.stopped = true;
+    this.off();
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    for (const url of this.urls.values()) this.deps.revokeUrl(url);
+    this.urls.clear();
+  }
+
+  /** Makes a copy of everything exact now and offers it. Copies are made one at a time. */
+  private build(): Promise<boolean> {
+    const run = async (): Promise<boolean> => {
+      if (this.stopped) return false;
+      try {
+        const { blob, covered } = buildExactWav(this.pcm);
+        const url = this.deps.createUrl(blob);
+        let element: AudioLike;
+        try {
+          element = await this.deps.makeElement(url);
+        } catch {
+          this.deps.revokeUrl(url);
+          return false;
+        }
+        if (this.stopped) {
+          this.deps.revokeUrl(url);
+          return false;
+        }
+        this.coverage.set(element, covered);
+        this.urls.set(element, url);
+        this.latest = element;
+        this.lastBuilt = this.now();
+        this.offer(element);
+        this.discard();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const next = this.building.then(run, run);
+    this.building = next;
+    return next;
+  }
+
+  /** Revokes the copies that are neither the one in use nor the latest offered. */
+  private discard(): void {
+    for (const [element, url] of Array.from(this.urls)) {
+      if (element === this.inUse || element === this.latest) continue;
+      this.deps.revokeUrl(url);
+      this.urls.delete(element);
     }
   }
 
-  private entryFor(key: string, file: File): Promise<Entry | null> {
-    const kept = this.entries.get(key);
-    if (kept) return Promise.resolve(kept);
-    const inFlight = this.pending.get(key);
-    if (inFlight) return inFlight;
-    const started = this.make(file)
-      .then((entry) => {
-        this.makeRoom();
-        this.entries.set(key, entry);
-        return entry;
-      })
-      .catch(() => null)
-      .finally(() => this.pending.delete(key));
-    this.pending.set(key, started);
-    return started;
-  }
-
-  private async make(file: File): Promise<Entry> {
-    const pcm = await this.deps.decode(file);
-    const wav = this.deps.encode(pcm);
-    return { url: this.deps.createUrl(new Blob([wav], { type: 'audio/wav' })), claims: 0 };
-  }
-
-  /** Drops the oldest copy nobody is playing from when the cache is full; a copy in use is never dropped. */
-  private makeRoom(): void {
-    if (this.entries.size < this.keep) return;
-    for (const [key, entry] of this.entries) {
-      if (entry.claims > 0) continue;
-      this.deps.revokeUrl(entry.url);
-      this.entries.delete(key);
-      return;
-    }
+  /** As more chunks become exact, makes a copy that has them, a little later so a run of chunks is one copy. */
+  private scheduleRefresh(): void {
+    if (this.stopped || this.refreshTimer) return;
+    const wait = Math.max(0, REFRESH_AFTER_MS - (this.now() - this.lastBuilt));
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      if (this.stopped || !this.latest) return;
+      const covered = this.coverage.get(this.latest);
+      const states = this.pcm.chunkStates();
+      if (states.some((s, i) => s === 'exact' && !covered?.[i])) void this.build();
+    }, wait);
   }
 }

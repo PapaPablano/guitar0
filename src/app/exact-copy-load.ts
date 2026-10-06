@@ -1,38 +1,39 @@
-import { ExactCopyBuilder, type ExactCopyResult } from '../audio/exact-copy';
+import { ExactCopy, type ExactCopyDeps, type ExactGate } from '../audio/exact-copy';
+import type { OpenResult, RecordingPcm } from '../audio/recording-pcm';
+import { RegionQueue } from '../audio/region-queue';
+import { openSharedPcm } from '../audio/shared-pcm';
 import type { AudioLike } from '../audio/user-audio';
 
-/** The one builder for the page, so a recording reopened in the same session reuses its copy. */
-const exactCopies = new ExactCopyBuilder();
+/** How often the player's place in the recording is passed to the queue, so what is decoded next follows it. */
+const FOLLOW_MS = 500;
 
 /** The slice of the recording clock this needs. */
 export interface CopyTarget {
   readonly element: AudioLike;
   offerElement(next: AudioLike): void;
+  setAdoptListener?(listener: ((element: AudioLike) => void) | null): void;
+  /** Where jumps ask whether the element in use can land them exactly; see `UserAudioClock.setGate`. */
+  setGate?(gate: ExactGate | null): void;
 }
-
-type CopySource = Pick<ExactCopyBuilder, 'build'>;
 
 /**
- * Where a recording stands on seeking exactly. A compressed file (mp3, m4a) seeks inexactly: after a jump the
- * element can sit up to about a second from where it says, different each time, which throws the tab out of sync.
- * An exact copy fixes that, so the player is told whether it is on its way, in use, or not coming.
+ * Where a recording stands on seeking exactly. A compressed file (mp3, m4a) seeks inexactly: after a jump the element can sit up
+ * to about a second from where it says, different each time. An exact copy fixes that, so the player is told whether it is on its
+ * way, ready for part of the recording, ready for all of it, or not coming.
  */
-export type CopyState = 'preparing' | 'exact' | 'failed' | 'too-long';
+export type CopyState = 'preparing' | 'partial' | 'exact' | 'failed' | 'too-long';
 
-/** What to tell the player about the copy; empty when there is nothing to say. */
-export function copyStateText(state: CopyState | null): string {
-  switch (state) {
-    case 'preparing':
-      return 'Preparing an exact copy of the recording. Until it is ready, jumping around can land up to about a second off.';
-    case 'failed':
-      return 'An exact copy of the recording could not be made, so jumping around can land up to about a second off and throw the tab out of sync. Load a WAV version of the recording for exact jumps.';
-    case 'too-long':
-      return 'This recording is too long for an exact copy, so jumping around can land up to about a second off and throw the tab out of sync. Load a shorter or WAV version of the recording for exact jumps.';
-    default:
-      return '';
-  }
+/** What a started copy gives the page: the store of decoded audio and the queue that fills it. */
+export interface ExactSession {
+  readonly pcm: RecordingPcm;
+  readonly queue: RegionQueue;
 }
-type MakeElement = (url: string) => Promise<AudioLike>;
+
+export interface ExactCopyLoadDeps {
+  open(file: File, durationSeconds: number): Promise<OpenResult>;
+  copy: ExactCopyDeps;
+  followMs: number;
+}
 
 /** An audio element playing the copy, ready once its length is known. */
 export function loadCopyElement(url: string): Promise<AudioLike> {
@@ -45,50 +46,75 @@ export function loadCopyElement(url: string): Promise<AudioLike> {
   });
 }
 
+const browserDeps: ExactCopyLoadDeps = {
+  open: (file, durationSeconds) => openSharedPcm(file, durationSeconds),
+  copy: { createUrl: (blob) => URL.createObjectURL(blob), revokeUrl: (url) => URL.revokeObjectURL(url), makeElement: loadCopyElement },
+  followMs: FOLLOW_MS,
+};
+
+function isWav(file: File): boolean {
+  return /^audio\/(x-)?wav(e)?$/i.test(file.type) || /\.wav$/i.test(file.name);
+}
+
 /**
- * Makes the exact copy of a recording in the background and offers it to the clock when ready. Loading and
- * playing never wait for it, and a copy that is skipped or fails changes nothing (R11). The returned function
- * gives up the copy: call it when the recording is replaced or removed. A copy that arrives after that is
- * released and never offered.
+ * Starts making the exact copy of a recording as soon as it is chosen, and offers it to the clock when there is a part of it to
+ * play. Loading and playing never wait for it, and a copy that cannot be made changes nothing about playback. The decoded audio is
+ * shared (see `openSharedPcm`), so analysis and export read it instead of decoding the file again. The returned function gives up
+ * the copy: call it when the recording is replaced or removed.
  */
 export function startExactCopy(
   file: File,
   clock: CopyTarget,
-  builder: CopySource = exactCopies,
-  makeElement: MakeElement = loadCopyElement,
   onState: (state: CopyState) => void = () => undefined,
+  deps: ExactCopyLoadDeps = browserDeps,
+  onSession: (session: ExactSession | null) => void = () => undefined,
 ): () => void {
   let cancelled = false;
-  let result: ExactCopyResult | null = null;
+  let queue: RegionQueue | null = null;
+  let copy: ExactCopy | null = null;
+  let follow: ReturnType<typeof setInterval> | null = null;
+  let unlisten: (() => void) | null = null;
   const report = (state: CopyState) => {
     if (!cancelled) onState(state);
   };
   report('preparing');
 
-  const give = () => {
-    if (result?.kind === 'copy') result.release();
-    result = null;
+  const stop = () => {
+    cancelled = true;
+    if (follow) clearInterval(follow);
+    unlisten?.();
+    queue?.stop();
+    copy?.stop();
+    clock.setGate?.(null);
+    clock.setAdoptListener?.(null);
+    onSession(null);
   };
 
   void (async () => {
-    const built = await builder.build(file, clock.element.duration);
-    if (built.kind === 'skipped') return report(built.reason === 'already-wav' ? 'exact' : 'too-long');
-    if (built.kind === 'failed') return report('failed');
-    result = built;
-    if (cancelled) return give();
-    try {
-      const element = await makeElement(built.url);
-      if (cancelled) return give();
-      clock.offerElement(element);
-      report('exact');
-    } catch {
-      give();
-      report('failed');
+    const opened = await deps.open(file, clock.element.duration);
+    if (cancelled) return;
+    if (opened.kind === 'not-possible') {
+      // A WAV needs no copy to seek exactly, so being unable to keep its decode says nothing about seeking.
+      return report(isWav(file) ? 'exact' : opened.reason === 'too-long' ? 'too-long' : 'failed');
     }
+    const pcm = opened.pcm;
+    if (isWav(file)) {
+      onSession({ pcm, queue: new RegionQueue(pcm) });
+      return report('exact');
+    }
+    queue = new RegionQueue(pcm);
+    copy = new ExactCopy(pcm, queue, (element) => clock.offerElement(element), deps.copy);
+    clock.setAdoptListener?.((element) => copy?.adopted(element));
+    clock.setGate?.(copy);
+    onSession({ pcm, queue });
+    follow = setInterval(() => queue?.setPlayhead(clock.element.currentTime), deps.followMs);
+    unlisten = pcm.onChange(() => {
+      if (pcm.complete) report('exact');
+    });
+    const ready = await copy.prepare(clock.element.currentTime);
+    if (cancelled) return;
+    report(ready ? (pcm.complete ? 'exact' : 'partial') : 'failed');
   })();
 
-  return () => {
-    cancelled = true;
-    give();
-  };
+  return stop;
 }

@@ -1,159 +1,166 @@
 import { describe, expect, it, vi } from 'vitest';
-import { copyStateText, startExactCopy, type CopyState } from '../../src/app/exact-copy-load';
-import { ExactCopyBuilder, type ExactCopyDeps, type ExactCopyResult } from '../../src/audio/exact-copy';
+import { startExactCopy, type CopyState, type CopyTarget, type ExactCopyLoadDeps, type ExactSession } from '../../src/app/exact-copy-load';
+import type { ExactGate } from '../../src/audio/exact-copy';
+import { RecordingPcm, type OpenResult } from '../../src/audio/recording-pcm';
 import type { AudioLike } from '../../src/audio/user-audio';
+import { FRAMES, RATE, SPF, fakeDecoder, stream } from '../audio/mp3-fixture';
 
-function audio(duration = 120): AudioLike {
+const SECONDS = (FRAMES * SPF) / RATE;
+
+function audio(duration = SECONDS): AudioLike {
+  return { currentTime: 0, playbackRate: 1, preservesPitch: false, paused: true, ended: false, duration, async play() {}, pause() {} };
+}
+
+function clockFor() {
   return {
-    currentTime: 0,
-    playbackRate: 1,
-    preservesPitch: false,
-    paused: true,
-    ended: false,
-    duration,
-    async play() {},
-    pause() {},
+    element: audio(),
+    offerElement: vi.fn(),
+    setAdoptListener: vi.fn(),
+    setGate: vi.fn(),
+  } satisfies CopyTarget;
+}
+
+const flush = async (times = 40) => {
+  for (let i = 0; i < times; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+};
+
+const mp3 = () => new File([stream(FRAMES, false).buffer as ArrayBuffer], 'song.mp3', { type: 'audio/mpeg' });
+const wav = () => new File(['RIFF'], 'song.wav', { type: 'audio/wav' });
+
+function deps(open: ExactCopyLoadDeps['open']): ExactCopyLoadDeps & { made: string[]; revoked: string[] } {
+  const made: string[] = [];
+  const revoked: string[] = [];
+  return {
+    made,
+    revoked,
+    open,
+    copy: {
+      createUrl: () => {
+        made.push(`blob:${made.length + 1}`);
+        return made[made.length - 1];
+      },
+      revokeUrl: (url) => {
+        revoked.push(url);
+      },
+      makeElement: async () => audio(),
+    },
+    followMs: 10,
   };
 }
 
-function clockFor(duration = 120) {
-  return { element: audio(duration), offerElement: vi.fn() };
-}
-
-function copyBuilder(result: ExactCopyResult) {
-  return { build: vi.fn(async () => result) };
-}
-
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-const file = (name = 'song.mp3') => new File(['a'], name, { type: 'audio/mpeg' });
+const openMp3 = (file: File): Promise<OpenResult> =>
+  RecordingPcm.open(file, SECONDS, fakeDecoder(), { chunkSeconds: 1 });
 
 describe('startExactCopy', () => {
-  it('offers a ready copy to the clock exactly once', async () => {
+  it('is preparing at first, then offers a copy to the clock with the part being played, and lets jumps ask it', async () => {
     const clock = clockFor();
-    const release = vi.fn();
-    const element = audio();
-    startExactCopy(file(), clock, copyBuilder({ kind: 'copy', url: 'blob:x', release }), async () => element);
+    const states: CopyState[] = [];
+    const file = mp3();
+    startExactCopy(file, clock, (s) => states.push(s), deps(() => openMp3(file)));
+    expect(states).toEqual(['preparing']);
     await flush();
-    expect(clock.offerElement).toHaveBeenCalledTimes(1);
-    expect(clock.offerElement).toHaveBeenCalledWith(element);
+    expect(clock.offerElement).toHaveBeenCalled();
+    expect(clock.setGate).toHaveBeenCalledWith(expect.objectContaining({ covers: expect.any(Function), prepare: expect.any(Function) }));
+    expect(clock.setAdoptListener).toHaveBeenCalledWith(expect.any(Function));
   });
 
-  it('passes the recording duration so a long file is skipped before anything is decoded', async () => {
-    const clock = clockFor(900);
-    const builder = copyBuilder({ kind: 'skipped', reason: 'too-long' });
-    startExactCopy(file(), clock, builder, async () => audio());
+  it('says exact once all of the recording is exact', async () => {
+    const clock = clockFor();
+    const states: CopyState[] = [];
+    const file = mp3();
+    startExactCopy(file, clock, (s) => states.push(s), deps(() => openMp3(file)));
+    await flush(80);
+    expect(states[states.length - 1]).toBe('exact');
+    expect(states).not.toContain('failed');
+  });
+
+  it('says partial while only part of a long recording can be kept exact', async () => {
+    const clock = clockFor();
+    const states: CopyState[] = [];
+    const file = mp3();
+    startExactCopy(file, clock, (s) => states.push(s), deps(() => RecordingPcm.open(file, SECONDS, fakeDecoder(), { chunkSeconds: 1, budgetSeconds: 10 })));
+    await flush(80);
+    expect(states[states.length - 1]).toBe('partial');
+  });
+
+  it('hands the page the shared store, and takes it back when stopped', async () => {
+    const clock = clockFor();
+    const sessions: (ExactSession | null)[] = [];
+    const file = mp3();
+    const stop = startExactCopy(file, clock, undefined, deps(() => openMp3(file)), (s) => sessions.push(s));
     await flush();
-    expect(builder.build).toHaveBeenCalledWith(expect.any(File), 900);
+    expect(sessions[0]?.pcm.chunkCount).toBeGreaterThan(1);
+    stop();
+    expect(sessions[sessions.length - 1]).toBeNull();
+    expect(clock.setGate).toHaveBeenLastCalledWith(null);
+  });
+
+  it('is exact straight away for a WAV, which seeks exactly already, and offers nothing', async () => {
+    const clock = clockFor();
+    const states: CopyState[] = [];
+    const file = wav();
+    startExactCopy(
+      file,
+      clock,
+      (s) => states.push(s),
+      deps(async () => RecordingPcm.open(file, 5, { decode: async () => ({ left: new Float32Array(5 * 48000), right: new Float32Array(5 * 48000), sampleRate: 48000 }) })),
+    );
+    await flush();
+    expect(states).toEqual(['preparing', 'exact']);
     expect(clock.offerElement).not.toHaveBeenCalled();
+    expect(clock.setGate).not.toHaveBeenCalledWith(expect.anything());
   });
 
-  it('leaves the clock alone and raises nothing when the copy fails or is skipped', async () => {
-    for (const result of [{ kind: 'failed' }, { kind: 'skipped', reason: 'already-wav' }] as const) {
+  it('says so when the recording is too long for a copy, or cannot be decoded, and leaves the clock alone', async () => {
+    for (const [reason, state] of [['too-long', 'too-long'], ['undecodable', 'failed']] as const) {
       const clock = clockFor();
-      startExactCopy(file(), clock, copyBuilder(result), async () => audio());
-      await flush();
+      const states: CopyState[] = [];
+      startExactCopy(mp3(), clock, (s) => states.push(s), deps(async () => ({ kind: 'not-possible', reason })));
+      await flush(5);
+      expect(states).toEqual(['preparing', state]);
       expect(clock.offerElement).not.toHaveBeenCalled();
+      expect(clock.setGate).not.toHaveBeenCalledWith(expect.anything());
     }
   });
 
-  it('releases the copy and offers nothing when the element cannot be made', async () => {
+  it('a WAV that cannot be kept decoded is still exact for seeking', async () => {
+    const states: CopyState[] = [];
+    startExactCopy(wav(), clockFor(), (s) => states.push(s), deps(async () => ({ kind: 'not-possible', reason: 'too-long' })));
+    await flush(5);
+    expect(states).toEqual(['preparing', 'exact']);
+  });
+
+  it('says nothing, offers nothing and gives up the copies when the recording is replaced first', async () => {
     const clock = clockFor();
-    const release = vi.fn();
-    startExactCopy(file(), clock, copyBuilder({ kind: 'copy', url: 'blob:x', release }), async () => {
-      throw new Error('cannot load');
-    });
+    const states: CopyState[] = [];
+    const file = mp3();
+    const d = deps(() => openMp3(file));
+    const stop = startExactCopy(file, clock, (s) => states.push(s), d);
+    stop();
     await flush();
-    expect(release).toHaveBeenCalledTimes(1);
+    expect(states).toEqual(['preparing']);
     expect(clock.offerElement).not.toHaveBeenCalled();
+    expect(d.made).toEqual(d.revoked);
   });
 
-  it('releases a copy that finishes after the recording was replaced and never offers it', async () => {
+  it('asks the store to open with the length of the recording from its audio element', async () => {
     const clock = clockFor();
-    const release = vi.fn();
-    let finish: (r: ExactCopyResult) => void = () => {};
-    const builder = { build: vi.fn(() => new Promise<ExactCopyResult>((resolve) => (finish = resolve))) };
-    const cancel = startExactCopy(file(), clock, builder, async () => audio());
-    cancel();
-    finish({ kind: 'copy', url: 'blob:late', release });
-    await flush();
-    expect(release).toHaveBeenCalledTimes(1);
-    expect(clock.offerElement).not.toHaveBeenCalled();
-  });
-
-  it('cancelling after the copy was offered gives up the claim on it', async () => {
-    const clock = clockFor();
-    const release = vi.fn();
-    const cancel = startExactCopy(file(), clock, copyBuilder({ kind: 'copy', url: 'blob:x', release }), async () => audio());
-    await flush();
-    cancel();
-    expect(release).toHaveBeenCalledTimes(1);
-  });
-
-  it('covers R12: loading the same file again reuses the kept copy without a second build', async () => {
-    let urls = 0;
-    const deps: ExactCopyDeps = {
-      decode: vi.fn(async () => ({ left: new Float32Array(2), right: new Float32Array(2), sampleRate: 48000 })),
-      encode: vi.fn(() => new Uint8Array(4)),
-      hash: vi.fn(async () => 'same'),
-      createUrl: vi.fn(() => `blob:${++urls}`),
-      revokeUrl: vi.fn(),
-    };
-    const builder = new ExactCopyBuilder(deps);
-    const first = clockFor();
-    const cancelFirst = startExactCopy(file(), first, builder, async () => audio());
-    await flush();
-    cancelFirst();
-    const second = clockFor();
-    startExactCopy(file(), second, builder, async () => audio());
-    await flush();
-    expect(deps.decode).toHaveBeenCalledTimes(1);
-    expect(first.offerElement).toHaveBeenCalledTimes(1);
-    expect(second.offerElement).toHaveBeenCalledTimes(1);
+    const open = vi.fn(async (): Promise<OpenResult> => ({ kind: 'not-possible', reason: 'undecodable' }));
+    startExactCopy(mp3(), clock, undefined, deps(open));
+    await flush(3);
+    expect(open).toHaveBeenCalledWith(expect.any(File), SECONDS);
   });
 });
 
-describe('the copy state the player is told about', () => {
-  const states = async (result: ExactCopyResult, makeElement: () => Promise<AudioLike> = async () => audio()) => {
-    const seen: CopyState[] = [];
-    startExactCopy(file(), clockFor(), copyBuilder(result), makeElement, (s) => seen.push(s));
+describe('the gate the clock is given', () => {
+  it('is the one object that says which element has which part', async () => {
+    const clock = clockFor();
+    const file = mp3();
+    startExactCopy(file, clock, undefined, deps(() => openMp3(file)));
     await flush();
-    return seen;
-  };
-
-  it('is preparing at first, then exact once the copy is in use', async () => {
-    expect(await states({ kind: 'copy', url: 'blob:x', release: vi.fn() })).toEqual(['preparing', 'exact']);
-  });
-
-  it('is exact straight away for a file that is already a WAV', async () => {
-    expect(await states({ kind: 'skipped', reason: 'already-wav' })).toEqual(['preparing', 'exact']);
-  });
-
-  it('says so when the recording is too long for a copy, or the copy could not be made', async () => {
-    expect(await states({ kind: 'skipped', reason: 'too-long' })).toEqual(['preparing', 'too-long']);
-    expect(await states({ kind: 'failed' })).toEqual(['preparing', 'failed']);
-    expect(
-      await states({ kind: 'copy', url: 'blob:x', release: vi.fn() }, async () => {
-        throw new Error('cannot load');
-      }),
-    ).toEqual(['preparing', 'failed']);
-  });
-
-  it('says nothing after the recording was replaced', async () => {
-    const seen: CopyState[] = [];
-    let finish: (r: ExactCopyResult) => void = () => {};
-    const builder = { build: vi.fn(() => new Promise<ExactCopyResult>((resolve) => (finish = resolve))) };
-    const cancel = startExactCopy(file(), clockFor(), builder, async () => audio(), (s) => seen.push(s));
-    cancel();
-    finish({ kind: 'failed' });
-    await flush();
-    expect(seen).toEqual(['preparing']);
-  });
-
-  it('words each state, and has nothing to say once the copy is in use', () => {
-    expect(copyStateText('preparing')).toMatch(/Preparing an exact copy/);
-    expect(copyStateText('failed')).toMatch(/WAV/);
-    expect(copyStateText('too-long')).toMatch(/too long/);
-    expect(copyStateText('exact')).toBe('');
-    expect(copyStateText(null)).toBe('');
+    const gate = clock.setGate.mock.calls[0][0] as ExactGate;
+    const offered = clock.offerElement.mock.calls[0][0] as AudioLike;
+    expect(gate.owns(offered)).toBe(true);
+    expect(gate.owns(audio())).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AlignmentMap } from '../../src/audio/alignment-map';
-import { loadUserAudio, MAX_AUDIO_BYTES, UserAudioClock, type AudioLike } from '../../src/audio/user-audio';
+import { loadUserAudio, MAX_AUDIO_BYTES, UserAudioClock, type AudioLike, type HoldState } from '../../src/audio/user-audio';
 
 function fakeAudio(): AudioLike & { paused: boolean; ended: boolean; duration: number } {
   return {
@@ -908,5 +908,218 @@ describe('UserAudioClock with holds', () => {
     expect(el.paused).toBe(true);
     expect(clock.time()).toBe(10);
     clock.dispose();
+  });
+});
+
+describe('UserAudioClock held jumps', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** The recording's own file covers nothing; each exact copy covers the chunks (10 s each) it was given. */
+  function setup(opts: { playing?: boolean } = {}) {
+    vi.useFakeTimers();
+    let now = 0;
+    const original = fakeAudio();
+    const exact = new Map<AudioLike, Set<number>>();
+    const prepares: { seconds: number; count: number | undefined; resolve: (ok: boolean) => void }[] = [];
+    const gate = {
+      owns: (el: AudioLike) => exact.has(el),
+      covers: (el: AudioLike, seconds: number, count = 1) => {
+        const chunks = exact.get(el);
+        if (!chunks) return false;
+        for (let i = Math.floor(seconds / 10); i < Math.floor(seconds / 10) + count; i++) if (!chunks.has(i)) return false;
+        return true;
+      },
+      prepare: vi.fn((seconds: number, count?: number) => new Promise<boolean>((resolve) => prepares.push({ seconds, count, resolve }))),
+    };
+    const clock = new UserAudioClock(original, 120, null, null, () => now);
+    const countResolve: ((done: boolean) => void)[] = [];
+    const countIn = { play: vi.fn(() => new Promise<boolean>((resolve) => countResolve.push(resolve))), cancel: vi.fn() };
+    const holds: (HoldState | null)[] = [];
+    clock.setGate(gate);
+    clock.setCountIn(countIn);
+    clock.setTempoSource((tab) => (tab < 50 ? 100 : 80));
+    clock.setHoldListener((s) => holds.push(s));
+    if (opts.playing) {
+      original.currentTime = 12;
+      void original.play();
+      clock.play();
+    }
+    /** Makes a copy with these chunks, offers it as the real copy would, and resolves the oldest waiting prepare. */
+    const finish = (chunks: number[], ok = true) => {
+      const copy = fakeAudio();
+      exact.set(copy, new Set(chunks));
+      if (ok) clock.offerElement(copy);
+      prepares.shift()?.resolve(ok);
+      return copy;
+    };
+    const advance = async (seconds: number) => {
+      now += seconds;
+      await vi.advanceTimersByTimeAsync(seconds * 1000);
+    };
+    return { clock, original, gate, prepares, countIn, countResolve, holds, finish, advance, exact };
+  }
+
+  it('lands at once, with no hold, when the element in use has the part', () => {
+    const { clock, original, gate, exact } = setup();
+    exact.set(original, new Set([4, 5]));
+    clock.seek(45);
+    expect(original.currentTime).toBeCloseTo(45, 9);
+    expect(gate.prepare).not.toHaveBeenCalled();
+    expect(clock.holding).toBeNull();
+  });
+
+  it('lands at once when no copy is being made at all, as before', () => {
+    const { clock, original } = setup();
+    clock.setGate(null);
+    clock.seek(45);
+    expect(original.currentTime).toBeCloseTo(45, 9);
+  });
+
+  it('holds a jump to a part the recording file cannot reach exactly, plays on, and lands exactly when it is ready', async () => {
+    const { clock, original, gate, finish, holds, advance } = setup({ playing: true });
+    clock.seek(45);
+    expect(gate.prepare).toHaveBeenCalledWith(45, 2);
+    expect(clock.holding).toEqual({ phase: 'waiting', tab: 45 });
+    expect(original.paused).toBe(false);
+    expect(original.currentTime).toBe(12);
+    await advance(0.4);
+    const copy = finish([4, 5]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(copy.currentTime).toBeCloseTo(45, 9);
+    expect(copy.paused).toBe(false);
+    expect(original.paused).toBe(true);
+    expect(clock.holding).toBeNull();
+    expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', null]);
+  });
+
+  it('covers AE1: pauses after a second, then counts in four beats at the target bar tempo and resumes at the target', async () => {
+    const { clock, original, finish, countIn, countResolve, holds, advance } = setup({ playing: true });
+    clock.seek(45);
+    await advance(1.1);
+    expect(original.paused).toBe(true);
+    expect(clock.holding).toEqual({ phase: 'paused', tab: 45 });
+    const copy = finish([4, 5]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(clock.holding?.phase).toBe('counting');
+    expect(countIn.play).toHaveBeenCalledWith(4, 100);
+    expect(copy.paused).toBe(true);
+    countResolve[0](true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(copy.currentTime).toBeCloseTo(45, 9);
+    expect(copy.paused).toBe(false);
+    expect(clock.holding).toBeNull();
+    expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', 'paused', 'counting', null]);
+  });
+
+  it('counts in at the tempo of the bar it lands in', async () => {
+    const { clock, finish, countIn, advance } = setup({ playing: true });
+    clock.seek(70);
+    await advance(1.1);
+    finish([7, 8]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(countIn.play).toHaveBeenCalledWith(4, 80);
+  });
+
+  it('a paused recording waits for the part and lands there paused, with no count-in', async () => {
+    const { clock, original, finish, countIn, advance } = setup();
+    clock.seek(45);
+    expect(clock.holding).toEqual({ phase: 'waiting', tab: 45 });
+    await advance(3);
+    expect(clock.holding?.phase).toBe('waiting');
+    const copy = finish([4, 5]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(copy.currentTime).toBeCloseTo(45, 9);
+    expect(copy.paused).toBe(true);
+    expect(countIn.play).not.toHaveBeenCalled();
+    expect(original.paused).toBe(true);
+    expect(clock.holding).toBeNull();
+  });
+
+  it('a second jump during a hold replaces the first, whose part is not waited on', async () => {
+    const { clock, prepares, finish, advance } = setup({ playing: true });
+    clock.seek(45);
+    clock.seek(95);
+    expect(prepares).toHaveLength(2);
+    expect(clock.holding).toEqual({ phase: 'waiting', tab: 95 });
+    await advance(0.2);
+    const first = finish([4, 5]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(clock.holding?.tab).toBe(95);
+    expect(first.currentTime).not.toBeCloseTo(45, 9);
+    const second = finish([9, 10]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(second.currentTime).toBeCloseTo(95, 9);
+    expect(clock.holding).toBeNull();
+  });
+
+  it('pausing or playing during a hold gives it up, and stops the count-in', async () => {
+    const paused = setup({ playing: true });
+    paused.clock.seek(45);
+    await paused.advance(1.1);
+    paused.finish([4, 5]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(paused.clock.holding?.phase).toBe('counting');
+    paused.clock.pause();
+    expect(paused.clock.holding).toBeNull();
+    expect(paused.countIn.cancel).toHaveBeenCalled();
+    paused.countResolve[0](false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(paused.clock.holding).toBeNull();
+
+    const played = setup({ playing: true });
+    played.clock.seek(45);
+    await played.advance(1.1);
+    played.clock.play();
+    expect(played.clock.holding).toBeNull();
+  });
+
+  it('gives the jump up where the element is, and says so once, when the part cannot be made exact', async () => {
+    const { clock, original, finish, holds, advance } = setup({ playing: true });
+    clock.seek(45);
+    await advance(0.3);
+    finish([], false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(original.currentTime).toBeCloseTo(45, 9);
+    expect(original.paused).toBe(false);
+    expect(clock.holding).toBeNull();
+    expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', 'failed']);
+  });
+
+  it('a jump before the recording starts needs no copy', () => {
+    const { clock, gate } = setup();
+    clock.setOffset(-5);
+    clock.seek(2);
+    expect(gate.prepare).not.toHaveBeenCalled();
+    expect(clock.holding).toBeNull();
+  });
+
+  it('holds playback that runs into a part its exact copy lacks, and lands on a newer copy', async () => {
+    const { clock, original, gate, exact, finish, advance } = setup();
+    exact.set(original, new Set([1]));
+    original.currentTime = 18.5;
+    void original.play();
+    clock.play();
+    await advance(0.1);
+    expect(gate.prepare).toHaveBeenCalled();
+    expect(clock.holding?.phase).toBe('waiting');
+    const newer = finish([1, 2, 3]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(newer.currentTime).toBeCloseTo(18.5, 0);
+    expect(newer.paused).toBe(false);
+    expect(clock.holding).toBeNull();
+  });
+
+  it('does not hold again at once after a part could not be made exact', async () => {
+    const { clock, original, gate, exact, finish, advance } = setup();
+    exact.set(original, new Set([1]));
+    original.currentTime = 18.5;
+    void original.play();
+    clock.play();
+    await advance(0.1);
+    finish([], false);
+    await vi.advanceTimersByTimeAsync(0);
+    const calls = (gate.prepare as ReturnType<typeof vi.fn>).mock.calls.length;
+    await advance(1);
+    expect((gate.prepare as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
   });
 });

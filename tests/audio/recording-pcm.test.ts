@@ -1,65 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { mapMp3Frames } from '../../src/audio/mp3-frames';
 import { RecordingPcm, type PcmDeps } from '../../src/audio/recording-pcm';
 import type { PcmAudio } from '../../src/export/audio';
-
-const RATE = 44100;
-const SPF = 1152;
-const FRAME_BYTES = 417;
-const FRAMES = 2000; // about 52 seconds
-
-/** An MP3-shaped stream whose every frame carries its own index in its payload; optionally led by a Xing frame. */
-function stream(frames: number, xing: boolean): Uint8Array {
-  const out: number[] = [];
-  const header = [0xff, 0xfb, 0x90, 0x00];
-  if (xing) {
-    const info = [...header, ...new Array(FRAME_BYTES - 4).fill(0)];
-    info.splice(36, 4, 0x58, 0x69, 0x6e, 0x67);
-    out.push(...info);
-  }
-  for (let i = 0; i < frames; i++) {
-    const frame = [...header, (i >>> 24) & 255, (i >>> 16) & 255, (i >>> 8) & 255, i & 255, ...new Array(FRAME_BYTES - 8).fill(0)];
-    out.push(...frame);
-  }
-  return Uint8Array.from(out);
-}
-
-/** The value the fake decoder gives the sample at frame-timeline position `g`: a sawtooth, so a misplaced sample shows. */
-const saw = (g: number): number => ((g % 1000) / 1000) * 0.9;
-const fromSaw = (int16: number): number => Math.round(((int16 / 32767) / 0.9) * 1000) % 1000;
-
-interface Fake extends PcmDeps {
-  calls: { bytes: number; rate: number | undefined }[];
-}
-
-/**
- * A stand-in decoder for streams made by `stream`. A decode that starts at the file start with a Xing frame drops `trim`
- * samples from the front, as a whole-file decode does with a LAME tag; one that starts in the middle drops `dropLead` frames
- * the decoder had no bit reservoir for.
- */
-function fakeDecoder(options: { trim?: number; dropLead?: number; fail?: (call: number) => boolean } = {}): Fake {
-  const { trim = 0, dropLead = 0, fail = () => false } = options;
-  const fake: Fake = {
-    calls: [],
-    async decode(buffer, rate) {
-      fake.calls.push({ bytes: buffer.byteLength, rate });
-      if (fail(fake.calls.length)) throw new Error('cannot decode');
-      const bytes = new Uint8Array(buffer);
-      const map = mapMp3Frames(bytes);
-      if (!map) throw new Error('not audio');
-      const index = (at: number) => (bytes[at + 4] << 24) | (bytes[at + 5] << 16) | (bytes[at + 6] << 8) | bytes[at + 7];
-      const firstIndex = index(map.frameOffsets[0]);
-      const atFileStart = firstIndex === 0 && map.frameOffsets[0] > 0;
-      const frames = Array.from(map.frameOffsets, (offset) => index(offset));
-      const kept = atFileStart ? frames : frames.slice(firstIndex === 0 ? 0 : dropLead);
-      const values: number[] = [];
-      for (const f of kept) for (let i = 0; i < SPF; i++) values.push(saw(f * SPF + i));
-      const samples = Float32Array.from(atFileStart ? values.slice(trim) : values);
-      return { left: samples, right: samples, sampleRate: rate ?? 48000 } satisfies PcmAudio;
-    },
-  };
-  return fake;
-}
+import { FRAMES, RATE, SPF, FRAME_BYTES, fakeDecoder, fromSaw, stream } from './mp3-fixture';
 
 const open = async (deps: PcmDeps, over: { xing?: boolean; budgetSeconds?: number } = {}) => {
   const bytes = stream(FRAMES, over.xing ?? true);
