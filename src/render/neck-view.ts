@@ -1,6 +1,8 @@
 import type { DrawContext } from './draw-context';
 import { DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
 import { emphasisAt } from './emphasis';
+import { cuesAt, type NeckCues, type NoteEffect } from './neck-cue-model';
+import { drawNeckCues, type NeckSpace } from './neck-cues';
 import { DEFAULT_LABEL_MODE, dotText, type LabelMode } from './fretboard';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
 import { spellingForTuning } from './note-names';
@@ -149,7 +151,12 @@ export interface NeckViewOptions {
   readonly theme?: HighwayTheme;
   readonly lookahead?: number;
   readonly labelMode?: LabelMode;
+  /** Draw technique cues (arcs, comets, bends, diamonds and the pulse). Absent or false draws the neck as it always was. */
+  readonly techniqueCues?: boolean;
 }
+
+/** Strength of the ring and string of a note a hammer-on or pull-off ends on, which is not picked. */
+const UNPICKED_STRENGTH = 0.55;
 
 interface Naming {
   readonly mode: LabelMode;
@@ -178,27 +185,39 @@ export function renderNeckView(
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, spelling: spellingForTuning(tuning) };
   const place = photoPlacement(width, height);
+  const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD) : null;
+  /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
+  const unpicked = (note: NoteEvent) => cues?.unpicked.has(note.id) ?? false;
+  const ringWidth = (note: NoteEvent) => (cues?.effects.get(note.id)?.muted ? 0.6 : 1);
 
   ctx.save();
   drawDigitalNeck(ctx, place, stringCount);
 
-  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t);
+  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues);
   steps.trail.forEach((step, i) => {
-    for (const note of step.notes) drawRing(ctx, place, stringCount, note, 0.85, 0.3 - i * 0.08, theme, naming, false);
+    for (const note of step.notes) {
+      drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note));
+    }
   });
   steps.upcoming.forEach((step, i) => {
     for (const note of step.notes) {
-      const grow = emphasisAt(note.startSeconds, note.endSeconds, t).scale;
-      drawRing(ctx, place, stringCount, note, 0.8 * grow, 0.9 - i * 0.1, theme, naming, false);
+      const soft = unpicked(note);
+      const grow = soft ? 1 : emphasisAt(note.startSeconds, note.endSeconds, t).scale;
+      drawRing(ctx, place, stringCount, note, 0.8 * grow, (0.9 - i * 0.1) * (soft ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note));
     }
   });
   if (steps.playing) {
     for (const note of steps.playing.notes) {
       const e = emphasisAt(note.startSeconds, note.endSeconds, t);
+      if (unpicked(note)) {
+        drawRing(ctx, place, stringCount, note, 1.1, UNPICKED_STRENGTH, theme, naming, false, ringWidth(note));
+        continue;
+      }
       if (e.sounding) drawHalo(ctx, place, stringCount, note, e.scale, e.pop, theme);
-      drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true);
+      drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true, ringWidth(note));
     }
   }
+  if (cues) drawNeckCues(ctx, neckSpace(place, stringCount), cues, theme);
   ctx.restore();
 }
 
@@ -282,6 +301,26 @@ function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: n
   ctx.globalAlpha = 1;
 }
 
+/** Photo-X at a fret that may fall between two whole frets. */
+function fretX(fret: number): number {
+  const low = Math.floor(fret);
+  const high = Math.ceil(fret);
+  const a = photoNoteX(low);
+  return a + (photoNoteX(high) - a) * (fret - low);
+}
+
+/** The screen positions the technique cues are drawn against. */
+function neckSpace(place: PhotoPlacement, stringCount: number): NeckSpace {
+  return {
+    ring: (note) => markerCentre(place, stringCount, note),
+    at: (string, fret) => {
+      const px = fretX(fret);
+      return photoToScreen(place, px, photoStringY(string, stringCount, px));
+    },
+    scale: place.scale,
+  };
+}
+
 function markerCentre(place: PhotoPlacement, stringCount: number, note: NoteEvent): { x: number; y: number; r: number } {
   const px = photoNoteX(note.fret);
   const at = photoToScreen(place, px, photoStringY(note.string, stringCount, px));
@@ -297,17 +336,21 @@ function drawLitStrings(
   upcoming: readonly Step[],
   theme: HighwayTheme,
   t: number,
+  cues: NeckCues | null = null,
 ): void {
-  const light = (note: NoteEvent, strength: number) => {
+  const light = (note: NoteEvent, base: number) => {
+    const effect = cues?.effects.get(note.id);
+    const strength = base * (effect?.muted ? MUTED_STRENGTH : 1) * (cues?.unpicked.has(note.id) ? UNPICKED_STRENGTH : 1);
     const from = photoNoteX(note.fret);
-    const stops = [from, ...STRING_KNOTS_X.filter((k) => k > from), BRIDGE_X];
+    const stops = effect && (effect.bend > 0 || effect.shiver > 0) ? sampledStops(from) : [from, ...STRING_KNOTS_X.filter((k) => k > from), BRIDGE_X];
     ctx.strokeStyle = stringColor(theme, note.string);
     for (const [grow, alpha] of [[9, 0.12], [5, 0.22], [2, 0.95]] as const) {
       ctx.globalAlpha = alpha * strength;
       ctx.lineWidth = grow * Math.max(1, place.scale / 2);
       ctx.beginPath();
       stops.forEach((px, i) => {
-        const at = photoToScreen(place, px, photoStringY(note.string, stringCount, px));
+        const y = photoStringY(note.string, stringCount, px) + stringOffset(effect, note.string, stringCount, px, from, t);
+        const at = photoToScreen(place, px, y);
         if (i === 0) ctx.moveTo(at.x, at.y);
         else ctx.lineTo(at.x, at.y);
       });
@@ -321,6 +364,33 @@ function drawLitStrings(
   if (playing) {
     for (const note of playing.notes) light(note, emphasisAt(note.startSeconds, note.endSeconds, t).sounding ? 1 : 0.5);
   }
+}
+
+/** A lit string drawn at half strength for a palm-muted note. */
+const MUTED_STRENGTH = 0.5;
+/** Share of the gap between strings a full bend moves the lit string, and the most a vibrato wave moves it. */
+const BEND_REACH = 0.55;
+const SHIVER_REACH = 0.12;
+const SHIVER_HERTZ = 7;
+/** Points along a string that bends or shivers, enough to look like a curve. */
+const SAMPLES = 24;
+
+function sampledStops(from: number): number[] {
+  return Array.from({ length: SAMPLES + 1 }, (_, i) => from + ((BRIDGE_X - from) * i) / SAMPLES);
+}
+
+/**
+ * How far, in photo pixels, a bent or shivering note moves its lit string off the straight line at photo-X `x`: up, away from the
+ * lower strings, by a share of the gap to the next string. It grows from nothing at the ring, so the string leaves it bending.
+ */
+function stringOffset(effect: NoteEffect | undefined, string: number, stringCount: number, x: number, from: number, t: number): number {
+  if (!effect || (effect.bend === 0 && effect.shiver === 0)) return 0;
+  const gap = string > 1 ? photoStringY(string, stringCount, x) - photoStringY(string - 1, stringCount, x) : photoStringY(2, stringCount, x) - photoStringY(1, stringCount, x);
+  const along = Math.min(1, Math.max(0, (x - from) / Math.max(1, (BRIDGE_X - from) * 0.35)));
+  const ramp = along * along * (3 - 2 * along);
+  const bend = -effect.bend * BEND_REACH * gap * ramp;
+  const wave = effect.shiver * SHIVER_REACH * gap * ramp * Math.sin(2 * Math.PI * SHIVER_HERTZ * t - x * 0.06);
+  return bend + wave;
 }
 
 /** A soft pair of rings around the note being played; wider right at its start. */
@@ -356,6 +426,7 @@ function drawRing(
   theme: HighwayTheme,
   naming: Naming,
   playing: boolean,
+  outline = 1,
 ): void {
   if (alpha <= 0.02) return;
   const { x, y, r } = markerCentre(place, stringCount, note);
@@ -367,7 +438,7 @@ function drawRing(
   ctx.fill();
   ctx.globalAlpha = alpha;
   ctx.strokeStyle = stringColor(theme, note.string);
-  ctx.lineWidth = Math.max(1.5, radius * (playing ? 0.16 : 0.12));
+  ctx.lineWidth = Math.max(1.5, radius * (playing ? 0.16 : 0.12) * outline);
   ctx.stroke();
   if (radius >= 8) {
     const text = dotText(note, naming);
