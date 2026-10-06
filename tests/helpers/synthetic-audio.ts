@@ -173,3 +173,23 @@ export function bandPerformance(notes: readonly SongNote[], bars: readonly BarSh
   });
   return { notes: out, seconds: at + 0.5, anchors, endAnchor: at };
 }
+
+/**
+ * A song made of sections: each distinct letter of `order` has its own four-bar loop, played over and over for
+ * `barsPerSection` bars, and a letter that comes again plays the same loop again, so repeats are exact.
+ */
+export function structuredSong(order: string, barsPerSection = 8, barSeconds = 2, seed = 100): SongNote[] {
+  const loops = new Map<string, SongNote[]>();
+  const notes: SongNote[] = [];
+  [...order].forEach((letter, index) => {
+    if (!loops.has(letter)) loops.set(letter, songNotes(4, barSeconds, seed + loops.size * 17));
+    const offset = index * barsPerSection * barSeconds;
+    for (let bar = 0; bar < barsPerSection; bar++) {
+      for (const n of loops.get(letter)!) {
+        if (Math.floor(n.start / barSeconds) !== bar % 4) continue;
+        notes.push({ ...n, start: offset + bar * barSeconds + (n.start - (bar % 4) * barSeconds) });
+      }
+    }
+  });
+  return notes;
+}
