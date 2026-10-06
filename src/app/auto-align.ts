@@ -124,10 +124,6 @@ export function withAttempt(record: AlignmentRecord | undefined, fingerprint: st
  * The map a saved record describes for this tab: its bar-level anchors when they fit the tab's played bars, and otherwise
  * the offset and extra playing it also carries, which is all an older record has. `fits` says which.
  */
-export function mapFromRecord(offset: number, record: AlignmentRecord | undefined, bars: readonly BarSpan[]): AlignmentMap {
-  return restoreFromRecord(offset, record, bars).map;
-}
-
 export function restoreFromRecord(offset: number, record: AlignmentRecord | undefined, bars: readonly BarSpan[]): { map: AlignmentMap; fits: boolean } {
   if (record?.anchors && record.endAnchor !== undefined) {
     const anchored = AlignmentMap.fromAnchors(bars, record.anchors, record.endAnchor);
@@ -140,8 +136,8 @@ export function restoreFromRecord(offset: number, record: AlignmentRecord | unde
 export type OpenDecision =
   /** A saved timeline is current for this build and tab: use it, with no analysis. */
   | { readonly action: 'reuse'; readonly map: AlignmentMap; readonly tier: OutcomeTier }
-  /** Detect (again): `play` is what plays until the new timeline commits, and `again` whether an older timing is being replaced. */
-  | { readonly action: 'detect'; readonly play: AlignmentMap; readonly again: boolean }
+  /** Detect (again): `play` is what plays until the new timeline commits. */
+  | { readonly action: 'detect'; readonly play: AlignmentMap }
   /** A detection for this build and tab already failed and no timeline exists: stay on the offset and say so. */
   | { readonly action: 'stay'; readonly play: AlignmentMap };
 
@@ -159,7 +155,7 @@ export function decideOnOpen(profile: RecordingProfile | null, bars: readonly Ba
   const current = record?.revision === TIMELINE_REVISION && record.fingerprint === fingerprint && fits && record.source === 'auto';
   if (current) return { action: 'reuse', map, tier: record.tier ?? 'roughly' };
   const failedAlready = record?.attempt?.revision === TIMELINE_REVISION && record.attempt.fingerprint === fingerprint;
-  if (failedAlready) return { action: 'stay', play: map };
-  const had = record !== undefined && record.source === 'auto';
-  return { action: 'detect', play: map, again: had };
+  // A timeline placed on another tab is worse than none, so a remembered failure plays only the saved offset unless the record is for this tab.
+  if (failedAlready) return { action: 'stay', play: record?.fingerprint === fingerprint && fits ? map : AlignmentMap.of(offset, []) };
+  return { action: 'detect', play: map };
 }

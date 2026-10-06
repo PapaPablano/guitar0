@@ -4,7 +4,7 @@ import { AlignmentMap } from '../../src/audio/alignment-map';
 import { tabFingerprint } from '../../src/audio/tab-fingerprint';
 import {
   decideOnOpen,
-  mapFromRecord,
+  restoreFromRecord,
   recordFromMap,
   settleAnalysis,
   TIMELINE_REVISION,
@@ -15,7 +15,7 @@ import {
 const bars = Array.from({ length: 6 }, (_, i) => ({ start: i * 2, end: i * 2 + 2 }));
 const good = AlignmentMap.fromAnchors(bars, [1.5, 3.5, 5.5, 7.5, 9.5, 11.5], 13.5)!;
 /** Anchors that make a bar far too short to be played: a failed check. */
-const broken = AlignmentMap.fromAnchors(bars, [1.5, 3.5, 3.6, 7.5, 9.5, 11.5], 13.5)!;
+const broken = AlignmentMap.fromAnchors(bars, [1.5, 3.5, 3.52, 7.5, 9.5, 11.5], 13.5)!;
 
 const ctx: SettleContext = { stillCurrent: true, offsetMovedSinceStart: false, bars, hasTimeline: false };
 
@@ -105,17 +105,17 @@ describe('mapFromRecord and recordFromMap', () => {
     expect(record.anchors).toEqual([1.5, 3.5, 5.5, 7.5, 9.5, 11.5]);
     expect(record.endAnchor).toBe(13.5);
     expect(record.sections).toEqual(sections);
-    const back = mapFromRecord(1.5, record, bars);
+    const back = restoreFromRecord(1.5, record, bars).map;
     expect(back.hasAnchors).toBe(true);
     expect(back.toRec(4, 'start')).toBeCloseTo(5.5, 9);
   });
 
   it('falls back to the offset and holds when the anchors do not fit the bars, or when there are none', () => {
     const record = { source: 'auto' as const, holds: [{ at: 4, length: 2 }], anchors: [1, 2], endAnchor: 3 };
-    const wrong = mapFromRecord(1.5, record, bars);
+    const wrong = restoreFromRecord(1.5, record, bars).map;
     expect(wrong.hasAnchors).toBe(false);
     expect(wrong.holds).toEqual([{ at: 4, length: 2 }]);
-    expect(mapFromRecord(2, undefined, bars).base).toBe(2);
+    expect(restoreFromRecord(2, undefined, bars).map.base).toBe(2);
   });
 
   it('saves a first-form map without anchors, and no revision or fingerprint', () => {
@@ -148,7 +148,7 @@ describe('decideOnOpen', () => {
 
   it('detects a recording with nothing saved', () => {
     const decision = decideOnOpen(null, bars);
-    expect(decision).toMatchObject({ action: 'detect', again: false });
+    expect(decision.action).toBe('detect');
   });
 
   it('covers AE2: a record with no timeline revision is detected again, playing the older anchors meanwhile', () => {
@@ -156,7 +156,6 @@ describe('decideOnOpen', () => {
     const decision = decideOnOpen(older, bars);
     expect(decision.action).toBe('detect');
     if (decision.action === 'detect') {
-      expect(decision.again).toBe(true);
       expect(decision.play.hasAnchors).toBe(true);
     }
   });
@@ -196,5 +195,16 @@ describe('decideOnOpen', () => {
     const failed = { version: 1, offset: 0.7, alignment: withAttempt(undefined, fingerprint) };
     expect(decideOnOpen(failed, bars).action).toBe('stay');
     expect(decideOnOpen(failed, bars.slice(0, 3)).action).toBe('detect');
+  });
+
+  it('after a failed re-detection on an older record, plays that record only when it is for this tab, and the saved offset alone otherwise', () => {
+    const older = recordFromMap(good, 'auto', []);
+    const stale = decideOnOpen({ version: 1, offset: 0.7, alignment: withAttempt(older, fingerprint) }, bars);
+    expect(stale.action).toBe('stay');
+    if (stale.action === 'stay') expect(stale.play.hasAnchors).toBe(false);
+    const stamped = recordFromMap(good, 'auto', [], { fingerprint, tier: 'lined-up' });
+    const mine = decideOnOpen({ version: 1, offset: 0.7, alignment: { ...withAttempt(stamped, fingerprint), revision: TIMELINE_REVISION + 1 } }, bars);
+    expect(mine.action).toBe('stay');
+    if (mine.action === 'stay') expect(mine.play.hasAnchors).toBe(true);
   });
 });

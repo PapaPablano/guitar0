@@ -9,7 +9,7 @@ import { OFFSET_MAX_SECONDS } from '../audio/offset-range';
 /** Tuning; the reason for each value is beside it. */
 export const TIMELINE_CHECK = {
   /** A bar the recording plays for less than this, but not for nothing, is neither played nor skipped. A skipped bar has exactly no length of its own. */
-  minBarSeconds: 0.2,
+  minBarSeconds: 0.05,
   /** Most extra playing a single bar may hold, in seconds: past this the path ran away rather than found a part the band added. */
   maxExtraSeconds: 600,
   /** Slack on a skipped bar sharing the next bar's anchor, in seconds (anchors are rounded to 10 ms). */

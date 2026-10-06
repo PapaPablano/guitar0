@@ -74,6 +74,15 @@ describe('one timeline, three readers', () => {
     }
   });
 
+  it('both readers also put every non-skipped bar line on its own anchor, so a wrong mapping fails and not only a disagreement', () => {
+    const map = timeline();
+    bars.forEach((bar, k) => {
+      if (recorded[k] <= 0) return;
+      expect(Math.abs(playThrough(map, anchors[k] + 0.001) - bar.start - 0.001), `bar ${k + 1}`).toBeLessThanOrEqual(0.001);
+      expect(Math.abs(tabTimeAt(map, anchors[k] + 0.001 - map.base) - bar.start - 0.001), `bar ${k + 1}`).toBeLessThanOrEqual(0.001);
+    });
+  });
+
   it('a jump to any tab time lands where the play-through and the export read that same tab time', () => {
     const map = timeline();
     for (let tab = 0; tab < TAB_END - 0.2; tab += 0.37) {

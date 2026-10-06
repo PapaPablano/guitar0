@@ -250,7 +250,7 @@ describe('matchRecording anchors', { timeout: 60000 }, () => {
 });
 
 describe('matchRecording with the tab\'s per-bar facts', { timeout: 30000 }, () => {
-  it('gives the same anchors with or without them while the facts are not yet read', () => {
+  it('reads the facts without moving a steady, constant-tempo recording', () => {
     const recording = shifted(recordingOfSong, 1.5, R);
     const features = {
       recording: chromaFrames(recording, R),

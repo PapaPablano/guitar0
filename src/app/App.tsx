@@ -332,7 +332,8 @@ export function App() {
         setAlignStatus(decision.tier === 'lined-up' ? { phase: 'lined-up', skipped: 0 } : { phase: 'roughly', skipped: 0 });
       } else if (decision.action === 'stay') {
         alignAttempt.current = tabFingerprint(bars);
-        setAlignStatus({ phase: 'not-found', reason: 'not-confident' });
+        // An older timeline still in use is not "not found": it plays, and its accuracy is unknown.
+        setAlignStatus(decision.play.hasAnchors ? { phase: 'roughly', skipped: 0 } : { phase: 'not-found', reason: 'not-confident' });
       }
     }
     if (plan?.mix) {

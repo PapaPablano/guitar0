@@ -68,11 +68,10 @@ export function solveChain(bars: readonly ChainBar[], options: Partial<WholeSong
 
   const finish = (weights: Float64Array, c: number): SolvedBar => {
     let total = 0;
-    let best = 0;
-    for (let j = 0; j < N; j++) {
-      total += weights[j];
-      if (weights[j] > weights[best]) best = j;
-    }
+    let best = Math.floor(N / 2);
+    for (let j = 0; j < N; j++) total += weights[j];
+    // The most likely offset; among equals (a bar with no evidence at all) the one nearest the centre of the window.
+    for (let j = 0; j < N; j++) if (weights[j] > weights[best] * (1 + 1e-9)) best = j;
     if (total <= 0) return { offset: bars[c].offsets[Math.floor(N / 2)], spread: Infinity };
     let sum = 0;
     let norm = 0;

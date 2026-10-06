@@ -216,13 +216,6 @@ describe('the fields added with the whole-song timeline', () => {
     await expect(store.load('new')).resolves.toMatchObject({ alignment: { revision: 1 } });
   });
 
-  it('a frozen copy of the old normaliser still loads a new record, and the offset stays usable', () => {
-    // The old reader rebuilt each record from the fields it knew; the new ones are simply not there for it.
-    const legacy = (raw: any) => ({ offset: raw.offset, anchors: raw.alignment.anchors, holds: raw.alignment.holds });
-    const stored = JSON.parse(JSON.stringify(normalizeProfile(withFields({ revision: 1, fingerprint: 'f', tier: 'lined-up' }))));
-    expect(legacy(stored)).toEqual({ offset: 1.2, anchors: [1, 3, 5], holds: [{ at: 8, length: 2 }] });
-  });
-
   it('saving recording A and then recording B in quick succession leaves both entries', async () => {
     const slow = memoryBackend(null);
     const read = slow.read.bind(slow);

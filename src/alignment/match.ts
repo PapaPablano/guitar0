@@ -86,6 +86,8 @@ export const MATCH_OPTIONS = {
   anchorPeakMin: 3,
   /** A refinement closer than this to where the previous bar's steady run predicts is snapped to it, so a steady band shows no step; the error it allows never builds up past this. */
   snapSeconds: 0.02,
+  /** Anchors may differ by this much and still be one position (they are rounded to 10 ms). */
+  sharedSeconds: 0.005,
   /** A bar's own onsets agree with the whole-song position when the peak is this close to it. */
   agreeSeconds: 0.03,
   /** Least peak standard score of a bar's own evidence for it to count as pinning the bar. */
@@ -555,8 +557,11 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
   const waitStarts = runsOf(path, 2, Math.round(o.minHoldSeconds * CHROMA_RATE)).map((run) => run.first.tab / CHROMA_RATE);
   const whole = wholeSongAnchors(input, fromPath, skipped, waitStarts, endAnchor, o);
   const rounded = whole.anchors.map(round2);
+  // A bar placed before the bar ahead of it is a broken solve, and `fromAnchors` would flatten it into a skipped bar,
+  // so it is caught here, on the raw anchors, and the bar-by-bar placement stands instead.
+  const backward = rounded.some((anchor, k) => k > 0 && anchor < rounded[k - 1] - o.sharedSeconds);
   for (let k = 1; k < rounded.length; k++) rounded[k] = Math.max(rounded[k], rounded[k - 1]);
-  const map = AlignmentMap.fromAnchors(bars, rounded, endAnchor) ?? perBarMap;
+  const map = backward ? perBarMap : (AlignmentMap.fromAnchors(bars, rounded, endAnchor) ?? perBarMap);
   const finalAnchors = map === perBarMap ? perBar : rounded;
   // A bar counts as pinned by its onsets only when they agree with where the whole-song pass put it.
   for (let k = 0; k < bars.length; k++) if (!whole.agrees[k]) barConfidence[k] = 0;

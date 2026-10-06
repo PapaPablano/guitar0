@@ -211,22 +211,6 @@ button[aria-pressed='true'] {
   gap: 8px;
 }
 
-.alignment-sections {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.alignment-section {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
 .alignment-actions {
   display: inline-flex;
   gap: 8px;

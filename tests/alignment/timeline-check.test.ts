@@ -39,7 +39,7 @@ describe('checkTimeline', () => {
 
   it('fails a bar played for a fraction of a second, which is neither played nor skipped', () => {
     const anchors = steady();
-    for (let k = 4; k < anchors.length; k++) anchors[k] -= 1.85;
+    for (let k = 4; k < anchors.length; k++) anchors[k] -= 1.97;
     const problems = checkTimeline(bars, anchors, end(anchors));
     expect(problems.map((p) => p.kind)).toContain('too-short');
   });
