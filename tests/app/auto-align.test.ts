@@ -180,6 +180,16 @@ describe('decideOnOpen', () => {
     }
   });
 
+  it('a hand-edited record whose anchors fit the bars but no longer make a playable timeline is detected again, playing the offset', () => {
+    const edited = { ...current(), alignment: { ...current().alignment, anchors: [1.5, 3.5, 3.52, 7.5, 9.5, 11.5] } };
+    const decision = decideOnOpen(edited, bars);
+    expect(decision.action).toBe('detect');
+    if (decision.action === 'detect') {
+      expect(decision.play.hasAnchors).toBe(false);
+      expect(decision.play.base).toBeCloseTo(1.5, 9);
+    }
+  });
+
   it('covers AE4: a record whose fingerprint no longer matches the tab is detected again and never reused', () => {
     const editedBars = bars.map((b, i) => (i === 3 ? { start: b.start, end: b.end + 0.01 } : b));
     const decision = decideOnOpen(current(), editedBars);

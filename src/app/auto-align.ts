@@ -174,11 +174,14 @@ export function decideOnOpen(profile: RestoredProfile | null, bars: readonly Bar
   const fingerprint = tabFingerprint(bars);
   const record = profile?.alignment;
   const offset = profile?.offset ?? 0;
-  const { map, fits } = restoreFromRecord(offset, record, bars);
-  const current = record?.revision === TIMELINE_REVISION && record.fingerprint === fingerprint && fits && record.source === 'auto';
+  const restored = restoreFromRecord(offset, record, bars);
+  // The file can be edited by hand, so anchors that fit the bars must also still make a playable timeline; one that does not plays the offset until detection replaces it.
+  const consistent = restored.fits && !failsCheck(restored.map, bars);
+  const map = consistent || !restored.fits ? restored.map : AlignmentMap.of(offset, record?.holds ?? []);
+  const current = record?.revision === TIMELINE_REVISION && record.fingerprint === fingerprint && consistent && record.source === 'auto';
   if (current) return { action: 'reuse', map, tier: record.tier ?? 'roughly' };
   const failedAlready = record?.attempt?.revision === TIMELINE_REVISION && record.attempt.fingerprint === fingerprint;
   // A timeline placed on another tab is worse than none, so a remembered failure plays only the saved offset unless the record is for this tab.
-  if (failedAlready) return { action: 'stay', play: record?.fingerprint === fingerprint && fits ? map : AlignmentMap.of(offset, []) };
+  if (failedAlready) return { action: 'stay', play: record?.fingerprint === fingerprint && consistent ? map : AlignmentMap.of(offset, []) };
   return { action: 'detect', play: map };
 }
