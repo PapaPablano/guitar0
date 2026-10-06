@@ -117,3 +117,59 @@ export function noise(seconds: number, rate: number, seed = 5, amplitude = 0.2):
   for (let i = 0; i < out.length; i++) out[i] = (random() - 0.5) * 2 * amplitude;
   return out;
 }
+
+/** A played bar of the tab, in tab seconds. */
+export interface BarShape {
+  readonly start: number;
+  readonly end: number;
+}
+
+/** `count` bars of `barSeconds` each, back to back from `from`. */
+export function barSpans(count: number, barSeconds = 2, from = 0): BarShape[] {
+  return Array.from({ length: count }, (_, i) => ({ start: from + i * barSeconds, end: from + (i + 1) * barSeconds }));
+}
+
+/** A band's performance of a song, with the true anchor of every bar known by construction. */
+export interface Performance {
+  readonly notes: SongNote[];
+  /** Length of the recording in seconds, lead-in included. */
+  readonly seconds: number;
+  /** The recording second at which each bar starts. */
+  readonly anchors: number[];
+  /** The recording second at which the tab ends. */
+  readonly endAnchor: number;
+}
+
+/**
+ * Plays the song's bars for the given recorded lengths. A bar recorded shorter than the tab's is played faster; a
+ * bar recorded longer is played steadily and followed by unrelated playing for the rest of its time (extra
+ * playing); a bar recorded at zero length is skipped, its notes dropped.
+ */
+export function bandPerformance(notes: readonly SongNote[], bars: readonly BarShape[], recordedLengths: readonly number[], lead = 0, extraSeed = 4242): Performance {
+  const out: SongNote[] = [];
+  const anchors: number[] = [];
+  let at = lead;
+  bars.forEach((bar, k) => {
+    const recorded = recordedLengths[k];
+    const duration = bar.end - bar.start;
+    anchors.push(at);
+    if (recorded > 0) {
+      // A second or more over is extra playing after steady notes; any other difference is the whole bar played slower or faster.
+      const extraPlaying = recorded - duration >= 1;
+      const scale = extraPlaying ? 1 : recorded / duration;
+      for (const n of notes) {
+        if (n.start < bar.start || n.start >= bar.end) continue;
+        out.push({ start: at + (n.start - bar.start) * scale, duration: n.duration * scale, midi: n.midi });
+      }
+      if (extraPlaying) {
+        const extra = songNotes(Math.ceil((recorded - duration) / 2), 2, extraSeed + k);
+        for (const n of extra) {
+          if (n.start >= recorded - duration) continue;
+          out.push({ start: at + duration + n.start, duration: Math.min(n.duration, recorded - duration - n.start), midi: n.midi });
+        }
+      }
+    }
+    at += Math.max(0, recorded);
+  });
+  return { notes: out, seconds: at + 0.5, anchors, endAnchor: at };
+}

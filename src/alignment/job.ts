@@ -1,25 +1,26 @@
-import type { Hold } from '../audio/alignment-map';
-import { AlignmentMap } from '../audio/alignment-map';
+import { AlignmentMap, type AlignmentData, type BarSpan } from '../audio/alignment-map';
 import type { PcmAudio } from '../export/audio';
 import { chromaFrames, downsampleMono, FEATURE_RATE, onsetEnvelope } from './features';
 import { matchRecording } from './match';
 
-/** What the worker is given: the recording as mono samples at `FEATURE_RATE`, the tab's render at its own rate, and the bar lines. */
+/** What the worker is given: the recording as mono samples at `FEATURE_RATE`, the tab's render at its own rate, and the tab's played bars. */
 export interface MatchJob {
   readonly recording: Float32Array;
   readonly tab: PcmAudio;
-  readonly barLines: readonly number[];
+  readonly bars: readonly BarSpan[];
 }
 
 /** The matcher's answer as plain data, so it can cross the worker boundary. */
 export type MatchJobResult =
   | {
       readonly kind: 'aligned';
-      readonly base: number;
-      readonly holds: readonly Hold[];
+      /** The alignment as plain data: one anchor per bar, with the bars they belong to. */
+      readonly data: AlignmentData;
       readonly confidence: number;
       readonly matchedFraction: number;
-      readonly unfollowed: number;
+      readonly skippedStretches: number;
+      readonly barConfidence: readonly number[];
+      readonly barMatched: readonly boolean[];
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -33,17 +34,24 @@ export function runMatchJob(job: MatchJob, onProgress: (fraction: number) => voi
     tab: chromaFrames(tab, FEATURE_RATE),
     recordingOnsets: onsetEnvelope(recording, FEATURE_RATE),
     tabOnsets: onsetEnvelope(tab, FEATURE_RATE),
-    barLines: job.barLines,
+    bars: job.bars,
   };
   onProgress(0.5);
   const result = matchRecording(features);
   onProgress(1);
   if (result.kind === 'not-found') return result;
-  const data = result.map.toData();
-  return { kind: 'aligned', base: data.base, holds: data.holds, confidence: result.confidence, matchedFraction: result.matchedFraction, unfollowed: result.unfollowed };
+  return {
+    kind: 'aligned',
+    data: result.map.toData(),
+    confidence: result.confidence,
+    matchedFraction: result.matchedFraction,
+    skippedStretches: result.skippedStretches,
+    barConfidence: result.barConfidence,
+    barMatched: result.barMatched,
+  };
 }
 
 /** The result as a map; null when it was not aligned. */
 export function mapOfResult(result: MatchJobResult): AlignmentMap | null {
-  return result.kind === 'aligned' ? AlignmentMap.of(result.base, result.holds) : null;
+  return result.kind === 'aligned' ? AlignmentMap.normalize(result.data) : null;
 }

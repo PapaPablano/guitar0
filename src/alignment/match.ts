@@ -1,4 +1,4 @@
-import { AlignmentMap, type Hold } from '../audio/alignment-map';
+import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
 import { OFFSET_MAX_SECONDS } from '../audio/offset-range';
 import { CHROMA_BINS, CHROMA_RATE, ONSET_RATE, type Chroma } from './features';
 
@@ -9,8 +9,8 @@ export interface MatchInput {
   /** Onset envelopes of the same two signals, at `ONSET_RATE` values per second. */
   readonly recordingOnsets: Float32Array;
   readonly tabOnsets: Float32Array;
-  /** Tab seconds at which each played bar starts; extra sections are placed on one of these. */
-  readonly barLines: readonly number[];
+  /** The tab's played bars, in tab seconds; every bar gets an anchor. */
+  readonly bars: readonly BarSpan[];
 }
 
 export type MatchResult =
@@ -21,8 +21,12 @@ export type MatchResult =
       readonly confidence: number;
       /** Share of the tab's sounding frames that the path matched to the recording. */
       readonly matchedFraction: number;
-      /** Places where the recording skips bars the tab has; these are not followed. */
-      readonly unfollowed: number;
+      /** Stretches where the recording skips bars the tab has; the tab jumps past them. */
+      readonly skippedStretches: number;
+      /** How clearly each bar's anchor was found on the recording's onsets, as a standard score; 0 where it kept the path's value. */
+      readonly barConfidence: readonly number[];
+      /** Whether the path matched most of each bar's sounding frames; false for a stretch played differently. */
+      readonly barMatched: readonly boolean[];
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -36,18 +40,24 @@ export const MATCH_OPTIONS = {
   holdGap: 0.12,
   /** Cost per frame of the tab running on while the recording does not (bars the recording skips): dear, since it is not a feature. */
   skipGap: 0.5,
-  /** A shift of the offset smaller than this is timing noise, not an extra section. */
+  /** A bar recorded this much longer than the tab's is extra playing, and this much shorter is skipped playing. */
   minHoldSeconds: 1,
   /** How far either side of the estimated offset line the path may wander; extra playing beyond this is not followed. */
   bandSeconds: 120,
-  /** The onset stage may move an edge this far from the coarse result. */
+  /** The onset stage may move an anchor this far from the path's value. */
   fineSeconds: 0.15,
   /** Least share of sounding tab frames that must be matched. */
   minMatchedFraction: 0.3,
   /** Least standard score of the best offset. */
   minProminence: 4,
-  /** A segment's offset is read from its first stretch, so a shift too small to count as a hold later on does not move it. */
-  edgeSeconds: 10,
+  /** How much of each bar's start the onset stage compares: long enough for a few notes, short enough to stay inside the bar. */
+  anchorWindowSeconds: 1.5,
+  /** A bar counts as matched while its mean similarity is within this of the typical bar's. */
+  matchedMargin: 0.2,
+  /** Least standard score of the onset peak for a refinement to replace the path's value. */
+  anchorPeakMin: 3,
+  /** A refinement closer than this to where the previous bar's steady run predicts is snapped to it, so a steady band shows no step; the error it allows never builds up past this. */
+  snapSeconds: 0.02,
 } as const;
 
 type Options = typeof MATCH_OPTIONS;
@@ -182,130 +192,259 @@ function alignPath(rec: Chroma, tab: Chroma, recSilent: Uint8Array, tabSilent: U
   return path.reverse();
 }
 
-interface Segment {
-  /** Tab frames the segment covers. */
+/** What the path says about the recording at each tab frame. */
+interface Coverage {
   startTab: number;
   endTab: number;
-  /** Offsets (recording minus tab, in frames) of its matched cells. */
-  offsets: number[];
+  /** The recording frame reached at each tab frame: the last cell there, so a wait is passed to its end. */
+  rec: Int32Array;
+  /** Offsets (recording minus tab, in frames) of the first and last matched cells, for what the path does not cover. */
+  firstOffset: number;
+  lastOffset: number;
 }
 
-const median = (values: number[]): number => {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
-};
-
-/** Splits the path where the offset jumps by a second or more; a jump up is extra playing, a jump down is skipped bars. */
-function segmentsOf(path: PathCell[], minJumpFrames: number): { segments: Segment[]; jumps: { before: number; delta: number }[] } {
-  const segments: Segment[] = [];
-  const jumps: { before: number; delta: number }[] = [];
-  let lastOffset: number | null = null;
-  let lastTab = 0;
-  let current: Segment | null = null;
-  for (const cell of path) {
-    if (cell.move !== 1) continue;
-    const offset = cell.rec - cell.tab;
-    if (lastOffset !== null && Math.abs(offset - lastOffset) >= minJumpFrames && current) {
-      segments.push(current);
-      jumps.push({ before: lastTab, delta: offset - lastOffset });
-      current = null;
-    }
-    if (!current) current = { startTab: cell.tab, endTab: cell.tab, offsets: [] };
-    current.endTab = cell.tab;
-    current.offsets.push(offset);
-    lastOffset = offset;
-    lastTab = cell.tab;
-  }
-  if (current) segments.push(current);
-  return { segments, jumps };
+function coverageOf(path: PathCell[]): Coverage | null {
+  const diagonals = path.filter((c) => c.move === 1);
+  if (diagonals.length === 0) return null;
+  const startTab = path[0].tab;
+  const endTab = path[path.length - 1].tab;
+  const rec = new Int32Array(endTab + 1).fill(-1);
+  for (const cell of path) rec[cell.tab] = cell.rec;
+  return {
+    startTab,
+    endTab,
+    rec,
+    firstOffset: diagonals[0].rec - diagonals[0].tab,
+    lastOffset: diagonals[diagonals.length - 1].rec - diagonals[diagonals.length - 1].tab,
+  };
 }
 
-/** The onset-envelope lag, in seconds within `fine`, that best lines the segment's tab span up with the recording. */
-function refine(seg: Segment, offsetSeconds: number, input: MatchInput, fineSeconds: number, edgeSeconds: number): number {
-  const a = Math.ceil((seg.startTab / CHROMA_RATE) * ONSET_RATE);
-  const b = Math.min(Math.floor(((seg.endTab + 1) / CHROMA_RATE) * ONSET_RATE), a + Math.round(edgeSeconds * ONSET_RATE));
-  if (b - a < ONSET_RATE) return offsetSeconds;
-  const centre = Math.round(offsetSeconds * ONSET_RATE);
-  const reach = Math.round(fineSeconds * ONSET_RATE);
-  let bestLag = 0;
-  let bestScore = -Infinity;
+/** The recording second at which the tab reaches `line`, from the path, continuing at the path's end offsets outside it. */
+function recordingAt(line: number, cover: Coverage): number {
+  const frame = line * CHROMA_RATE;
+  const nearest = Math.round(frame);
+  if (nearest < cover.startTab) return (frame + cover.firstOffset) / CHROMA_RATE;
+  if (nearest > cover.endTab) return (frame + cover.lastOffset) / CHROMA_RATE;
+  let at = cover.rec[nearest];
+  for (let back = nearest; at < 0 && back > cover.startTab; ) at = cover.rec[--back];
+  return (at + (frame - nearest)) / CHROMA_RATE;
+}
+
+/**
+ * Sharpens one bar's anchor on the onsets: the lag, within `fineSeconds` of the path's value, at which the tab's
+ * first notes of the bar best line up with the recording's. The prominence is the height of that peak over the
+ * other lags in standard deviations (the BBC finder's standard score); 0 when the tab has no onsets there.
+ */
+function refineAnchor(barStart: number, guess: number, input: MatchInput, o: Options): { seconds: number; prominence: number } {
+  const a = Math.round(barStart * ONSET_RATE);
+  const b = Math.min(a + Math.round(o.anchorWindowSeconds * ONSET_RATE), input.tabOnsets.length);
+  const centre = Math.round((guess - barStart) * ONSET_RATE);
+  const reach = Math.round(o.fineSeconds * ONSET_RATE);
+  let energy = 0;
+  for (let t = a; t < b; t++) energy += input.tabOnsets[t];
+  if (b - a < ONSET_RATE / 4 || energy <= 1e-9) return { seconds: guess, prominence: 0 };
+  const scores: number[] = [];
   for (let lag = -reach; lag <= reach; lag++) {
     let score = 0;
-    for (let t = a; t < b && t < input.tabOnsets.length; t++) {
+    for (let t = a; t < b; t++) {
       const r = t + centre + lag;
       if (r >= 0 && r < input.recordingOnsets.length) score += input.tabOnsets[t] * input.recordingOnsets[r];
     }
-    if (score > bestScore) {
-      bestScore = score;
-      bestLag = lag;
-    }
+    scores.push(score);
   }
-  return (centre + bestLag) / ONSET_RATE;
+  let best = 0;
+  for (let n = 1; n < scores.length; n++) if (scores[n] > scores[best]) best = n;
+  const mean = scores.reduce((x, y) => x + y, 0) / scores.length;
+  const std = Math.sqrt(scores.reduce((x, y) => x + (y - mean) * (y - mean), 0) / scores.length);
+  return { seconds: barStart + (centre + best - reach) / ONSET_RATE, prominence: std > 0 ? (scores[best] - mean) / std : 0 };
 }
 
 const round2 = (x: number): number => Math.round(x * 100) / 100;
 
-function nearestBar(seconds: number, barLines: readonly number[]): number {
-  if (barLines.length === 0) return round2(seconds);
-  let best = barLines[0];
-  for (const line of barLines) if (Math.abs(line - seconds) < Math.abs(best - seconds)) best = line;
-  return best;
+/** Runs of path cells of one kind: a wait (the recording plays on at one tab frame) or a skip (the tab runs on at one recording frame). */
+function runsOf(path: PathCell[], move: 2 | 3, minFrames: number): { first: PathCell; last: PathCell; length: number }[] {
+  const runs: { first: PathCell; last: PathCell; length: number }[] = [];
+  let first: PathCell | null = null;
+  let last: PathCell | null = null;
+  let length = 0;
+  const close = () => {
+    if (first && last && length >= minFrames) runs.push({ first, last, length });
+    first = null;
+    last = null;
+    length = 0;
+  };
+  for (const cell of path) {
+    if (cell.move === move) {
+      if (!first) first = cell;
+      last = cell;
+      length += 1;
+    } else close();
+  }
+  close();
+  return runs;
 }
 
 /**
- * Finds where a recording sits against the tab. The start offset and the extra sections come from one path
- * through the two signals' pitch content (the BBC offset finder and Audalign only find a single offset), then
- * onset correlation sharpens each edge to about 10 ms. Returns not-found when the match is not convincing.
+ * One anchor for a bar from the diagonal cells of the path inside it: the median offset of those cells, taken from the
+ * bar's start. A bar's notes play steadily, so the median is steadier than the path's value at the bar line, which
+ * wobbles where extra playing begins; and when a wait falls inside the bar, the side holding most of its cells
+ * decides which line the extra playing belongs to, which is the nearest one. Matched cells are preferred.
+ * Returns null for a bar with no diagonal cells.
+ */
+function anchorFromCells(
+  bar: BarSpan,
+  path: PathCell[],
+  cellRange: { from: number; to: number },
+  similar: (cell: PathCell) => boolean,
+): number | null {
+  const all: number[] = [];
+  const good: number[] = [];
+  for (let n = cellRange.from; n < cellRange.to; n++) {
+    const cell = path[n];
+    if (cell.move !== 1) continue;
+    all.push(cell.rec - cell.tab);
+    if (similar(cell)) good.push(cell.rec - cell.tab);
+  }
+  const offsets = good.length >= 3 ? good : all;
+  if (offsets.length === 0) return null;
+  offsets.sort((a, b) => a - b);
+  return bar.start + offsets[Math.floor(offsets.length / 2)] / CHROMA_RATE;
+}
+
+/**
+ * A stretch where the tab runs on and the recording does not is skipped playing; the bars it mostly covers have no
+ * recorded length, so each takes the anchor of the first bar after them.
+ */
+function placeSkipsOnBars(anchors: number[], path: PathCell[], bars: readonly BarSpan[], minFrames: number, endAnchor: number): void {
+  const skipped = new Array<boolean>(bars.length).fill(false);
+  for (const skip of runsOf(path, 3, minFrames)) {
+    const from = (skip.first.tab - 1) / CHROMA_RATE;
+    const to = skip.last.tab / CHROMA_RATE;
+    bars.forEach((b, k) => {
+      const overlap = Math.min(b.end, to) - Math.max(b.start, from);
+      if (overlap >= (b.end - b.start) / 2) skipped[k] = true;
+    });
+  }
+  for (let k = bars.length - 1; k >= 0; k--) {
+    if (skipped[k]) anchors[k] = k + 1 < bars.length ? anchors[k + 1] : endAnchor;
+  }
+}
+
+/**
+ * Whether each bar was matched: its mean pitch-content similarity is within a margin of the recording's typical
+ * bar. Relative, because a real recording of a MIDI render never matches as closely as a synthetic one does.
+ * A bar the path did not cross has nothing to compare and is not matched.
+ */
+function barMatchedFlags(sums: readonly number[], counts: readonly number[], margin: number): boolean[] {
+  const means = sums.map((s, k) => (counts[k] > 0 ? s / counts[k] : -1));
+  const present = means.filter((m) => m >= 0).sort((a, b) => a - b);
+  if (present.length === 0) return means.map(() => false);
+  const typical = present[Math.floor(present.length / 2)];
+  return means.map((m) => m >= 0 && m >= typical - margin);
+}
+
+/**
+ * Finds where a recording sits against the tab, one anchor per bar. The anchors are read off one path through
+ * the two signals' pitch content (the BBC offset finder and Audalign only find a single offset), then each is
+ * sharpened on the onsets to about 10 ms and scored, matching bar by bar as pyCrossfade does. Returns not-found
+ * when the match is not convincing.
  */
 export function matchRecording(input: MatchInput, options: Partial<Options> = {}): MatchResult {
   const o: Options = { ...MATCH_OPTIONS, ...options };
-  const { recording, tab } = input;
+  const { recording, tab, bars } = input;
   const recSilent = silentFrames(recording);
   const tabSilent = silentFrames(tab);
   const sounding = tabSilent.reduce((n, s) => n + (s ? 0 : 1), 0);
-  if (sounding === 0 || recSilent.every((s) => s === 1)) return { kind: 'not-found', reason: 'silent' };
+  if (sounding === 0 || recSilent.every((s) => s === 1) || bars.length === 0) return { kind: 'not-found', reason: 'silent' };
 
   const coarse = coarseLag(recording, tab);
   if (!coarse || coarse.prominence < o.minProminence) return { kind: 'not-found', reason: 'not-confident' };
 
   const path = alignPath(recording, tab, recSilent, tabSilent, coarse.lag, o);
+  const cover = coverageOf(path);
+  if (!cover) return { kind: 'not-found', reason: 'not-confident' };
+
+  // How much of each bar the path matched, and how much of the whole tab.
+  const barSimilaritySum = new Array<number>(bars.length).fill(0);
+  const barSimilarityCount = new Array<number>(bars.length).fill(0);
+  const barOfFrame = (frame: number): number => {
+    const t = frame / CHROMA_RATE;
+    let lo = 0;
+    let hi = bars.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (bars[mid].start <= t + 1e-9) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
   let matched = 0;
   for (const cell of path) {
-    if (cell.move === 1 && !tabSilent[cell.tab] && !recSilent[cell.rec] && dot(recording.frames, cell.rec, tab.frames, cell.tab) >= o.matchThreshold) matched += 1;
+    if (cell.move !== 1 || tabSilent[cell.tab] || recSilent[cell.rec]) continue;
+    const similarity = dot(recording.frames, cell.rec, tab.frames, cell.tab);
+    const bar = barOfFrame(cell.tab);
+    barSimilaritySum[bar] += similarity;
+    barSimilarityCount[bar] += 1;
+    if (similarity >= o.matchThreshold) matched += 1;
   }
   const matchedFraction = matched / sounding;
   if (matchedFraction < o.minMatchedFraction) return { kind: 'not-found', reason: 'not-confident' };
 
-  const { segments, jumps } = segmentsOf(path, Math.round(o.minHoldSeconds * CHROMA_RATE));
-  if (segments.length === 0) return { kind: 'not-found', reason: 'not-confident' };
-
-  const edgeCells = Math.round(o.edgeSeconds * CHROMA_RATE);
-  const offsets = segments.map((seg) =>
-    round2(refine(seg, median(seg.offsets.slice(0, edgeCells)) / CHROMA_RATE, input, o.fineSeconds, o.edgeSeconds)),
-  );
-  const base = offsets[0];
-  if (Math.abs(base) > OFFSET_MAX_SECONDS) return { kind: 'not-found', reason: 'out-of-range' };
-
-  const holds: Hold[] = [];
-  let unfollowed = 0;
-  for (let n = 0; n < jumps.length; n++) {
-    if (jumps[n].delta <= 0) {
-      unfollowed += 1; // bars the recording skips are not handled
-      continue;
+  // One anchor per bar from the path, then sharpened on the onsets where that is convincing.
+  const fromPath = bars.map((b) => recordingAt(b.start, cover));
+  const endFromPath = recordingAt(bars[bars.length - 1].end, cover);
+  // The path's cells are in tab order, so each bar's cells are one stretch of it.
+  let cursor = 0;
+  bars.forEach((bar, k) => {
+    const from = cursor;
+    while (cursor < path.length && path[cursor].tab / CHROMA_RATE < bar.end - 1e-9) cursor += 1;
+    const median = anchorFromCells(bar, path, { from, to: cursor }, (cell) =>
+      !tabSilent[cell.tab] && !recSilent[cell.rec] && dot(recording.frames, cell.rec, tab.frames, cell.tab) >= o.matchThreshold,
+    );
+    if (median !== null) fromPath[k] = median;
+  });
+  placeSkipsOnBars(fromPath, path, bars, Math.round(o.minHoldSeconds * CHROMA_RATE), endFromPath);
+  const raw = fromPath.slice();
+  const barConfidence = new Array<number>(bars.length).fill(0);
+  for (let k = 0; k < bars.length; k++) {
+    const skipped = k + 1 < bars.length && fromPath[k + 1] - fromPath[k] < 0.1;
+    if (skipped) continue; // a bar the recording does not play has nothing to line up
+    const refined = refineAnchor(bars[k].start, fromPath[k], input, o);
+    if (refined.prominence >= o.anchorPeakMin && Math.abs(refined.seconds - fromPath[k]) <= o.fineSeconds + 1e-9) {
+      raw[k] = refined.seconds;
+      barConfidence[k] = refined.prominence;
     }
-    const length = round2(offsets[n + 1] - offsets[n]);
-    if (length < o.minHoldSeconds) continue;
-    const at = nearestBar((jumps[n].before + 0.5) / CHROMA_RATE, input.barLines);
-    // Two jumps that land on one bar line are one stretch of extra playing; add them up without float noise.
-    const same = holds.find((h) => h.at === at);
-    if (same) holds[holds.indexOf(same)] = { at, length: round2(same.length + length) };
-    else holds.push({ at, length });
+  }
+  // A band that is steady shows no steps: a refinement within a few milliseconds of where the previous bar's run predicts is that prediction.
+  const anchors: number[] = [raw[0]];
+  for (let k = 1; k < bars.length; k++) {
+    const predicted = anchors[k - 1] + (bars[k - 1].end - bars[k - 1].start);
+    anchors.push(Math.abs(raw[k] - predicted) < o.snapSeconds ? predicted : raw[k]);
+  }
+  const rounded = anchors.map(round2);
+  for (let k = 1; k < rounded.length; k++) rounded[k] = Math.max(rounded[k], rounded[k - 1]);
+  const endAnchor = round2(Math.max(endFromPath, rounded[rounded.length - 1]));
+
+  if (Math.abs(rounded[0] - bars[0].start) > OFFSET_MAX_SECONDS) return { kind: 'not-found', reason: 'out-of-range' };
+  const map = AlignmentMap.fromAnchors(bars, rounded, endAnchor);
+  if (!map) return { kind: 'not-found', reason: 'not-confident' };
+
+  // Stretches of bars the recording played much shorter than the tab's, which the tab jumps past.
+  let skippedStretches = 0;
+  let inSkip = false;
+  for (let k = 0; k < bars.length; k++) {
+    const recorded = (k + 1 < bars.length ? rounded[k + 1] : endAnchor) - rounded[k];
+    const short = recorded < bars[k].end - bars[k].start - o.minHoldSeconds;
+    if (short && !inSkip) skippedStretches += 1;
+    inSkip = short;
   }
   return {
     kind: 'aligned',
-    map: AlignmentMap.of(base, holds),
+    map,
     confidence: coarse.prominence,
     matchedFraction,
-    unfollowed,
+    skippedStretches,
+    barConfidence,
+    barMatched: barMatchedFlags(barSimilaritySum, barSimilarityCount, o.matchedMargin),
   };
 }

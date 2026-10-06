@@ -74,7 +74,9 @@ export function statusText(status: AlignStatus, sections?: number): string {
         count === 0
           ? 'Lined up with the tab. No extra playing found.'
           : `Lined up with the tab. Found ${count} ${plural(count, 'section of extra playing', 'sections of extra playing')}.`;
-      return status.unfollowed > 0 ? `${found} Part of the recording skips bars the tab has; that part was not followed.` : found;
+      return status.skipped > 0
+        ? `${found} The tab jumps past ${status.skipped} ${plural(status.skipped, 'stretch the recording skips', 'stretches the recording skips')}.`
+        : found;
     }
     case 'not-found':
       return notFoundText(status.reason);

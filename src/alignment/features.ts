@@ -134,7 +134,7 @@ export function onsetEnvelope(samples: Float32Array, rate: number = FEATURE_RATE
     for (let k = 0; k < half; k++) {
       current[k] = Math.log1p(10 * Math.hypot(re[k], im[k]));
       const rise = current[k] - previous[k];
-      if (i > 0 && rise > 0) flux += rise;
+      if (rise > 0) flux += rise;
     }
     out[i] = flux;
     [previous, current] = [current, previous];

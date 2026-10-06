@@ -1,4 +1,4 @@
-import type { AlignmentMap } from '../audio/alignment-map';
+import type { AlignmentMap, BarSpan } from '../audio/alignment-map';
 import type { PcmAudio } from '../export/audio';
 import { MAX_EXPORT_SECONDS } from '../export/presets';
 import type { Timeline } from '../model/score';
@@ -15,8 +15,10 @@ export type AnalysisResult =
       readonly map: AlignmentMap;
       readonly confidence: number;
       readonly matchedFraction: number;
-      /** Places where the recording skips bars the tab has; these are not followed. */
-      readonly unfollowed: number;
+      /** Stretches where the recording skips bars the tab has; the tab jumps past them. */
+      readonly skippedStretches: number;
+      readonly barConfidence: readonly number[];
+      readonly barMatched: readonly boolean[];
     }
   | { readonly kind: 'not-found'; readonly reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-range' }
   | { readonly kind: 'failed'; readonly reason: 'decode' | 'render' | 'worker' }
@@ -47,16 +49,16 @@ export interface AnalysisArgs {
   readonly durationSeconds: number;
   /** The tab's length, to refuse a render the page could not hold. */
   readonly tabSeconds: number;
-  readonly barLines: readonly number[];
+  readonly bars: readonly BarSpan[];
   /** Renders the whole tab at its original tempo; the app passes the synthesizer's export. */
   readonly renderTab: (onProgress: (fraction: number) => void) => Promise<PcmAudio>;
   /** Called with 0..1, only ever upward. */
   readonly onProgress?: (fraction: number) => void;
 }
 
-/** Tab seconds at which each played bar starts, for placing extra sections. */
-export function barLinesOf(timeline: Timeline): number[] {
-  return timeline.bars.map((bar) => bar.startSeconds);
+/** The tab's played bars in tab seconds; each gets an anchor. */
+export function barSpansOf(timeline: Timeline): BarSpan[] {
+  return timeline.bars.map((bar) => ({ start: bar.startSeconds, end: bar.endSeconds }));
 }
 
 const browserDeps: AnalysisDeps = {
@@ -138,14 +140,14 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
     if (cancelled) return;
     report(0.7);
     try {
-      run = deps.startMatch({ recording, tab, barLines: args.barLines }, (fraction) => report(0.7 + 0.3 * fraction));
+      run = deps.startMatch({ recording, tab, bars: args.bars }, (fraction) => report(0.7 + 0.3 * fraction));
       const answer = await run.result;
       if (cancelled) return;
       report(1);
       const map = mapOfResult(answer);
       settle(
         map && answer.kind === 'aligned'
-          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, unfollowed: answer.unfollowed }
+          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched }
           : answer.kind === 'not-found'
             ? { kind: 'not-found', reason: answer.reason }
             : { kind: 'failed', reason: 'worker' },

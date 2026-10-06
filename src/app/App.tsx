@@ -3,7 +3,7 @@ import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
-import { barLinesOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
+import { barSpansOf, startAnalysis, type AnalysisJob } from '../alignment/analyze';
 import { startExactCopy } from './exact-copy-load';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -177,7 +177,7 @@ export function App() {
       file,
       durationSeconds: clockForRun.element.duration,
       tabSeconds: current.timeline.durationSeconds,
-      barLines: barLinesOf(current.timeline),
+      bars: barSpansOf(current.timeline),
       renderTab: (onProgress) => current.clock.exportAudio(onProgress),
       onProgress: (progress) => {
         if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress });
@@ -263,7 +263,7 @@ export function App() {
       applyAlignment(AlignmentMap.of(plan.offset, plan.alignment?.holds ?? []), plan.alignment?.source ?? null, false);
       setAlignStatus(
         plan.alignment?.source === 'auto'
-          ? { phase: 'found', sections: plan.alignment.holds.length, unfollowed: 0 }
+          ? { phase: 'found', sections: plan.alignment.holds.length, skipped: 0 }
           : { phase: 'manual' },
       );
     }

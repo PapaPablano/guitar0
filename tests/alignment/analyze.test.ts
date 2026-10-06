@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { barLinesOf, MAX_ANALYSIS_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
+import { barSpansOf, MAX_ANALYSIS_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
 import { FEATURE_RATE } from '../../src/alignment/features';
 import { runMatchJob, type MatchJob, type MatchJobResult } from '../../src/alignment/job';
 import { MAX_EXPORT_SECONDS } from '../../src/export/presets';
 import { makeTimeline } from '../helpers/make-timeline';
-import { inserted, renderSong, shifted, songNotes, unrelatedMusic } from '../helpers/synthetic-audio';
+import { barSpans, inserted, renderSong, shifted, songNotes, unrelatedMusic } from '../helpers/synthetic-audio';
 
 const pcm = (samples: Float32Array, sampleRate: number) => ({ left: samples, right: samples, sampleRate });
 
@@ -23,7 +23,7 @@ const args = (over = {}) => ({
   file: new Blob(['x']),
   durationSeconds: 60,
   tabSeconds: 60,
-  barLines: [0, 2, 4],
+  bars: barSpans(3, 2),
   renderTab: vi.fn(async (onProgress: (f: number) => void) => {
     onProgress(0.5);
     onProgress(1);
@@ -40,7 +40,15 @@ describe('startAnalysis', () => {
     const seen: number[] = [];
     const job = startAnalysis(args({ onProgress: (f: number) => seen.push(f) }), deps);
     await flush();
-    answer({ kind: 'aligned', base: 1.5, holds: [{ at: 20, length: 16 }], confidence: 6, matchedFraction: 1, unfollowed: 0 });
+    answer({
+      kind: 'aligned',
+      data: { base: 1.5, holds: [{ at: 20, length: 16 }] },
+      confidence: 6,
+      matchedFraction: 1,
+      skippedStretches: 0,
+      barConfidence: [],
+      barMatched: [],
+    });
     const result = await job.result;
     expect(result.kind).toBe('aligned');
     if (result.kind === 'aligned') {
@@ -106,7 +114,7 @@ describe('startAnalysis', () => {
     expect(await job.result).toEqual({ kind: 'cancelled' });
     expect(terminate).toHaveBeenCalled();
     const reported = seen.length;
-    answer({ kind: 'aligned', base: 1, holds: [], confidence: 6, matchedFraction: 1, unfollowed: 0 });
+    answer({ kind: 'aligned', data: { base: 1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [] });
     await flush();
     expect(seen.length).toBe(reported);
   });
@@ -136,7 +144,7 @@ describe('startAnalysis', () => {
         file: new Blob(['x']),
         durationSeconds: 61,
         tabSeconds: 48,
-        barLines: Array.from({ length: 24 }, (_, i) => i * 2),
+        bars: barSpans(24, 2),
         renderTab: async () => pcm(tab48, 48000),
       },
       real,
@@ -152,9 +160,9 @@ describe('startAnalysis', () => {
   });
 });
 
-describe('barLinesOf', () => {
-  it('lists the start of every played bar', () => {
+describe('barSpansOf', () => {
+  it('lists the start and end of every played bar', () => {
     const timeline = makeTimeline([], 2, 3);
-    expect(barLinesOf(timeline)).toEqual(timeline.bars.map((b) => b.startSeconds));
+    expect(barSpansOf(timeline)).toEqual(timeline.bars.map((b) => ({ start: b.startSeconds, end: b.endSeconds })));
   });
 });
