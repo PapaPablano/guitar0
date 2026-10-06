@@ -4,8 +4,9 @@ import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
 import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob, decodeRecording } from '../alignment/analyze';
-import { startExactCopy, type CopyState } from './exact-copy-load';
-import { copyStateText, holdText } from './exactness-text';
+import { startExactCopy, type CopyState, type ExactSession } from './exact-copy-load';
+import { copyStateText, exactLine, holdText } from './exactness-text';
+import { ExactnessStrip } from './ExactnessStrip';
 import { ClickCountIn } from '../audio/count-in';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -113,6 +114,9 @@ export function App() {
   const [copyState, setCopyState] = useState<CopyState | null>(null);
   /** A jump waiting for the part of the recording it lands in to be exact. */
   const [hold, setHold] = useState<HoldState | null>(null);
+  /** The decoded audio of the loaded recording and what is exact of it; `exactTick` changes whenever that does. */
+  const [exactSession, setExactSession] = useState<ExactSession | null>(null);
+  const [, setExactTick] = useState(0);
   /** Counts the player in when a held jump has paused playback. */
   const countIn = useRef(new ClickCountIn());
   const [exportOpen, setExportOpen] = useState(false);
@@ -142,6 +146,23 @@ export function App() {
   const profileStore = useMemo<ProfileStore>(() => (isDesktop() ? shellProfileStore : new WebProfileStore()), []);
   /** Where each recording's alignment is remembered: its own readable file on the desktop, browser storage on the web. */
   const alignmentStore = useMemo<AlignmentStore>(() => (isDesktop() ? shellAlignmentStore : new WebAlignmentStore()), []);
+  // The strip and its line follow the store as parts become exact, a few times a second at most.
+  useEffect(() => {
+    if (!exactSession) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = exactSession.pcm.onChange(() => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        setExactTick((n) => n + 1);
+      }, 200);
+    });
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [exactSession]);
+
   /** Names the recording whose profile lookup is in flight; any newer load or removal makes it stale. */
   const profileRuns = useRef(createRunGuard());
   /** Content hash of the loaded recording, once known; null means nothing is restored or saved for it. */
@@ -443,6 +464,7 @@ export function App() {
     stopExactCopy.current = null;
     setCopyState(null);
     setHold(null);
+    setExactSession(null);
     stemsRef.current?.clock.dispose();
     stemsRef.current = null;
     setStems(null);
@@ -524,6 +546,13 @@ export function App() {
 
   live.current = { offset, tempoPercent, mix, userClock, session, alignment, sections };
 
+  // What the player is told about exact jumps: a held jump first, then a recording that cannot be made exact, then what is exact so far.
+  const warnsOfApproximateJumps = copyState === 'failed' || copyState === 'too-long';
+  const exactNotice =
+    holdText(hold) ||
+    copyStateText(copyState) ||
+    (exactSession && !exactSession.pcm.complete ? exactLine(exactSession.pcm.chunkStates(), exactSession.pcm.chunkSeconds, exactSession.pcm.durationSeconds) : '');
+
   const clock: Clock | undefined = stems?.clock ?? userClock ?? session?.clock;
   const sourceTimeline = session?.timeline;
   // The tab is shown in the chosen tuning; the sound always comes from the file.
@@ -594,7 +623,7 @@ export function App() {
       });
       next.setHoldListener(setHold);
       stopExactCopy.current?.();
-      stopExactCopy.current = startExactCopy(file, next, setCopyState);
+      stopExactCopy.current = startExactCopy(file, next, setCopyState, undefined, setExactSession);
       resetProfile();
       void restoreProfile(file, next);
     } catch (e) {
@@ -833,10 +862,19 @@ export function App() {
         }}
         onRemove={onRemoveRecording}
       />
-      {userClock && (holdText(hold) || copyStateText(copyState)) && (
-        <p className={hold || copyState === 'preparing' ? 'muted note' : 'notice'} role="status">
-          {holdText(hold) || copyStateText(copyState)}
+      {userClock && exactNotice && (
+        <p className={hold || !warnsOfApproximateJumps ? 'muted note' : 'notice'} role="status">
+          {exactNotice}
         </p>
+      )}
+      {userClock && exactSession && !exactSession.pcm.complete && (
+        <ExactnessStrip
+          states={exactSession.pcm.chunkStates()}
+          chunkSeconds={exactSession.pcm.chunkSeconds}
+          durationSeconds={exactSession.pcm.durationSeconds}
+          playheadSeconds={() => userClock.element.currentTime}
+          label={exactNotice}
+        />
       )}
       {(userClock || stems) && (
         <AlignmentPanel

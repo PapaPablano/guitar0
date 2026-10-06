@@ -481,3 +481,38 @@ a.link-button:hover {
   color: rgba(255, 255, 255, 0.7);
   pointer-events: none;
 }
+
+.exactness-strip {
+  position: relative;
+  height: 10px;
+  flex-basis: 100%;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.strip-segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.strip-exact {
+  background: #2f9e6b;
+}
+
+.strip-getting {
+  background: repeating-linear-gradient(45deg, #8a7728, #8a7728 5px, #b39b36 5px, #b39b36 10px);
+}
+
+.strip-not-yet {
+  background: transparent;
+}
+
+.strip-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text);
+}
