@@ -1,3 +1,4 @@
+import type { PcmAudio } from '../export/audio';
 import { RecordingPcm, type OpenResult, type PcmDeps } from './recording-pcm';
 
 const opened = new WeakMap<Blob, Promise<OpenResult>>();
@@ -20,4 +21,14 @@ export async function peekSharedPcm(file: Blob): Promise<RecordingPcm | null> {
   if (!known) return null;
   const result = await known;
   return result.kind === 'ready' ? result.pcm : null;
+}
+
+/**
+ * The whole recording as float PCM at its own sample rate, taken from the shared store, or null when nobody opened one, or the
+ * recording cannot all be kept at once (it is longer than the budget), or a part of it could not be decoded. Whoever gets null
+ * decodes the file itself, as it did before there was a store.
+ */
+export async function readSharedPcm(file: Blob): Promise<PcmAudio | null> {
+  const pcm = await peekSharedPcm(file);
+  return pcm ? pcm.readAll() : null;
 }

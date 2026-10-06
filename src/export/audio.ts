@@ -1,5 +1,6 @@
 import type { AlignmentMap } from '../audio/alignment-map';
 import { clampOffset } from '../audio/offset-range';
+import { readSharedPcm } from '../audio/shared-pcm';
 import { AUDIO_SAMPLE_RATE } from './presets';
 
 /** Stereo audio as two planar channels, ready for the encoder. */
@@ -110,10 +111,18 @@ export function placeRecording(offsetSeconds: number, durationSeconds: number): 
  * at its original tempo.
  */
 export async function decodeUserRecording(file: Blob, offsetSeconds: number, durationSeconds: number): Promise<PcmAudio> {
-  const bytes = await file.arrayBuffer();
   const length = Math.ceil(durationSeconds * AUDIO_SAMPLE_RATE);
   const offline = new OfflineAudioContext(2, length, AUDIO_SAMPLE_RATE);
-  const decoded = await offline.decodeAudioData(bytes);
+  // The audio is decoded once for the page: when the shared store has this recording it is used, and the context brings it to the export rate.
+  const shared = await readSharedPcm(file);
+  let decoded: AudioBuffer;
+  if (shared) {
+    decoded = offline.createBuffer(2, shared.left.length, shared.sampleRate);
+    decoded.copyToChannel(shared.left as Float32Array<ArrayBuffer>, 0);
+    decoded.copyToChannel(shared.right as Float32Array<ArrayBuffer>, 1);
+  } else {
+    decoded = await offline.decodeAudioData(await file.arrayBuffer());
+  }
   const placement = placeRecording(offsetSeconds, durationSeconds);
   if (placement.audible) {
     const source = offline.createBufferSource();
