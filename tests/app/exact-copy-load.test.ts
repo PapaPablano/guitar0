@@ -119,8 +119,36 @@ describe('startExactCopy', () => {
       await flush(5);
       expect(states).toEqual(['preparing', state]);
       expect(clock.offerElement).not.toHaveBeenCalled();
-      expect(clock.setGate).not.toHaveBeenCalledWith(expect.anything());
+      // the clock is not left waiting on a copy that is not coming
+      expect(clock.setGate).toHaveBeenLastCalledWith(null);
     }
+  });
+
+  it('holds a jump in the first moments, before the audio is open, for the real gate, and fails it when no copy is possible', async () => {
+    const clock = clockFor();
+    let release: (result: OpenResult) => void = () => undefined;
+    const file = mp3();
+    startExactCopy(file, clock, undefined, deps(() => new Promise<OpenResult>((resolve) => (release = resolve))));
+    const early = clock.setGate.mock.calls[0][0] as ExactGate;
+    expect(early.covers(audio(), 1, 2)).toBe(false);
+    expect(early.owns(audio())).toBe(false);
+    const prepared = early.prepare(5, 2);
+    release(await openMp3(file));
+    await flush();
+    expect(await prepared).toBe(true);
+
+    const other = clockFor();
+    let fail: (result: OpenResult) => void = () => undefined;
+    startExactCopy(mp3(), other, undefined, deps(() => new Promise<OpenResult>((resolve) => (fail = resolve))));
+    const waiting = (other.setGate.mock.calls[0][0] as ExactGate).prepare(5, 2);
+    fail({ kind: 'not-possible', reason: 'undecodable' });
+    expect(await waiting).toBe(false);
+  });
+
+  it('puts no early gate on a WAV, which a jump never waits for', () => {
+    const clock = clockFor();
+    startExactCopy(wav(), clock, undefined, deps(() => new Promise<OpenResult>(() => undefined)));
+    expect(clock.setGate).not.toHaveBeenCalled();
   });
 
   it('a WAV that cannot be kept decoded is still exact for seeking', async () => {
@@ -158,7 +186,7 @@ describe('the gate the clock is given', () => {
     const file = mp3();
     startExactCopy(file, clock, undefined, deps(() => openMp3(file)));
     await flush();
-    const gate = clock.setGate.mock.calls[0][0] as ExactGate;
+    const gate = clock.setGate.mock.calls[clock.setGate.mock.calls.length - 1][0] as ExactGate;
     const offered = clock.offerElement.mock.calls[0][0] as AudioLike;
     expect(gate.owns(offered)).toBe(true);
     expect(gate.owns(audio())).toBe(false);

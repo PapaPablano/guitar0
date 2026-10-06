@@ -81,8 +81,24 @@ export function startExactCopy(
   };
   report('preparing');
 
+  // Until the decoded audio is open there is no copy to ask, so a jump in those first moments is held for it rather than landing
+  // on the recording's own file; a WAV needs no copy, so it is never held.
+  let resolveGate: (gate: ExactGate | null) => void = () => undefined;
+  const gateReady = new Promise<ExactGate | null>((resolve) => (resolveGate = resolve));
+  if (!isWav(file)) {
+    clock.setGate?.({
+      owns: () => false,
+      covers: () => false,
+      prepare: async (seconds, count) => {
+        const gate = await gateReady;
+        return gate ? gate.prepare(seconds, count) : false;
+      },
+    });
+  }
+
   const stop = () => {
     cancelled = true;
+    resolveGate(null);
     if (follow) clearInterval(follow);
     unlisten?.();
     queue?.stop();
@@ -98,6 +114,8 @@ export function startExactCopy(
     if (opened.kind === 'not-possible') {
       // A WAV needs no copy to seek exactly, so being unable to keep its decode says nothing about seeking.
       if (isWav(file)) clock.setSeekExact?.(true);
+      else clock.setGate?.(null);
+      resolveGate(null);
       return report(isWav(file) ? 'exact' : opened.reason === 'too-long' ? 'too-long' : 'failed');
     }
     const pcm = opened.pcm;
@@ -110,6 +128,7 @@ export function startExactCopy(
     copy = new ExactCopy(pcm, queue, (element) => clock.offerElement(element), deps.copy);
     clock.setAdoptListener?.((element) => copy?.adopted(element));
     clock.setGate?.(copy);
+    resolveGate(copy);
     onSession({ pcm, queue });
     follow = setInterval(() => queue?.setPlayhead(clock.element.currentTime), deps.followMs);
     unlisten = pcm.onChange(() => {
