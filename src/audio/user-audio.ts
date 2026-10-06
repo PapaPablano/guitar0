@@ -19,6 +19,14 @@ export interface AudioLike {
   pause(): void;
 }
 
+/** How far an element landed from where a jump or loop restart meant to put it, for the readout. */
+export interface LandingReport {
+  /** The tab time the jump aimed for. */
+  readonly tab: number;
+  /** Seconds between where the element was and where it should have been, before any correction. */
+  readonly error: number;
+}
+
 /** Seconds from a monotonic clock; the lead-in advances tab time from it. */
 export type TimeSource = () => number;
 
@@ -52,7 +60,17 @@ export class UserAudioClock implements Clock {
   private heldTab: number | null = null;
   private onLoopWrap: (() => void) | null = null;
   /** Where the element should be, set whenever it is positioned while playing; verified once, then cleared. */
-  private landing: { target: number; at: number; corrections: number; sawSeeking: boolean } | null = null;
+  private landing: {
+    target: number;
+    /** The tab time the placement was for. */
+    tab: number;
+    at: number;
+    corrections: number;
+    sawSeeking: boolean;
+    /** True once the landing error has been reported, so each landing is reported once. */
+    reported: boolean;
+  } | null = null;
+  private onLanding: ((report: LandingReport) => void) | null = null;
 
   /** The element in use; it can be replaced once with a seek-exact copy, see `offerElement`. */
   private current: AudioLike;
@@ -192,6 +210,11 @@ export class UserAudioClock implements Clock {
     this.onLoopWrap = listener;
   }
 
+  /** Called once for each jump or loop restart, with how far the element landed from where it was meant to. */
+  setLandingListener(listener: ((report: LandingReport) => void) | null): void {
+    this.onLanding = listener;
+  }
+
   /**
    * Moves the recording against the tab, within the shared range; the recording keeps playing from
    * where it is, so the tab time moves instead. When nothing is playing and the recording has not
@@ -277,7 +300,7 @@ export class UserAudioClock implements Clock {
     this.leadIn = null;
     this.heldTab = null;
     this.current.currentTime = recording;
-    this.landing = playing ? { target: recording, at: this.source(), corrections: 0, sawSeeking: false } : null;
+    this.landing = playing ? { target: recording, tab, at: this.source(), corrections: 0, sawSeeking: false, reported: false } : null;
     if (playing && this.current.paused) void this.current.play();
   }
 
@@ -305,6 +328,12 @@ export class UserAudioClock implements Clock {
     }
     if (this.source() - landing.at < LANDING_GRACE_SECONDS) return;
     const expected = this.expectedLanding();
+    if (!landing.reported) {
+      // The first measurement of a landing is the one that says how good the placement was.
+      landing = { ...landing, reported: true };
+      this.landing = landing;
+      this.onLanding?.({ tab: landing.tab, error: Math.abs(this.current.currentTime - expected) });
+    }
     if (Math.abs(this.current.currentTime - expected) <= LANDING_TOLERANCE_SECONDS) {
       this.landing = null;
       return;
@@ -314,7 +343,7 @@ export class UserAudioClock implements Clock {
       return;
     }
     this.current.currentTime = expected;
-    this.landing = { target: expected, at: this.source(), corrections: landing.corrections + 1, sawSeeking: false };
+    this.landing = { ...landing, target: expected, at: this.source(), corrections: landing.corrections + 1, sawSeeking: false };
   }
 
   /** Loop wrapping and the stop at the tab end are checked on a timer too, so they hold when frames are throttled. */

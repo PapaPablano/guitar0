@@ -2,7 +2,7 @@ import type { AlignmentMap } from './alignment-map';
 import type { Clock, LoopRange } from './clock';
 import { stemGains, initialMix, type MixState } from './mix-gains';
 import { passMix, type PassSchedule } from './pass-schedule';
-import { UserAudioClock, type AudioLike, type TimeSource } from './user-audio';
+import { UserAudioClock, type AudioLike, type LandingReport, type TimeSource } from './user-audio';
 import type { StemName } from '../stems/engine-client';
 
 /** How far a follower may sit from the leader before it is pulled back. */
@@ -131,6 +131,11 @@ export class StemMixClock implements Clock {
   /** The recording moves against the tab; every stem keeps playing from where it is. */
   setOffset(seconds: number): void {
     this.leader.setOffset(seconds);
+  }
+
+  /** Called once for each jump or loop restart with how far the leading stem landed from its anchor. */
+  setLandingListener(listener: ((report: LandingReport) => void) | null): void {
+    this.leader.setLandingListener(listener);
   }
 
   /** Applies a whole alignment, holds included; every stem keeps playing from where it is. */
