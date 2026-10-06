@@ -109,6 +109,7 @@ async function run(msg: StartMessage): Promise<void> {
         lookahead: msg.bottom.lookahead,
         labelMode: msg.bottom.labelMode,
         techniqueCues: msg.bottom.neckCues,
+        zoom: true,
       });
     } else {
       renderComposite(ctx as unknown as CompositeContext, timeline, msg.trackIndex, t, preset.width, preset.height, { bottom: msg.bottom });

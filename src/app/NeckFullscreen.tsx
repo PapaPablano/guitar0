@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Clock } from '../audio/clock';
 import type { LabelMode } from '../render/fretboard';
-import { drawNeckPhoto, renderNeckView } from '../render/neck-view';
+import { drawNeckPhoto, renderNeckView, zoomedPlacement } from '../render/neck-view';
 import photoUrl from '../assets/guitar-photo.jpg';
 import type { Timeline } from '../model/score';
 
@@ -96,8 +96,10 @@ export function NeckFullscreen({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          drawNeckPhoto(ctx, photoRef.current, width, height);
-          renderNeckView(ctx, timeline, trackIndex, clock.time(), width, height, {
+          const time = clock.time();
+          drawNeckPhoto(ctx, photoRef.current, width, height, zoomedPlacement(width, height, timeline.notesForTrack(trackIndex), time, timeline.tracks[trackIndex]?.stringCount));
+          renderNeckView(ctx, timeline, trackIndex, time, width, height, {
+            zoom: true,
             lookahead: lookaheadRef.current,
             labelMode: labelModeRef.current,
             techniqueCues: neckCuesRef.current,

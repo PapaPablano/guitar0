@@ -9,6 +9,8 @@ import {
   photoToScreen,
   renderNeckFrame,
   renderNeckView,
+  zoomedPlacement,
+  ZOOM_SPAN,
   type PhotoContext,
 } from '../../src/render/neck-view';
 import { emphasisAt } from '../../src/render/emphasis';
@@ -151,5 +153,48 @@ describe('the photo and the whole frame', () => {
   it('can be drawn straight onto a canvas surface', () => {
     const { ctx } = createRecordingContext();
     drawNeckPhoto(ctx as PhotoContext, null, 100, 100);
+  });
+});
+
+describe('the zoomed view', () => {
+  const notes = makeTimeline([
+    { start: 0, end: 0.5, fret: 0 },
+    { start: 10, end: 10.5, fret: 17 },
+  ]).notesForTrack(0);
+
+  it('shows a closer stretch of the neck than the whole neck', () => {
+    expect(zoomedPlacement(1920, 1080, notes, 0).scale).toBeGreaterThan(photoPlacement(1920, 1080).scale);
+  });
+
+  it('follows the notes up the neck', () => {
+    expect(zoomedPlacement(1920, 1080, notes, 10).centreX).toBeGreaterThan(zoomedPlacement(1920, 1080, notes, 0).centreX);
+  });
+
+  it('never looks past either end of the photo or leaves the screen uncovered', () => {
+    for (const t of [0, 5, 10, 20]) {
+      const p = zoomedPlacement(1920, 1080, notes, t);
+      expect(p.centreX - ZOOM_SPAN / 2).toBeGreaterThanOrEqual(20 - 1e-9);
+      expect(p.centreX + ZOOM_SPAN / 2).toBeLessThanOrEqual(820 + 1e-9);
+    }
+  });
+
+  it('is the same for the same time', () => {
+    expect(zoomedPlacement(540, 1170, notes, 3.3)).toEqual(zoomedPlacement(540, 1170, notes, 3.3));
+  });
+
+  it('frames the lowest to the highest fret a short-range song uses, and holds still', () => {
+    const small = makeTimeline([
+      { start: 0, end: 0.5, fret: 2, string: 3 },
+      { start: 5, end: 5.5, fret: 7, string: 4 },
+    ]).notesForTrack(0);
+    const a = zoomedPlacement(1920, 1080, small, 0);
+    const b = zoomedPlacement(1920, 1080, small, 5);
+    expect(b).toEqual(a);
+    for (const fret of [2, 7]) {
+      const at = photoToScreen(a, photoNoteX(fret), photoStringY(3, 6, photoNoteX(fret)));
+      expect(at.x).toBeGreaterThan(0);
+      expect(at.x).toBeLessThan(1920);
+    }
+    expect(a.scale).toBeGreaterThan(zoomedPlacement(1920, 1080, notes, 0).scale);
   });
 });

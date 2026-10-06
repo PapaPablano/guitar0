@@ -51,21 +51,121 @@ export interface PhotoPlacement {
   readonly height: number;
 }
 
-/** Where the photo sits on a screen: the neck fills the long side, and the photo always covers the whole screen. */
-export function photoPlacement(width: number, height: number): PhotoPlacement {
+/** A stretch of the neck to fill the long side of the screen, in photo pixels: where its middle is and how much it spans. */
+export interface NeckWindow {
+  readonly centreX: number;
+  readonly span: number;
+  /** The photo row to centre on; the neck's own row when absent. */
+  readonly centreY?: number;
+}
+
+/** Where the photo sits on a screen: the neck (or the given stretch of it) fills the long side, and the photo always covers the whole screen. */
+export function photoPlacement(width: number, height: number, window?: NeckWindow): PhotoPlacement {
   const rotated = height > width;
   const along = rotated ? height : width;
   const across = rotated ? width : height;
-  const scale = Math.max(along / (VIEW_END - VIEW_START), across / PHOTO_HEIGHT);
+  const span = window ? Math.min(window.span, VIEW_END - VIEW_START) : VIEW_END - VIEW_START;
+  const scale = Math.max(along / span, across / PHOTO_HEIGHT);
   const halfAcross = across / (2 * scale);
+  const halfSpan = span / 2;
+  const centreX = window
+    ? Math.min(VIEW_END - halfSpan, Math.max(VIEW_START + halfSpan, window.centreX))
+    : (VIEW_START + VIEW_END) / 2;
   return {
     rotated,
     scale,
-    centreX: (VIEW_START + VIEW_END) / 2,
-    centreY: Math.min(PHOTO_HEIGHT - halfAcross, Math.max(halfAcross, NECK_ROW)),
+    centreX,
+    centreY: Math.min(PHOTO_HEIGHT - halfAcross, Math.max(halfAcross, window?.centreY ?? NECK_ROW)),
     width,
     height,
   };
+}
+
+/** How much of the neck the zoomed view shows along the screen, in photo pixels: roughly the first dozen frets. */
+export const ZOOM_SPAN = 480;
+/** The zoomed view looks from this long before a moment to this long after it, and glides over that stretch. */
+const FOLLOW_BEHIND = 0.6;
+const FOLLOW_AHEAD = 2.4;
+const FOLLOW_SMOOTHING = [-1, -0.67, -0.33, 0, 0.33, 0.67, 1] as const;
+
+/** The middle of the notes around time `t`: the ones just played and the ones coming up. */
+function followTarget(notes: readonly NoteEvent[], t: number): number {
+  let sum = 0;
+  let count = 0;
+  let lastX = (VIEW_START + VIEW_END) / 2;
+  let lastStart = -Infinity;
+  for (const note of notes) {
+    const x = photoNoteX(note.fret);
+    if (note.startSeconds <= t && note.startSeconds > lastStart) {
+      lastStart = note.startSeconds;
+      lastX = x;
+    }
+    if (note.startSeconds >= t - FOLLOW_BEHIND && note.startSeconds <= t + FOLLOW_AHEAD) {
+      sum += x;
+      count += 1;
+    }
+  }
+  return count > 0 ? sum / count : lastX;
+}
+
+/** Room left around the lowest and highest frets used, in photo pixels (about a fret and a half low down the neck). */
+const FIT_MARGIN = 45;
+/** The least neck the zoomed view shows, so a song of one or two frets is not blown up past the photo's sharpness. */
+const MIN_ZOOM_SPAN = 240;
+
+interface SongRange {
+  readonly lowX: number;
+  readonly highX: number;
+  readonly lowString: number;
+  readonly highString: number;
+}
+
+const ranges = new WeakMap<readonly NoteEvent[], SongRange | null>();
+
+/** The lowest and highest frets, and the first and last strings, the song uses. */
+function songRange(notes: readonly NoteEvent[]): SongRange | null {
+  if (ranges.has(notes)) return ranges.get(notes) ?? null;
+  let range: SongRange | null = null;
+  for (const note of notes) {
+    const x = photoNoteX(note.fret);
+    range = range
+      ? {
+          lowX: Math.min(range.lowX, x),
+          highX: Math.max(range.highX, x),
+          lowString: Math.min(range.lowString, note.string),
+          highString: Math.max(range.highString, note.string),
+        }
+      : { lowX: x, highX: x, lowString: note.string, highString: note.string };
+  }
+  ranges.set(notes, range);
+  return range;
+}
+
+/**
+ * The zoomed view: the stretch of neck and the strings the song actually uses, so the picture is mostly neck
+ * and the notes stay large. When the song covers more neck than reads well at once, a window of that size
+ * glides along to follow the notes instead. A pure function of the notes and the time, so exported frames match the screen.
+ */
+export function zoomedPlacement(
+  width: number,
+  height: number,
+  notes: readonly NoteEvent[],
+  t: number,
+  stringCount = 6,
+): PhotoPlacement {
+  const range = songRange(notes);
+  if (!range) return photoPlacement(width, height);
+  const fitSpan = Math.max(MIN_ZOOM_SPAN, range.highX - range.lowX + 2 * FIT_MARGIN);
+  let centreX = (range.lowX + range.highX) / 2;
+  let span = fitSpan;
+  if (fitSpan > ZOOM_SPAN) {
+    span = ZOOM_SPAN;
+    let sum = 0;
+    for (const offset of FOLLOW_SMOOTHING) sum += followTarget(notes, t + offset);
+    centreX = sum / FOLLOW_SMOOTHING.length;
+  }
+  const centreY = (photoStringY(range.lowString, stringCount, centreX) + photoStringY(range.highString, stringCount, centreX)) / 2;
+  return photoPlacement(width, height, { centreX, span, centreY });
 }
 
 /** Where a photo point lands on the screen. */
@@ -119,11 +219,16 @@ export interface PhotoContext extends DrawContext {
 }
 
 /** The photo of the guitar, placed so the neck fills the screen; plain dark when it is not available yet. */
-export function drawNeckPhoto(ctx: PhotoContext, image: CanvasImageSource | null, width: number, height: number): void {
+export function drawNeckPhoto(
+  ctx: PhotoContext,
+  image: CanvasImageSource | null,
+  width: number,
+  height: number,
+  place: PhotoPlacement = photoPlacement(width, height),
+): void {
   ctx.fillStyle = '#03141a';
   ctx.fillRect(0, 0, width, height);
   if (!image) return;
-  const place = photoPlacement(width, height);
   ctx.save();
   ctx.translate(width / 2, height / 2);
   if (place.rotated) ctx.rotate(Math.PI / 2);
@@ -143,7 +248,8 @@ export function renderNeckFrame(
   height: number,
   options: NeckViewOptions = {},
 ): void {
-  drawNeckPhoto(ctx, image, width, height);
+  const place = options.zoom ? zoomedPlacement(width, height, timeline.notesForTrack(trackIndex), t, timeline.tracks[trackIndex]?.stringCount) : photoPlacement(width, height);
+  drawNeckPhoto(ctx, image, width, height, place);
   renderNeckView(ctx, timeline, trackIndex, t, width, height, options);
 }
 
@@ -153,6 +259,8 @@ export interface NeckViewOptions {
   readonly labelMode?: LabelMode;
   /** Draw technique cues (arcs, comets, bends, diamonds and the pulse). Absent or false draws the neck as it always was. */
   readonly techniqueCues?: boolean;
+  /** Zoom in on the stretch of neck being played and follow it, instead of showing the whole neck. */
+  readonly zoom?: boolean;
 }
 
 /** Strength of the ring and string of a note a hammer-on or pull-off ends on, which is not picked. */
@@ -184,7 +292,7 @@ export function renderNeckView(
   const steps = stepsAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD);
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, spelling: spellingForTuning(tuning) };
-  const place = photoPlacement(width, height);
+  const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount) : photoPlacement(width, height);
   const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD) : null;
   /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
   const unpicked = (note: NoteEvent) => cues?.unpicked.has(note.id) ?? false;
