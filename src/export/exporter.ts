@@ -33,7 +33,7 @@ export function startExport(args: {
   const worker = new Worker(new URL('./encoder.worker.ts', import.meta.url), { type: 'module' });
   const outputSeconds = exportLength(args.timeline.durationSeconds, args.alignment);
   const audio = fitPcm(args.audio, outputSeconds);
-  const alignment: AlignmentData | undefined = args.alignment && args.alignment.holds.length > 0 ? args.alignment.toData() : undefined;
+  const alignment: AlignmentData | undefined = args.alignment && (args.alignment.hasAnchors || args.alignment.holds.length > 0) ? args.alignment.toData() : undefined;
 
   const result = new Promise<Blob>((resolve, reject) => {
     worker.onmessage = (e: MessageEvent<WorkerReply>) => {

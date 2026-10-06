@@ -145,6 +145,43 @@ describe('export start message', () => {
     expect(start.audio.left).toHaveLength(Math.ceil((timeline.durationSeconds + 3) * 48000));
   });
 
+  it('sends the anchors with their bars, and the span of the recording as the output length', () => {
+    const posted: unknown[] = [];
+    class FakeWorker {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(message: unknown) {
+        posted.push(message);
+      }
+      terminate() {}
+    }
+    const original = (globalThis as { Worker?: unknown }).Worker;
+    (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+    const spans = timeline.bars.map((b) => ({ start: b.startSeconds, end: b.endSeconds }));
+    const anchors = spans.map((b, k) => b.start + 1 + k * 0.1);
+    const map = AlignmentMap.fromAnchors(spans, anchors, timeline.durationSeconds + 1 + spans.length * 0.1)!;
+    try {
+      void startExport({
+        timeline,
+        trackIndex: 0,
+        preset: presetById('landscape'),
+        audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+        bottom: { view: 'tab', lookahead: 6 },
+        alignment: map,
+        onProgress: () => {},
+      }).result.catch(() => {});
+    } finally {
+      (globalThis as { Worker?: unknown }).Worker = original;
+    }
+    const start = posted[0] as StartMessage;
+    expect(start.alignment?.anchors).toHaveLength(spans.length);
+    expect(start.alignment?.bars).toHaveLength(spans.length);
+    expect(start.outputSeconds).toBeCloseTo(map.outputLength(timeline.durationSeconds), 9);
+    const rebuilt = AlignmentMap.normalize(start.alignment);
+    expect(rebuilt?.hasAnchors).toBe(true);
+    expect(rebuilt?.toRec(timeline.bars[2].startSeconds, 'start')).toBeCloseTo(anchors[2], 9);
+  });
+
   it('sends no alignment and the tab length when there is none', () => {
     const posted: unknown[] = [];
     class FakeWorker {

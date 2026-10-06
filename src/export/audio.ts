@@ -47,12 +47,17 @@ export function fitPcm(pcm: PcmAudio, durationSeconds: number): PcmAudio {
   return { left, right, sampleRate: pcm.sampleRate };
 }
 
+/** True when the alignment changes anything beyond a shift: it has an anchor per bar, or extra playing the tab waits through. */
+function bendsTime(alignment: AlignmentMap | null | undefined): alignment is AlignmentMap {
+  return !!alignment && (alignment.hasAnchors || alignment.holds.length > 0);
+}
+
 /**
- * How long an export is: the tab plus every stretch of extra playing, since the tab waits through those while
- * the recording plays on. Without an alignment it is the tab's length.
+ * How long an export is: the length the recording runs over the tab, which is the tab plus every stretch of extra
+ * playing, since the tab waits through those while the recording plays on. Without an alignment it is the tab's length.
  */
 export function exportLength(durationSeconds: number, alignment?: AlignmentMap | null): number {
-  return durationSeconds + (alignment?.totalHold ?? 0);
+  return alignment ? alignment.outputLength(durationSeconds) : durationSeconds;
 }
 
 /**
@@ -60,7 +65,7 @@ export function exportLength(durationSeconds: number, alignment?: AlignmentMap |
  * base offset, so output time is the recording position less that offset; with no holds it is the tab time itself.
  */
 export function tabTimeAt(alignment: AlignmentMap | null | undefined, outputSeconds: number): number {
-  if (!alignment || alignment.holds.length === 0) return outputSeconds;
+  if (!bendsTime(alignment)) return outputSeconds;
   return Math.max(0, alignment.toTab(outputSeconds + alignment.base));
 }
 
@@ -72,7 +77,7 @@ export function outputWindow(
   alignment: AlignmentMap | null | undefined,
   range: { readonly startSeconds: number; readonly endSeconds: number },
 ): { startSeconds: number; endSeconds: number } {
-  if (!alignment || alignment.holds.length === 0) return { startSeconds: range.startSeconds, endSeconds: range.endSeconds };
+  if (!bendsTime(alignment)) return { startSeconds: range.startSeconds, endSeconds: range.endSeconds };
   return {
     startSeconds: alignment.toRec(range.startSeconds, 'start') - alignment.base,
     endSeconds: alignment.toRec(range.endSeconds, 'end') - alignment.base,

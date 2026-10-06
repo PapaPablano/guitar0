@@ -71,3 +71,44 @@ describe('export through the alignment map', () => {
     expect(outputWindow(null, range)).toEqual(range);
   });
 });
+
+describe('export through an anchor per bar', () => {
+  const bars = Array.from({ length: 6 }, (_, i) => ({ start: i * 2, end: i * 2 + 2 }));
+  const map = AlignmentMap.fromAnchors(bars, [1.5, 3.6, 5.6, 7.3, 9.3, 19.3], 21.3)!;
+
+  it('makes the output as long as the recording runs over the tab', () => {
+    expect(exportLength(12, map)).toBeCloseTo(21.3 - 1.5, 9);
+  });
+
+  it('covers AE3: frames in the extra playing show the tab waiting on its line, then going on', () => {
+    // output time 0 is the first anchor, so output v is recording position v + 1.5
+    expect(tabTimeAt(map, 9.9)).toBeCloseTo(10 - 0.001, 9);
+    expect(tabTimeAt(map, 15)).toBeCloseTo(10 - 0.001, 9);
+    expect(tabTimeAt(map, 17.8)).toBeCloseTo(10, 9);
+    expect(tabTimeAt(map, 19.8)).toBeCloseTo(12, 9);
+  });
+
+  it('covers AE2: a bar recorded short steps forward at its line, and tab time never goes back between frames', () => {
+    expect(tabTimeAt(map, 5.79)).toBeCloseTo(5.69, 9);
+    expect(tabTimeAt(map, 5.8)).toBeCloseTo(6, 9);
+    let previous = -Infinity;
+    for (let frame = 0; frame <= 19.8 * 60; frame++) {
+      const t = tabTimeAt(map, frame / 60);
+      expect(t).toBeGreaterThanOrEqual(previous);
+      previous = t;
+    }
+  });
+
+  it('uses the anchors even when there are no extra-playing holds, because the steps still matter', () => {
+    const drifting = AlignmentMap.fromAnchors(bars, [0, 2.3, 4.3, 6.5, 8.5, 10.5], 12.5)!;
+    expect(drifting.holds).toEqual([]);
+    expect(tabTimeAt(drifting, 2.29)).toBeCloseTo(2 - 0.001, 9);
+    expect(tabTimeAt(drifting, 2.3)).toBeCloseTo(2, 9);
+  });
+
+  it('takes a loop window from the rejoin of its first bar to the arrival at its last', () => {
+    const window = outputWindow(map, { startSeconds: 4, endSeconds: 8 });
+    expect(window.startSeconds).toBeCloseTo(5.6 - 1.5, 9);
+    expect(window.endSeconds).toBeCloseTo(9.3 - 1.5, 9);
+  });
+});
