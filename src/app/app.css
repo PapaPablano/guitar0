@@ -232,6 +232,35 @@ button[aria-pressed='true'] {
   gap: 8px;
 }
 
+.section-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.section-name {
+  min-width: 7rem;
+}
+
+.readout {
+  font-size: 0.85rem;
+}
+
+.readout-uncertain,
+.readout-not-matched {
+  color: var(--warn, #f0a030);
+}
+
 .muted {
   color: var(--muted);
 }

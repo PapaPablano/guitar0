@@ -21,9 +21,21 @@ import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
 import { revertToManual } from './alignment-controls';
-import { decideAutoAlign, settleAnalysis, type AlignStatus } from './auto-align';
+import { decideAutoAlign, mapFromRecord, needsBaseline, recordFromMap, settleAnalysis, type AlignStatus } from './auto-align';
+import { SectionPanel } from './SectionPanel';
+import {
+  carryNames,
+  describeSectionRows,
+  jumpTarget,
+  loopFor,
+  renameSection,
+  sectionIndexAt,
+  type BarHealth,
+} from './section-controls';
 import { clampOffset } from '../audio/offset-range';
-import { PROFILE_VERSION, type AlignmentRecord, type ProfileStore } from '../audio/recording-profile';
+import { PROFILE_VERSION, type AlignmentRecord, type ProfileStore, type SectionRecord } from '../audio/recording-profile';
+import type { LandingReport } from '../audio/user-audio';
+import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
 import { hashFile } from '../stems/file-hash';
@@ -76,6 +88,12 @@ export function App() {
   /** How the recording sits against the tab: the base offset plus any extra playing where the tab waits. */
   const [alignment, setAlignment] = useState<AlignmentMap>(() => AlignmentMap.fromOffset(0));
   const [alignStatus, setAlignStatus] = useState<AlignStatus>({ phase: 'idle' });
+  /** The recording's parts found by the warm-up, with the names the user gave them. */
+  const [sections, setSections] = useState<SectionRecord[]>([]);
+  /** How well the warm-up matched each bar; empty until a warm-up has run this session. */
+  const [barHealth, setBarHealth] = useState<BarHealth>({ barConfidence: [], barMatched: [] });
+  /** How far the latest jump into each section landed from its anchor, by section. */
+  const [landings, setLandings] = useState<Record<number, number>>({});
   /** A recording waiting for the tab's sound before it is lined up with the tab. */
   const [alignRequest, setAlignRequest] = useState<{ file: File; clock: UserAudioClock } | null>(null);
   const [stems, setStems] = useState<ActiveStems | null>(null);
@@ -100,6 +118,7 @@ export function App() {
     userClock: null as UserAudioClock | null,
     session: null as Session | null,
     alignment: AlignmentMap.fromOffset(0),
+    sections: [] as SectionRecord[],
   });
 
   /** Where per-recording offset and mix are remembered: a shell file on the desktop, browser storage on the web. */
@@ -139,7 +158,7 @@ export function App() {
   function scheduleProfileSave(offsetSeconds: number) {
     const hash = profileHash.current;
     const source = alignSource.current;
-    const alignmentRecord = source ? { source, holds: live.current.alignment.holds } : undefined;
+    const alignmentRecord = source ? recordFromMap(live.current.alignment, source, live.current.sections) : undefined;
     if (hash) profileSaver.current?.push({ hash, offset: offsetSeconds, mix: profileMix.current, alignment: alignmentRecord });
   }
 
@@ -156,7 +175,11 @@ export function App() {
    * Puts a new alignment on the recording clock and the stem clock together, and remembers it. `source` says
    * where it came from: null means the user's own offset with no analysis behind it.
    */
-  function applyAlignment(map: AlignmentMap, source: AlignmentRecord['source'] | null, save: boolean) {
+  function applyAlignment(map: AlignmentMap, source: AlignmentRecord['source'] | null, save: boolean, nextSections?: readonly SectionRecord[]) {
+    if (nextSections) {
+      live.current.sections = [...nextSections];
+      setSections(live.current.sections);
+    }
     userClockRef.current?.setAlignment(map);
     stemsRef.current?.clock.setAlignment(map);
     setAlignment(map);
@@ -195,7 +218,11 @@ export function App() {
     );
     if (!settled) return;
     setAlignStatus(settled.status);
-    if (settled.map) applyAlignment(settled.map, 'auto', true);
+    if (settled.map) {
+      setBarHealth({ barConfidence: settled.barConfidence, barMatched: settled.barMatched });
+      setLandings({});
+      applyAlignment(settled.map, 'auto', true, carryNames(live.current.sections, settled.sections));
+    }
   }
 
   // A recording waits here until the tab's sound is ready, because the tab's render is what it is compared with.
@@ -238,7 +265,11 @@ export function App() {
     cancelAlignment();
     alignSource.current = null;
     live.current.alignment = AlignmentMap.fromOffset(0);
+    live.current.sections = [];
     setAlignment(live.current.alignment);
+    setSections([]);
+    setBarHealth({ barConfidence: [], barMatched: [] });
+    setLandings({});
     setAlignStatus({ phase: 'idle' });
     setOffset(0);
     setMix(initialMix());
@@ -260,11 +291,18 @@ export function App() {
       profile,
     );
     if (plan?.offset !== undefined) {
-      applyAlignment(AlignmentMap.of(plan.offset, plan.alignment?.holds ?? []), plan.alignment?.source ?? null, false);
+      // Anchors that fit this tab's bars come back as the bar-level baseline; anything else as the offset and extra playing it also carries.
+      const saved = live.current.session?.timeline;
+      const map = mapFromRecord(plan.offset, plan.alignment, saved ? barSpansOf(saved) : []);
+      applyAlignment(map, plan.alignment?.source ?? null, false, plan.alignment?.sections ?? []);
       setAlignStatus(
-        plan.alignment?.source === 'auto'
-          ? { phase: 'found', sections: plan.alignment.holds.length, skipped: 0 }
-          : { phase: 'manual' },
+        !plan.alignment
+          ? { phase: 'manual' }
+          : needsBaseline(plan.alignment)
+            ? { phase: 'baseline-missing' }
+            : plan.alignment.source === 'auto'
+              ? { phase: 'found', sections: map.holds.length, skipped: 0 }
+              : { phase: 'manual' },
       );
     }
     if (plan?.mix) {
@@ -364,6 +402,14 @@ export function App() {
     }
   }
 
+  /** Notes how far a jump or loop restart landed from its anchor, against the section the bar belongs to. */
+  function recordLanding(report: LandingReport) {
+    const tab = live.current.session?.timeline;
+    if (!tab) return;
+    const index = sectionIndexAt(live.current.sections, playbackBarIndexAt(tab, report.tab));
+    if (index >= 0) setLandings((previous) => ({ ...previous, [index]: report.error }));
+  }
+
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
   function activateStems(next: ActiveStems | null) {
     const { alignment, tempoPercent, mix, userClock, session } = live.current;
@@ -377,6 +423,7 @@ export function App() {
       session?.clock.pause();
       next.clock.setRate(tempoPercent / 100);
       next.clock.setAlignment(alignment);
+      next.clock.setLandingListener(recordLanding);
       next.clock.setMix(mix);
       next.clock.seek(position);
     } else {
@@ -384,7 +431,7 @@ export function App() {
     }
   }
 
-  live.current = { offset, tempoPercent, mix, userClock, session, alignment };
+  live.current = { offset, tempoPercent, mix, userClock, session, alignment, sections };
 
   const clock: Clock | undefined = stems?.clock ?? userClock ?? session?.clock;
   const sourceTimeline = session?.timeline;
@@ -445,6 +492,7 @@ export function App() {
       next.setRate(tempoPercent / 100);
       next.seek(position);
       replaceUserClock(next);
+      next.setLandingListener(recordLanding);
       stopExactCopy.current = startExactCopy(file, next);
       resetProfile();
       void restoreProfile(file, next);
@@ -697,6 +745,19 @@ export function App() {
             // A run the user asks for starts from a clean slate: only a move made while it runs discards its result.
             offsetMoved.current = false;
             setAlignRequest({ file: userClock.file, clock: userClock });
+          }}
+        />
+      )}
+      {(userClock || stems) && sections.length > 0 && (
+        <SectionPanel
+          rows={describeSectionRows(sections, timeline, barHealth, landings)}
+          onJump={(index) => clock.seek(jumpTarget(sections[index], timeline))}
+          onLoop={(index) => setLoopRange(loopFor(sections[index], timeline))}
+          onRename={(index, name) => {
+            const next = renameSection(live.current.sections, index, name);
+            live.current.sections = next;
+            setSections(next);
+            scheduleProfileSave(live.current.alignment.base);
           }}
         />
       )}
