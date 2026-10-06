@@ -95,6 +95,21 @@ export class RecordingPcm {
     this.states = new Array<ChunkState>(this.chunkCount).fill('not-yet');
   }
 
+  /** Seconds in each chunk. */
+  get chunkSeconds(): number {
+    return this.chunkSamples / this.sampleRate;
+  }
+
+  /** How many chunks fit in the budget. */
+  get capacityChunks(): number {
+    return this.budgetChunks;
+  }
+
+  /** How many chunks are exact now. */
+  get exactCount(): number {
+    return this.chunks.size;
+  }
+
   /** Whether chunks are decoded one at a time (an MP3) rather than all at once. */
   get byRegion(): boolean {
     return this.map !== null;
