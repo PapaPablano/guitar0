@@ -108,6 +108,7 @@ async function run(msg: StartMessage): Promise<void> {
       renderNeckFrame(ctx as unknown as PhotoContext, msg.photo ?? null, timeline, msg.trackIndex, t, preset.width, preset.height, {
         lookahead: msg.bottom.lookahead,
         labelMode: msg.bottom.labelMode,
+        techniqueCues: msg.bottom.neckCues,
       });
     } else {
       renderComposite(ctx as unknown as CompositeContext, timeline, msg.trackIndex, t, preset.width, preset.height, { bottom: msg.bottom });

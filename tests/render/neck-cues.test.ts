@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { photoNoteX, photoPlacement, photoRingRadius, photoStringY, photoToScreen, renderNeckView } from '../../src/render/neck-view';
+import { photoNoteX, photoPlacement, photoRingRadius, photoStringY, photoToScreen, renderNeckFrame, renderNeckView, type PhotoContext } from '../../src/render/neck-view';
 import { emphasisAt } from '../../src/render/emphasis';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -219,5 +219,32 @@ describe('the cues over a whole song', () => {
 
   it('draws nothing extra for plain notes', () => {
     for (const t of [1.2, 2.5, 4.5]) expect(draw(plain, t, true).filter((c) => c.name === 'quadraticCurveTo')).toHaveLength(0);
+  });
+});
+
+describe('a video frame and a live frame', () => {
+  it('covers AE6: draw the same calls for the same moment, with the cues on and with them off', () => {
+    const image = {} as CanvasImageSource;
+    const timeline = makeTimeline(withTechniques);
+    for (const cues of [true, false]) {
+      const live = createRecordingContext();
+      renderNeckView(live.ctx, timeline, 0, 1.7, W, H, { techniqueCues: cues });
+      const frame = createRecordingContext();
+      renderNeckFrame(frame.ctx as PhotoContext, image, timeline, 0, 1.7, W, H, { techniqueCues: cues });
+      const afterPhoto = frame.calls.slice(frame.calls.findIndex((c) => c.name === 'restore') + 1);
+      expect(afterPhoto).toEqual(live.calls);
+    }
+  });
+
+  it('shows the cues in the frame only when asked', () => {
+    const image = {} as CanvasImageSource;
+    const timeline = makeTimeline(withTechniques);
+    const arcsIn = (techniqueCues: boolean) => {
+      const { ctx, calls } = createRecordingContext();
+      renderNeckFrame(ctx as PhotoContext, image, timeline, 0, 1.2, W, H, { techniqueCues });
+      return named(calls, 'quadraticCurveTo').length;
+    };
+    expect(arcsIn(true)).toBeGreaterThan(0);
+    expect(arcsIn(false)).toBe(0);
   });
 });

@@ -8,6 +8,7 @@ import { startExactCopy, type CopyState, type ExactSession } from './exact-copy-
 import { copyStateText, exactLine, holdText } from './exactness-text';
 import { ExactnessStrip } from './ExactnessStrip';
 import { addLanding, emptyLandingStats, type LandingStats } from './landing-stats';
+import { readNeckCues, writeNeckCues } from './neck-cues-setting';
 import { ClickCountIn } from '../audio/count-in';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -127,6 +128,8 @@ export function App() {
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
+  /** Whether the neck shows technique cues: remembered between sessions, on until the player turns it off. */
+  const [neckCues, setNeckCues] = useState(() => readNeckCues());
   const [tuningId, setTuningId] = useState(FILE_TUNING);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
@@ -526,6 +529,12 @@ export function App() {
     if (!tab) return;
     const index = sectionIndexAt(live.current.sections, playbackBarIndexAt(tab, report.tab));
     if (index >= 0) setLandings((previous) => ({ ...previous, [index]: report.error }));
+  }
+
+  /** Turns the neck's technique cues on or off, here and for the next session. */
+  function changeNeckCues(on: boolean) {
+    setNeckCues(on);
+    writeNeckCues(on);
   }
 
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
@@ -945,6 +954,8 @@ export function App() {
           clock={clock}
           lookahead={lookahead}
           labelMode={labelMode}
+          neckCues={neckCues}
+          onNeckCuesChange={changeNeckCues}
           playing={playing}
           canPlay={audioReady}
           onTogglePlay={togglePlay}
@@ -955,7 +966,8 @@ export function App() {
         <ExportDialog
           timeline={timeline}
           trackIndex={trackIndex}
-          bottom={{ view: bottomView, lookahead, labelMode }}
+          bottom={{ view: bottomView, lookahead, labelMode, neckCues }}
+          onNeckCuesChange={changeNeckCues}
           onClose={() => setExportOpen(false)}
           loopRange={exportLoopRange}
           alignment={exportAlignment}

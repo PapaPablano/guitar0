@@ -21,6 +21,8 @@ interface ExportDialogProps {
   trackIndex: number;
   /** The bottom view and look-ahead in use when the dialog opened; the video shows the same. */
   bottom: BottomOptions;
+  /** Changes the one remembered choice of whether the neck shows technique cues; the checkbox here and the switch in full screen share it. */
+  onNeckCuesChange?: (on: boolean) => void;
   /** Produces the whole song's audio at original tempo: the synth mix or the user's recording. */
   getAudio: (onProgress: (fraction: number) => void, range?: { startSeconds: number; durationSeconds: number }) => Promise<PcmAudio>;
   /** The loop's span in the export's own time (see `outputWindow`), when a loop is set; offered for the audio export. */
@@ -40,7 +42,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const [layout, setLayout] = useState<ExportLayout>('practice');
@@ -201,6 +203,12 @@ export function ExportDialog({ timeline, trackIndex, bottom, getAudio, loopRange
                     <option value="neck">Full screen neck (guitar photo)</option>
                   </select>
                 </label>
+                {layout === 'neck' && onNeckCuesChange && (
+                  <label className="field">
+                    <input type="checkbox" checked={bottom.neckCues ?? true} onChange={(e) => onNeckCuesChange(e.target.checked)} /> Show
+                    technique cues (hammer-ons, slides, bends)
+                  </label>
+                )}
                 <p className="muted">
                   The whole song at original tempo, {formatDuration(songSeconds)} long, about{' '}
                   {Math.max(1, Math.round(estimateMegabytes(preset, songSeconds)))} MB. Loops and tempo changes

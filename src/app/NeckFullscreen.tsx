@@ -11,6 +11,9 @@ interface NeckFullscreenProps {
   clock: Clock;
   lookahead: number;
   labelMode: LabelMode;
+  /** Whether technique cues are drawn on the neck. */
+  neckCues: boolean;
+  onNeckCuesChange: (on: boolean) => void;
   playing: boolean;
   canPlay: boolean;
   onTogglePlay: () => void;
@@ -27,6 +30,8 @@ export function NeckFullscreen({
   clock,
   lookahead,
   labelMode,
+  neckCues,
+  onNeckCuesChange,
   playing,
   canPlay,
   onTogglePlay,
@@ -39,6 +44,8 @@ export function NeckFullscreen({
   lookaheadRef.current = lookahead;
   const labelModeRef = useRef(labelMode);
   labelModeRef.current = labelMode;
+  const neckCuesRef = useRef(neckCues);
+  neckCuesRef.current = neckCues;
 
   useEffect(() => {
     const root = rootRef.current;
@@ -93,6 +100,7 @@ export function NeckFullscreen({
           renderNeckView(ctx, timeline, trackIndex, clock.time(), width, height, {
             lookahead: lookaheadRef.current,
             labelMode: labelModeRef.current,
+            techniqueCues: neckCuesRef.current,
           });
         }
       }
@@ -112,6 +120,15 @@ export function NeckFullscreen({
           if (canPlay) onTogglePlay();
         }}
       />
+      <button
+        type="button"
+        className="neck-fullscreen-cues"
+        aria-pressed={neckCues}
+        onClick={() => onNeckCuesChange(!neckCues)}
+        title="Show how each note is played: hammer-ons, slides, bends and more"
+      >
+        Techniques {neckCues ? 'on' : 'off'}
+      </button>
       <button type="button" className="neck-fullscreen-close" onClick={onClose} aria-label="Exit full screen">
         ✕
       </button>

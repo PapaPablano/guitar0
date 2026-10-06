@@ -17,6 +17,8 @@ export interface BottomOptions {
   readonly lookahead: number;
   /** What the fretboard dots say; the tab strip view ignores it. */
   readonly labelMode?: LabelMode;
+  /** Whether the full-screen neck layout draws technique cues; the other layouts ignore it. */
+  readonly neckCues?: boolean;
 }
 
 /** Extra drawing calls a surface needs to place a sub-region; canvases provide these. */

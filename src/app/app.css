@@ -516,3 +516,19 @@ a.link-button:hover {
   width: 2px;
   background: var(--text);
 }
+
+.neck-fullscreen-cues {
+  position: absolute;
+  top: 12px;
+  right: 62px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.neck-fullscreen-cues[aria-pressed='true'] {
+  border-color: var(--accent);
+}

@@ -210,4 +210,34 @@ describe('export start message', () => {
     expect(start.alignment).toBeUndefined();
     expect(start.outputSeconds).toBe(timeline.durationSeconds);
   });
+
+  it('covers AE6: carries the choice of technique cues to the worker with the other bottom options', () => {
+    for (const neckCues of [true, false]) {
+      const posted: unknown[] = [];
+      class FakeWorker {
+        onmessage: unknown = null;
+        onerror: unknown = null;
+        postMessage(message: unknown) {
+          posted.push(message);
+        }
+        terminate() {}
+      }
+      const original = (globalThis as { Worker?: unknown }).Worker;
+      (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+      try {
+        void startExport({
+          timeline,
+          trackIndex: 0,
+          preset: presetById('landscape'),
+          audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+          layout: 'neck',
+          bottom: { view: 'tab', lookahead: 6, neckCues },
+          onProgress: () => {},
+        }).result.catch(() => {});
+      } finally {
+        (globalThis as { Worker?: unknown }).Worker = original;
+      }
+      expect((posted[0] as StartMessage).bottom.neckCues).toBe(neckCues);
+    }
+  });
 });
