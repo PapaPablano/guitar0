@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PROFILE_VERSION, type ProfileStore, type RecordingProfile } from '../../src/audio/recording-profile';
+import { PROFILE_VERSION, type ProfileStore, type RecordingProfile, type RestoredProfile } from '../../src/audio/recording-profile';
 import { initialMix } from '../../src/audio/mix-gains';
 import { createDebouncer, decideRestore, fetchProfile, DEBOUNCE_MS } from '../../src/app/restore-profile';
 
@@ -64,7 +64,7 @@ describe('decideRestore', () => {
 
 describe('decideRestore with an alignment record', () => {
   const ok = { stillLoaded: true, offsetMoved: false, mixMoved: false, desktop: false };
-  const aligned: RecordingProfile = { version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'auto', holds: [{ at: 20, length: 16 }] } };
+  const aligned: RestoredProfile = { version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'auto', holds: [{ at: 20, length: 16 }] } };
 
   it('restores the offset together with its alignment record', () => {
     expect(decideRestore(ok, aligned)).toEqual({ offset: 1.5, alignment: aligned.alignment });

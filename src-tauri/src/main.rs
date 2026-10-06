@@ -2,6 +2,7 @@
 // start and stop the engine, and report that state to the page.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod alignments;
 mod engine;
 mod model_progress;
 mod profiles;
@@ -229,13 +230,40 @@ fn profiles_write(profiles: serde_json::Value) -> Result<(), String> {
     write_atomic(&path, text)
 }
 
+/// One alignment file per recording, named by its content hash, so a person can read and edit it. A missing file, or
+/// text that is not an alignment file for exactly this recording, reads as none. Any other read error (a lock, a
+/// permission) is an error, so the page skips the save instead of overwriting a file it could not read.
+fn alignment_path(hash: &str) -> Result<std::path::PathBuf, String> {
+    if !alignments::is_valid_hash(hash) {
+        return Err("not a recording hash".to_string());
+    }
+    Ok(engine::Layout::locate()?.data.join("alignments").join(format!("{hash}.json")))
+}
+
+#[tauri::command]
+fn alignment_read(hash: String) -> Result<Option<serde_json::Value>, String> {
+    let path = alignment_path(&hash)?;
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(alignments::parse_alignment(&text, &hash)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read the saved alignment: {e}")),
+    }
+}
+
+#[tauri::command]
+fn alignment_write(hash: String, alignment: serde_json::Value) -> Result<(), String> {
+    let path = alignment_path(&hash)?;
+    let text = alignments::serialize_alignment(&alignment, &hash).ok_or_else(|| "not an alignment file for this recording".to_string())?;
+    write_atomic(&path, text)
+}
+
 fn main() {
     let state: State = Arc::new(Shared::default());
     set(&state, "starting", None, Some("Starting".to_string()));
 
     let app = tauri::Builder::default()
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write])
         .setup({
             let state = state.clone();
             move |_app| {

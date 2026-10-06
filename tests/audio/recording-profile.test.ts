@@ -52,49 +52,18 @@ describe('normalizeProfile', () => {
   });
 });
 
-describe('normalizeProfile alignment record', () => {
-  it('keeps the source and the holds, and a profile without one stays as it was', () => {
-    const holds = [{ at: 20, length: 16 }];
-    expect(normalizeProfile({ version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'auto', holds } })).toEqual({
-      version: PROFILE_VERSION,
-      offset: 1.5,
-      alignment: { source: 'auto', holds },
-    });
-    const plain = normalizeProfile({ version: PROFILE_VERSION, offset: 1.5 });
-    expect(plain).toEqual({ version: PROFILE_VERSION, offset: 1.5 });
-    expect(plain).not.toHaveProperty('alignment');
+describe('normalizeProfile and alignment', () => {
+  it('ignores an alignment stored in the profile, since it lives in its own file', () => {
+    const stored = { version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'auto', holds: [{ at: 20, length: 16 }], anchors: [1, 2], endAnchor: 3 } };
+    const p = normalizeProfile(stored);
+    expect(p).toEqual({ version: PROFILE_VERSION, offset: 1.5 });
+    expect(p).not.toHaveProperty('alignment');
   });
 
-  it('keeps an auto record with no holds, which says the recording was analysed', () => {
-    expect(normalizeProfile({ version: PROFILE_VERSION, offset: 0, alignment: { source: 'auto', holds: [] } })?.alignment).toEqual({
-      source: 'auto',
-      holds: [],
-    });
-  });
-
-  it('drops a malformed record but keeps the offset', () => {
-    for (const alignment of [{ source: 'x', holds: [] }, 'junk', 5, { holds: [] }]) {
-      const p = normalizeProfile({ version: PROFILE_VERSION, offset: 2, alignment });
-      expect(p).toEqual({ version: PROFILE_VERSION, offset: 2 });
-    }
-  });
-
-  it('cleans the holds: unusable ones are dropped and the rest are sorted', () => {
-    const p = normalizeProfile({
-      version: PROFILE_VERSION,
-      offset: 1,
-      alignment: { source: 'auto', holds: [{ at: 30, length: 2 }, { at: 10, length: -1 }, 'x', { at: 5, length: 1 }] },
-    });
-    expect(p?.alignment?.holds).toEqual([
-      { at: 5, length: 1 },
-      { at: 30, length: 2 },
-    ]);
-  });
-
-  it('keeps the record when the profile is saved and read back', async () => {
-    const store = new FileProfileStore(memoryBackend());
-    await store.save('h', { version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'manual', holds: [] } });
-    await expect(store.load('h')).resolves.toEqual({ version: PROFILE_VERSION, offset: 1.5, alignment: { source: 'manual', holds: [] } });
+  it('keeps the offset and mix of a profile saved before the change', () => {
+    const mix = initialMix();
+    const p = normalizeProfile({ version: PROFILE_VERSION, offset: 2, mix, alignment: { source: 'manual', holds: [] } });
+    expect(p).toEqual({ version: PROFILE_VERSION, offset: 2, mix });
   });
 });
 
@@ -167,55 +136,7 @@ describe('FileProfileStore', () => {
   });
 });
 
-describe('the fields added with the whole-song timeline', () => {
-  const base = {
-    version: PROFILE_VERSION,
-    offset: 1.2,
-    alignment: {
-      source: 'auto',
-      holds: [{ at: 8, length: 2 }],
-      anchors: [1, 3, 5],
-      endAnchor: 7,
-      sections: [{ firstBar: 0, lastBar: 2, letter: 'A', name: 'Intro' }],
-    },
-  };
-  const withFields = (fields: Record<string, unknown>) => ({ ...base, alignment: { ...base.alignment, ...fields } });
-
-  it('reads the revision, fingerprint, tier, attempt and previous offset when they are well formed', () => {
-    const profile = normalizeProfile(
-      withFields({ revision: 1, fingerprint: '6:0f0f0f0f', tier: 'roughly', attempt: { revision: 1, fingerprint: '6:0f0f0f0f' }, previousOffset: 0.4 }),
-    );
-    expect(profile?.alignment).toMatchObject({
-      revision: 1,
-      fingerprint: '6:0f0f0f0f',
-      tier: 'roughly',
-      attempt: { revision: 1, fingerprint: '6:0f0f0f0f' },
-      previousOffset: 0.4,
-    });
-  });
-
-  it('a field with a bad type reads as absent and keeps the alignment, the mix and the section names', () => {
-    const mix = initialMix();
-    const profile = normalizeProfile({
-      ...withFields({ revision: 'one', fingerprint: 42, tier: 'great', attempt: { revision: 1 }, previousOffset: 'x' }),
-      mix,
-    });
-    expect(profile?.mix).toEqual(mix);
-    expect(profile?.alignment?.anchors).toEqual([1, 3, 5]);
-    expect(profile?.alignment?.sections?.[0].name).toBe('Intro');
-    for (const key of ['revision', 'fingerprint', 'tier', 'attempt', 'previousOffset']) expect(profile?.alignment).not.toHaveProperty(key);
-  });
-
-  it('a profile saved before the change loads unchanged, and survives a save and a read with a new field added', async () => {
-    const backend = memoryBackend({ version: PROFILE_VERSION, entries: [{ hash: 'old', profile: base }, { hash: 'plain', profile: { version: PROFILE_VERSION, offset: 0.5 } }] });
-    const store = new FileProfileStore(backend);
-    await expect(store.load('old')).resolves.toMatchObject({ offset: 1.2, alignment: { anchors: [1, 3, 5] } });
-    await store.save('new', normalizeProfile(withFields({ revision: 1, fingerprint: 'f' }))!);
-    await expect(store.load('plain')).resolves.toEqual({ version: PROFILE_VERSION, offset: 0.5 });
-    await expect(store.load('old')).resolves.toMatchObject({ alignment: { sections: [{ name: 'Intro' }] } });
-    await expect(store.load('new')).resolves.toMatchObject({ alignment: { revision: 1 } });
-  });
-
+describe('saving profiles in quick succession', () => {
   it('saving recording A and then recording B in quick succession leaves both entries', async () => {
     const slow = memoryBackend(null);
     const read = slow.read.bind(slow);

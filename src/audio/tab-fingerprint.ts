@@ -20,3 +20,16 @@ export function tabFingerprint(bars: readonly BarSpan[]): string {
   }
   return `${bars.length}:${hash.toString(16).padStart(8, '0')}`;
 }
+
+/** A short name for one played bar of the tab, from its start and end to the millisecond; the same bar always gets the same name. */
+export function barSignature(bar: BarSpan): string {
+  let hash = 0x811c9dc5;
+  for (const value of [bar.start, bar.end]) {
+    const v = Math.round(value * 1000);
+    for (let shift = 0; shift < 32; shift += 8) {
+      hash ^= (v >>> shift) & 0xff;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+  }
+  return hash.toString(16).padStart(8, '0');
+}

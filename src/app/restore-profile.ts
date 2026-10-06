@@ -1,5 +1,5 @@
 import type { MixState } from '../audio/mix-gains';
-import type { AlignmentRecord, ProfileStore, RecordingProfile } from '../audio/recording-profile';
+import type { AlignmentRecord, ProfileStore, RecordingProfile, RestoredProfile } from '../audio/recording-profile';
 
 /** Quiet time after the last change before it is written, so dragging the slider is one save. */
 export const DEBOUNCE_MS = 500;
@@ -36,7 +36,7 @@ export interface RestorePlan {
  */
 export function decideRestore(
   ctx: { stillLoaded: boolean; offsetMoved: boolean; mixMoved: boolean; desktop: boolean },
-  profile: RecordingProfile | null,
+  profile: RestoredProfile | null,
 ): RestorePlan | null {
   if (!profile || !ctx.stillLoaded) return null;
   const plan: RestorePlan = {};

@@ -2,8 +2,8 @@ import type { AnalysisResult } from '../alignment/analyze';
 import type { Section } from '../alignment/sections';
 import { checkTimeline, type OutcomeTier } from '../alignment/timeline-check';
 import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
-import type { AlignmentRecord, RecordingProfile, SectionRecord } from '../audio/recording-profile';
-import { tabFingerprint } from '../audio/tab-fingerprint';
+import type { AlignmentRecord, BarEvidence, RestoredProfile, SectionRecord } from '../audio/recording-profile';
+import { barSignature, tabFingerprint } from '../audio/tab-fingerprint';
 
 /** Which build of the whole-song pass a saved timeline came from. A record without this one is detected again when it opens. */
 export const TIMELINE_REVISION = 1;
@@ -92,13 +92,32 @@ export function settleAnalysis(ctx: SettleContext, result: AnalysisResult): Sett
   }
 }
 
-/** What to save for a committed timeline, or for a recording with only an offset. */
-export function recordFromMap(
+/** What a committed timeline rests on, bar by bar: where detection put it, the tab bar it was placed against, and how well it lined up. */
+export function evidenceFor(
+  bars: readonly BarSpan[],
   map: AlignmentMap,
-  source: AlignmentRecord['source'],
-  sections: readonly SectionRecord[],
-  stamp?: { fingerprint: string; tier: OutcomeTier; previousOffset?: number },
-): AlignmentRecord {
+  health: { readonly barConfidence: readonly number[]; readonly barMatched: readonly boolean[] },
+): BarEvidence[] {
+  const anchors = map.anchorData?.anchors ?? [];
+  return bars.map((bar, k) => {
+    const evidence: BarEvidence = { tab: barSignature(bar) };
+    if (anchors[k] !== undefined) evidence.detected = anchors[k];
+    if (health.barConfidence[k] !== undefined) evidence.confidence = health.barConfidence[k];
+    if (health.barMatched[k] !== undefined) evidence.matched = health.barMatched[k];
+    return evidence;
+  });
+}
+
+/** What the saved record says about the committed timeline, kept with the recording so it can be saved again. */
+export interface AlignStamp {
+  fingerprint: string;
+  tier: OutcomeTier;
+  previousOffset?: number;
+  evidence?: readonly BarEvidence[];
+}
+
+/** What to save for a committed timeline, or for a recording with only an offset. */
+export function recordFromMap(map: AlignmentMap, source: AlignmentRecord['source'], sections: readonly SectionRecord[], stamp?: AlignStamp): AlignmentRecord {
   const record: AlignmentRecord = { source, holds: map.holds.map((h) => ({ at: h.at, length: h.length })) };
   const anchored = map.anchorData;
   if (anchored) {
@@ -111,6 +130,7 @@ export function recordFromMap(
     record.fingerprint = stamp.fingerprint;
     record.tier = stamp.tier;
     if (stamp.previousOffset !== undefined) record.previousOffset = stamp.previousOffset;
+    if (stamp.evidence && record.anchors && stamp.evidence.length === record.anchors.length) record.evidence = stamp.evidence.map((e) => ({ ...e }));
   }
   return record;
 }
@@ -147,7 +167,7 @@ export type OpenDecision =
  * again, and until it commits the older record plays where its anchors still fit and the saved offset alone plays otherwise.
  * A failed attempt for this revision and tab is not repeated until the revision or tab changes or the owner presses Re-analyse.
  */
-export function decideOnOpen(profile: RecordingProfile | null, bars: readonly BarSpan[]): OpenDecision {
+export function decideOnOpen(profile: RestoredProfile | null, bars: readonly BarSpan[]): OpenDecision {
   const fingerprint = tabFingerprint(bars);
   const record = profile?.alignment;
   const offset = profile?.offset ?? 0;

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AnalysisResult } from '../../src/alignment/analyze';
 import { AlignmentMap } from '../../src/audio/alignment-map';
-import { tabFingerprint } from '../../src/audio/tab-fingerprint';
+import { parseAlignmentFile, toAlignmentFile } from '../../src/audio/alignment-file';
+import { barSignature, tabFingerprint } from '../../src/audio/tab-fingerprint';
 import {
   decideOnOpen,
+  evidenceFor,
   restoreFromRecord,
   recordFromMap,
   settleAnalysis,
@@ -206,5 +208,46 @@ describe('decideOnOpen', () => {
     const mine = decideOnOpen({ version: 1, offset: 0.7, alignment: { ...withAttempt(stamped, fingerprint), revision: TIMELINE_REVISION + 1 } }, bars);
     expect(mine.action).toBe('stay');
     if (mine.action === 'stay') expect(mine.play.hasAnchors).toBe(true);
+  });
+});
+
+describe('a committed timeline saved to its file and reopened', () => {
+  const HASH = 'a'.repeat(64);
+  const fingerprint = tabFingerprint(bars);
+  const health = { barConfidence: [5, 4, 0, 6, 3, 5], barMatched: [true, true, false, true, true, true] };
+
+  it('records, for every bar, where detection put it, the tab bar it was placed against, and how well it lined up', () => {
+    const evidence = evidenceFor(bars, good, health);
+    expect(evidence).toHaveLength(bars.length);
+    expect(evidence[2]).toEqual({ detected: 5.5, tab: barSignature(bars[2]), confidence: 0, matched: false });
+  });
+
+  it('saves a record whose file carries the anchors, holds, sections, fingerprint and evidence, and the profile holds none of it', () => {
+    const sections = [{ firstBar: 0, lastBar: 2, letter: 'A', name: 'Verse' }];
+    const record = recordFromMap(good, 'auto', sections, { fingerprint, tier: 'lined-up', evidence: evidenceFor(bars, good, health) });
+    const file = toAlignmentFile(HASH, record);
+    expect(file.bars?.map((b) => b.start)).toEqual([1.5, 3.5, 5.5, 7.5, 9.5, 11.5]);
+    expect(file.endAnchor).toBe(13.5);
+    expect(file.fingerprint).toBe(fingerprint);
+    expect(file.sections).toEqual(sections);
+    expect(file.bars?.[2]).toMatchObject({ matched: false, confidence: 0, tab: barSignature(bars[2]) });
+  });
+
+  it('reopening reuses the saved timeline with no analysis, and keeps the bar evidence for the readout', () => {
+    const saved = recordFromMap(good, 'auto', [], { fingerprint, tier: 'lined-up', evidence: evidenceFor(bars, good, health) });
+    const record = parseAlignmentFile(JSON.parse(JSON.stringify(toAlignmentFile(HASH, saved))), HASH)!;
+    const decision = decideOnOpen({ version: 1, offset: 1.5, alignment: record }, bars);
+    expect(decision.action).toBe('reuse');
+    expect(record.evidence?.map((e) => e.matched)).toEqual(health.barMatched);
+  });
+
+  it('a file that outlived its profile entry still plays: the offset is only a fallback for an alignment with anchors', () => {
+    const saved = recordFromMap(good, 'auto', [], { fingerprint, tier: 'roughly' });
+    expect(decideOnOpen({ version: 1, offset: 0, alignment: saved }, bars).action).toBe('reuse');
+  });
+
+  it('leaves evidence out of the record when it does not match the anchors one for one', () => {
+    const record = recordFromMap(good, 'auto', [], { fingerprint, tier: 'lined-up', evidence: [{ tab: 'x' }] });
+    expect(record).not.toHaveProperty('evidence');
   });
 });

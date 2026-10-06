@@ -1,5 +1,5 @@
 import { STEM_NAMES } from '../stems/engine-client';
-import { AlignmentMap, type Hold } from './alignment-map';
+import type { Hold } from './alignment-map';
 import type { MixState } from './mix-gains';
 import { clampOffset } from './offset-range';
 
@@ -10,7 +10,8 @@ export const PROFILE_VERSION = 1;
 export const PROFILE_CAP = 200;
 
 /**
- * How the recording was lined up with the tab beyond its base offset. A record means the recording was analysed
+ * How the recording was lined up with the tab beyond its base offset (kept in the recording's alignment file, see
+ * `alignment-file.ts`). A record means the recording was analysed
  * (`auto`) or the user reverted to a single offset (`manual`); a profile without one was set by hand, which is
  * also what every profile saved before alignment existed is.
  */
@@ -27,12 +28,26 @@ export interface AlignmentRecord {
   revision?: number;
   /** The tab the anchors were placed against (its bar count and a hash of its bar boundaries); another tab means detecting again. */
   fingerprint?: string;
+  /** What each bar's placement rests on, one entry per anchor, so a re-detection can say what moved and which bars were edited by hand. */
+  evidence?: readonly BarEvidence[];
   /** Whether most bars were supported when the timeline was committed. */
   tier?: 'lined-up' | 'roughly';
   /** A detection that failed for this revision and tab, so opening the recording does not repeat it. */
   attempt?: { revision: number; fingerprint: string };
   /** The offset the owner had set when a detected timeline replaced it, kept so there is something to fall back to. */
   previousOffset?: number;
+}
+
+/**
+ * What one bar's anchor rests on. Every field is optional because the file may be edited by hand: `detected` is where
+ * detection first put the bar (an anchor that differs was moved by hand), `tab` names the tab bar it was placed
+ * against, and `confidence` and `matched` are detection's own readout of how well the bar's onsets lined up.
+ */
+export interface BarEvidence {
+  detected?: number;
+  tab?: string;
+  confidence?: number;
+  matched?: boolean;
 }
 
 /** A part of the song as a run of played bars; the letter is by repetition, the name is the user's. */
@@ -45,9 +60,6 @@ export interface SectionRecord {
 
 /** Longest name a section may be given. */
 export const SECTION_NAME_MAX = 40;
-/** Most anchors a saved record may carry, well past any tab. */
-const MAX_ANCHORS = 5000;
-
 /** What is remembered per recording. There is deliberately no loop or tempo field (R19). */
 export interface RecordingProfile {
   version: number;
@@ -55,6 +67,13 @@ export interface RecordingProfile {
   offset: number;
   /** Per-stem volume, mute and solo. Present only when stems were in use. */
   mix?: MixState;
+}
+
+/**
+ * A profile with the recording's alignment attached, as a restore sees it. The alignment comes from the recording's own
+ * file (see `alignment-file.ts`) and is never part of the saved profile.
+ */
+export interface RestoredProfile extends RecordingProfile {
   alignment?: AlignmentRecord;
 }
 
@@ -92,66 +111,16 @@ function normalizeMix(raw: unknown): MixState | undefined {
   return mix;
 }
 
-/** Sections that are whole numbers of bars, in order and not overlapping; anything else is no sections at all. */
-function normalizeSections(raw: unknown): SectionRecord[] | undefined {
-  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 64) return undefined;
-  const sections: SectionRecord[] = [];
-  let previousLast = -1;
-  for (const s of raw) {
-    if (!isRecord(s) || !Number.isInteger(s.firstBar) || !Number.isInteger(s.lastBar) || typeof s.letter !== 'string' || s.letter.length !== 1) return undefined;
-    const firstBar = s.firstBar as number;
-    const lastBar = s.lastBar as number;
-    if (firstBar < 0 || lastBar < firstBar || firstBar <= previousLast) return undefined;
-    previousLast = lastBar;
-    const name = typeof s.name === 'string' ? s.name.trim() : '';
-    sections.push(name && name.length <= SECTION_NAME_MAX ? { firstBar, lastBar, letter: s.letter, name } : { firstBar, lastBar, letter: s.letter });
-  }
-  return sections;
-}
-
-function normalizeAlignment(raw: unknown, offset: number): AlignmentRecord | undefined {
-  if (!isRecord(raw) || (raw.source !== 'auto' && raw.source !== 'manual')) return undefined;
-  const map = AlignmentMap.normalize({ base: offset, holds: raw.holds });
-  if (!map) return undefined;
-  const record: AlignmentRecord = { source: raw.source, holds: map.holds };
-  const anchored =
-    Array.isArray(raw.anchors) &&
-    raw.anchors.length > 0 &&
-    raw.anchors.length <= MAX_ANCHORS &&
-    raw.anchors.every((a) => typeof a === 'number' && Number.isFinite(a)) &&
-    typeof raw.endAnchor === 'number' &&
-    Number.isFinite(raw.endAnchor);
-  if (anchored) {
-    record.anchors = raw.anchors as number[];
-    record.endAnchor = raw.endAnchor as number;
-  }
-  const sections = normalizeSections(raw.sections);
-  if (sections) record.sections = sections;
-  // The fields added with the whole-song timeline are optional and read with type checks: a bad one reads as absent and never costs the rest.
-  if (Number.isInteger(raw.revision) && (raw.revision as number) > 0) record.revision = raw.revision as number;
-  if (typeof raw.fingerprint === 'string' && raw.fingerprint.length > 0 && raw.fingerprint.length <= 64) record.fingerprint = raw.fingerprint;
-  if (raw.tier === 'lined-up' || raw.tier === 'roughly') record.tier = raw.tier;
-  if (
-    isRecord(raw.attempt) &&
-    Number.isInteger(raw.attempt.revision) &&
-    typeof raw.attempt.fingerprint === 'string' &&
-    raw.attempt.fingerprint.length > 0 &&
-    raw.attempt.fingerprint.length <= 64
-  ) {
-    record.attempt = { revision: raw.attempt.revision as number, fingerprint: raw.attempt.fingerprint };
-  }
-  if (typeof raw.previousOffset === 'number' && Number.isFinite(raw.previousOffset)) record.previousOffset = clampOffset(raw.previousOffset);
-  return record;
-}
-
-/** A trusted profile from untrusted stored data: unknown version or bad offset is null; offset is clamped; a bad mix or alignment record is dropped. */
+/**
+ * A trusted profile from untrusted stored data: unknown version or bad offset is null; offset is clamped; a bad mix is dropped.
+ * Alignment is not part of a profile: it lives in the recording's own alignment file, so a stored `alignment` is ignored.
+ */
 export function normalizeProfile(raw: unknown): RecordingProfile | null {
   if (!isRecord(raw) || raw.version !== PROFILE_VERSION) return null;
   if (typeof raw.offset !== 'number' || !Number.isFinite(raw.offset)) return null;
   const offset = clampOffset(raw.offset);
   const mix = normalizeMix(raw.mix);
-  const alignment = normalizeAlignment(raw.alignment, offset);
-  return { version: PROFILE_VERSION, offset, ...(mix ? { mix } : {}), ...(alignment ? { alignment } : {}) };
+  return { version: PROFILE_VERSION, offset, ...(mix ? { mix } : {}) };
 }
 
 /** Reads untrusted stored data as a profile file. Anything unrecognised, or a different file version, is empty. */

@@ -21,9 +21,8 @@ import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
 import { controlsFor } from './alignment-controls';
-import { decideOnOpen, recordFromMap, settleAnalysis, withAttempt, type AlignStatus } from './auto-align';
+import { decideOnOpen, evidenceFor, recordFromMap, settleAnalysis, withAttempt, type AlignStatus, type AlignStamp } from './auto-align';
 import { tabFingerprint } from '../audio/tab-fingerprint';
-import type { OutcomeTier } from '../alignment/timeline-check';
 import { SectionPanel } from './SectionPanel';
 import {
   carryNames,
@@ -35,7 +34,10 @@ import {
   type BarHealth,
 } from './section-controls';
 import { clampOffset } from '../audio/offset-range';
-import { PROFILE_VERSION, type AlignmentRecord, type ProfileStore, type SectionRecord } from '../audio/recording-profile';
+import { PROFILE_VERSION, type AlignmentRecord, type ProfileStore, type RestoredProfile, type SectionRecord } from '../audio/recording-profile';
+import type { AlignmentStore } from '../audio/alignment-store';
+import { WebAlignmentStore } from '../audio/alignment-store-web';
+import { shellAlignmentStore } from '../stems/alignment-store-shell';
 import type { LandingReport } from '../audio/user-audio';
 import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
@@ -129,6 +131,8 @@ export function App() {
 
   /** Where per-recording offset and mix are remembered: a shell file on the desktop, browser storage on the web. */
   const profileStore = useMemo<ProfileStore>(() => (isDesktop() ? shellProfileStore : new WebProfileStore()), []);
+  /** Where each recording's alignment is remembered: its own readable file on the desktop, browser storage on the web. */
+  const alignmentStore = useMemo<AlignmentStore>(() => (isDesktop() ? shellAlignmentStore : new WebAlignmentStore()), []);
   /** Names the recording whose profile lookup is in flight; any newer load or removal makes it stale. */
   const profileRuns = useRef(createRunGuard());
   /** Content hash of the loaded recording, once known; null means nothing is restored or saved for it. */
@@ -147,7 +151,7 @@ export function App() {
   /** Where the alignment came from; null means the offset was set by hand and no record is saved. */
   const alignSource = useRef<AlignmentRecord['source'] | null>(null);
   /** What the saved record says about the committed timeline (revision, fingerprint, tier, previous offset); null for an offset alone or an older record. */
-  const alignStamp = useRef<{ fingerprint: string; tier: OutcomeTier; previousOffset?: number } | null>(null);
+  const alignStamp = useRef<AlignStamp | null>(null);
   /** A failed detection for this recording and tab, to be saved so opening it again does not repeat the run. */
   const alignAttempt = useRef<string | null>(null);
   /** True once the owner moved the offset after the latest detection began; only then is its result dropped. */
@@ -157,12 +161,8 @@ export function App() {
   > | null>(null);
   if (!profileSaver.current) {
     profileSaver.current = createDebouncer(DEBOUNCE_MS, ({ hash, offset, mix, alignment }) => {
-      void profileStore.save(hash, {
-        version: PROFILE_VERSION,
-        offset,
-        ...(mix ? { mix } : {}),
-        ...(alignment ? { alignment } : {}),
-      });
+      void profileStore.save(hash, { version: PROFILE_VERSION, offset, ...(mix ? { mix } : {}) });
+      if (alignment) void alignmentStore.save(hash, alignment);
     });
   }
 
@@ -242,7 +242,12 @@ export function App() {
     if (settled.map && settled.tier) {
       // The one place a detected timeline becomes the timeline in use: it replaces the owner's offset, which is kept in the record.
       const hadOffset = !live.current.alignment.hasAnchors && live.current.offset !== 0 ? live.current.offset : undefined;
-      alignStamp.current = { fingerprint: tabFingerprint(bars), tier: settled.tier, previousOffset: hadOffset ?? alignStamp.current?.previousOffset };
+      alignStamp.current = {
+        fingerprint: tabFingerprint(bars),
+        tier: settled.tier,
+        previousOffset: hadOffset ?? alignStamp.current?.previousOffset,
+        evidence: evidenceFor(bars, settled.map, settled),
+      };
       alignAttempt.current = null;
       setBarHealth({ barConfidence: settled.barConfidence, barMatched: settled.barMatched });
       setLandings({});
@@ -308,9 +313,17 @@ export function App() {
   /** Looks up the recording's profile and applies it unless the user or another load got there first (KTD12). */
   async function restoreProfile(file: File, clockForLoad: UserAudioClock) {
     const run = profileRuns.current.begin();
-    const { hash, profile } = await fetchProfile(() => hashFile(file), profileStore);
+    const { hash, profile: stored } = await fetchProfile(() => hashFile(file), profileStore);
     if (!profileRuns.current.isCurrent(run)) return;
     profileHash.current = hash;
+    const savedAlignment = hash ? await alignmentStore.load(hash) : null;
+    if (!profileRuns.current.isCurrent(run)) return;
+    // The alignment has its own file, so one can outlive its profile entry (profiles are capped); it still plays.
+    const profile: RestoredProfile | null = stored
+      ? { ...stored, ...(savedAlignment ? { alignment: savedAlignment } : {}) }
+      : savedAlignment
+        ? { version: PROFILE_VERSION, offset: 0, alignment: savedAlignment }
+        : null;
     const plan = decideRestore(
       {
         stillLoaded: userClockRef.current === clockForLoad,
@@ -328,7 +341,10 @@ export function App() {
       const play = decision.action === 'reuse' ? decision.map : decision.play;
       applyAlignment(play, record?.source ?? null, false, record?.sections ?? []);
       if (decision.action === 'reuse' && record) {
-        alignStamp.current = { fingerprint: record.fingerprint ?? tabFingerprint(bars), tier: decision.tier, previousOffset: record.previousOffset };
+        alignStamp.current = { fingerprint: record.fingerprint ?? tabFingerprint(bars), tier: decision.tier, previousOffset: record.previousOffset, evidence: record.evidence };
+        if (record.evidence?.some((e) => e.confidence !== undefined || e.matched !== undefined)) {
+          setBarHealth({ barConfidence: record.evidence.map((e) => e.confidence ?? 0), barMatched: record.evidence.map((e) => e.matched ?? false) });
+        }
         setAlignStatus(decision.tier === 'lined-up' ? { phase: 'lined-up', skipped: 0 } : { phase: 'roughly', skipped: 0 });
       } else if (decision.action === 'stay') {
         alignAttempt.current = tabFingerprint(bars);
