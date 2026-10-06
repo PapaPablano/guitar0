@@ -460,3 +460,40 @@ a.link-button:hover {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+.neck-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #03141a;
+}
+
+.neck-fullscreen canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: pointer;
+}
+
+.neck-fullscreen-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.neck-fullscreen-hint {
+  position: absolute;
+  bottom: 24px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}

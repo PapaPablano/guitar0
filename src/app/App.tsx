@@ -44,6 +44,7 @@ import { isDesktop } from './desktop';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
+import { NeckFullscreen } from './NeckFullscreen';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
@@ -100,6 +101,7 @@ export function App() {
   const [mix, setMix] = useState<MixState>(() => initialMix());
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [neckFullscreen, setNeckFullscreen] = useState(false);
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
@@ -553,6 +555,8 @@ export function App() {
     setPlaying(clock.playing);
   }, [clock, audioReady]);
 
+  const closeNeckFullscreen = useCallback(() => setNeckFullscreen(false), []);
+
   const setLoopRange = useCallback((next: LoopBars | null) => {
     setLoop(next);
     setLoopOn(next !== null);
@@ -653,6 +657,9 @@ export function App() {
             Find on Songsterr
           </a>
         )}
+        <button type="button" onClick={() => setNeckFullscreen(true)}>
+          Full screen
+        </button>
         <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady}>
           Export video
         </button>
@@ -787,6 +794,19 @@ export function App() {
         <p role="alert" className="error">
           {error}
         </p>
+      )}
+      {neckFullscreen && (
+        <NeckFullscreen
+          timeline={timeline}
+          trackIndex={trackIndex}
+          clock={clock}
+          lookahead={lookahead}
+          labelMode={labelMode}
+          playing={playing}
+          canPlay={audioReady}
+          onTogglePlay={togglePlay}
+          onClose={closeNeckFullscreen}
+        />
       )}
       {exportOpen && (
         <ExportDialog

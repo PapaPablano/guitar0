@@ -1,0 +1,135 @@
+import { useEffect, useRef } from 'react';
+import type { Clock } from '../audio/clock';
+import type { LabelMode } from '../render/fretboard';
+import { photoPlacement, renderNeckView } from '../render/neck-view';
+import photoUrl from '../assets/guitar-photo.jpg';
+import type { Timeline } from '../model/score';
+
+interface NeckFullscreenProps {
+  timeline: Timeline;
+  trackIndex: number;
+  clock: Clock;
+  lookahead: number;
+  labelMode: LabelMode;
+  playing: boolean;
+  canPlay: boolean;
+  onTogglePlay: () => void;
+  onClose: () => void;
+}
+
+/**
+ * The real guitar's neck filling the whole screen, with the rings drawn over its photo: tap anywhere to play or pause, Esc or the close button to leave; the app's own keys (space, arrows) keep working.
+ * It asks the browser for real full screen, and closes itself when the player leaves that some other way.
+ */
+export function NeckFullscreen({
+  timeline,
+  trackIndex,
+  clock,
+  lookahead,
+  labelMode,
+  playing,
+  canPlay,
+  onTogglePlay,
+  onClose,
+}: NeckFullscreenProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const photoRef = useRef<HTMLImageElement | null>(null);
+  const lookaheadRef = useRef(lookahead);
+  lookaheadRef.current = lookahead;
+  const labelModeRef = useRef(labelMode);
+  labelModeRef.current = labelMode;
+
+  useEffect(() => {
+    const root = rootRef.current;
+    let entered = false;
+    // A browser can refuse (or lack) full screen; the overlay still covers the window then.
+    root?.requestFullscreen?.().then(
+      () => {
+        entered = true;
+      },
+      () => undefined,
+    );
+    const onChange = () => {
+      if (entered && !document.fullscreenElement) onClose();
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      window.removeEventListener('keydown', onKey);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = photoUrl;
+    image.onload = () => {
+      photoRef.current = image;
+    };
+  }, []);
+
+  useEffect(() => {
+    let frame = 0;
+    const draw = () => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.round(rect.width));
+        const height = Math.max(1, Math.round(rect.height));
+        if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+          canvas.width = width * dpr;
+          canvas.height = height * dpr;
+        }
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          drawPhoto(ctx, photoRef.current, width, height);
+          renderNeckView(ctx, timeline, trackIndex, clock.time(), width, height, {
+            lookahead: lookaheadRef.current,
+            labelMode: labelModeRef.current,
+          });
+        }
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [timeline, trackIndex, clock]);
+
+  return (
+    <div ref={rootRef} className="neck-fullscreen" role="dialog" aria-label="Full screen neck">
+      <canvas
+        ref={canvasRef}
+        role="img"
+        aria-label="Guitar neck"
+        onClick={() => {
+          if (canPlay) onTogglePlay();
+        }}
+      />
+      <button type="button" className="neck-fullscreen-close" onClick={onClose} aria-label="Exit full screen">
+        ✕
+      </button>
+      {!playing && canPlay && <p className="neck-fullscreen-hint">Tap or press space to play · Esc to exit</p>}
+    </div>
+  );
+}
+
+/** The photo of the guitar, placed so the neck fills the screen; plain dark until it has loaded. */
+function drawPhoto(ctx: CanvasRenderingContext2D, image: HTMLImageElement | null, width: number, height: number): void {
+  ctx.fillStyle = '#03141a';
+  ctx.fillRect(0, 0, width, height);
+  if (!image) return;
+  const place = photoPlacement(width, height);
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  if (place.rotated) ctx.rotate(Math.PI / 2);
+  ctx.scale(place.scale, place.scale);
+  ctx.drawImage(image, -place.centreX, -place.centreY);
+  ctx.restore();
+}
