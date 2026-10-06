@@ -179,3 +179,57 @@ describe('RecordingPcm of another format', () => {
     expect(await RecordingPcm.open(notMp3, 25, deps)).toEqual({ kind: 'not-possible', reason: 'undecodable' });
   });
 });
+
+describe('RecordingPcm.open on files the frame map cannot be trusted for', () => {
+  const wholeDecoder = (seconds: number): PcmDeps => ({
+    decode: async () => {
+      const samples = new Float32Array(seconds * 48000).fill(0.1);
+      return { left: samples, right: samples, sampleRate: 48000 };
+    },
+  });
+
+  it('decodes a recording whole when its frame map stops well short of its length, instead of marking a silent tail exact', async () => {
+    const bytes = stream(FRAMES, false);
+    const seconds = (FRAMES * SPF) / RATE;
+    const result = await RecordingPcm.open(new Blob([bytes.buffer as ArrayBuffer]), seconds + 30, wholeDecoder(seconds + 30));
+    if (result.kind !== 'ready') throw new Error('expected a store');
+    expect(result.pcm.byRegion).toBe(false);
+    expect(result.pcm.complete).toBe(true);
+  });
+
+  it('says too long when a recording whose frame map falls short is also over the budget', async () => {
+    const bytes = stream(FRAMES, false);
+    const result = await RecordingPcm.open(new Blob([bytes.buffer as ArrayBuffer]), 900, wholeDecoder(1), { budgetSeconds: 600 });
+    expect(result).toEqual({ kind: 'not-possible', reason: 'too-long' });
+  });
+
+  it('still reads a recording whose map is within a second of its length by region', async () => {
+    const bytes = stream(FRAMES, false);
+    const seconds = (FRAMES * SPF) / RATE;
+    const result = await RecordingPcm.open(new Blob([bytes.buffer as ArrayBuffer]), seconds + 0.5, wholeDecoder(1));
+    if (result.kind !== 'ready') throw new Error('expected a store');
+    expect(result.pcm.byRegion).toBe(true);
+  });
+
+  it('refuses a long non-MP3 recording without reading the whole file', async () => {
+    const file = new Blob([new Uint8Array([0x52, 0x49, 0x46, 0x46, ...new Array(200000).fill(7)])]);
+    let reads = 0;
+    const whole = file.arrayBuffer.bind(file);
+    file.arrayBuffer = () => {
+      reads += 1;
+      return whole();
+    };
+    const result = await RecordingPcm.open(file, 1500, wholeDecoder(1));
+    expect(result).toEqual({ kind: 'not-possible', reason: 'too-long' });
+    expect(reads).toBe(0);
+  });
+
+  it('does not refuse a long MP3, even one with a large tag before its audio, though it is over the budget', async () => {
+    // an ID3 tag whose body is 70000 bytes (sync-safe size bytes 0, 4, 0x22, 0x70), then 400 frames, about 10.4 s
+    const tag = [0x49, 0x44, 0x33, 3, 0, 0, 0, 4, 0x22, 0x70, ...new Array(70000).fill(0)];
+    const file = new Blob([Uint8Array.from([...tag, ...Array.from(stream(400, false))])]);
+    const result = await RecordingPcm.open(file, (400 * SPF) / RATE, wholeDecoder(1), { budgetSeconds: 5 });
+    expect(result.kind).toBe('ready');
+    if (result.kind === 'ready') expect(result.pcm.byRegion).toBe(true);
+  });
+});

@@ -96,6 +96,42 @@ describe('ClickCountIn', () => {
     expect(done).toHaveBeenCalledWith(true);
   });
 
+  it('a count-in cancelled while its audio is still resuming never starts, and resolves false', async () => {
+    vi.useFakeTimers();
+    let release: () => void = () => undefined;
+    const context = fakeContext();
+    context.resume = () => new Promise<void>((resolve) => (release = resolve));
+    const countIn = new ClickCountIn(() => context);
+    const done = vi.fn();
+    void countIn.play(4, 120).then(done);
+    await vi.advanceTimersByTimeAsync(0);
+    countIn.cancel();
+    release();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(done).toHaveBeenCalledWith(false);
+    expect(context.oscillators).toHaveLength(0);
+  });
+
+  it('a newer count-in started while an older one is resuming is the only one that plays', async () => {
+    vi.useFakeTimers();
+    const releases: (() => void)[] = [];
+    const context = fakeContext();
+    context.resume = () => new Promise<void>((resolve) => releases.push(resolve));
+    const countIn = new ClickCountIn(() => context);
+    const first = vi.fn();
+    const second = vi.fn();
+    void countIn.play(4, 120).then(first);
+    await vi.advanceTimersByTimeAsync(0);
+    void countIn.play(4, 120).then(second);
+    await vi.advanceTimersByTimeAsync(0);
+    releases.forEach((release) => release());
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(first).toHaveBeenCalledWith(false);
+    expect(second).toHaveBeenCalledWith(true);
+    expect(context.oscillators).toHaveLength(4);
+  });
+
   it('cancelling with nothing playing does nothing', () => {
     expect(() => new ClickCountIn(() => fakeContext()).cancel()).not.toThrow();
   });

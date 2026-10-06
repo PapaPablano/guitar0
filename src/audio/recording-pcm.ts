@@ -1,6 +1,6 @@
 import type { PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
-import { frameAtSample, mapMp3Frames, sliceForSamples, totalSamples, type Mp3FrameMap } from './mp3-frames';
+import { frameAtSample, id3TagLength, mapMp3Frames, sliceForSamples, totalSamples, type Mp3FrameMap } from './mp3-frames';
 
 /** Seconds of the recording in each chunk. Whole seconds, so a chunk's edges are whole samples at any sample rate. */
 export const CHUNK_SECONDS = 10;
@@ -10,6 +10,10 @@ export const BUDGET_SECONDS = 600;
 const LEAD_IN_FRAMES = 4;
 /** How far past the first chunk the prefix used to line the timeline up reaches, in samples; the start trim is a few thousand at most. */
 const CALIBRATION_MARGIN_SAMPLES = 8192;
+/** Bytes read from the start of a file (after any tag) to tell whether it is an MP3 before the whole file is read. */
+const SNIFF_BYTES = 65536;
+/** A frame map that covers this many seconds less than the recording is not trusted: the scan stopped at a damaged frame. */
+const MAP_SHORTFALL_SECONDS = 1;
 
 /** Where a chunk stands: not started, being decoded, ready, or failed to decode. */
 export type ChunkState = 'not-yet' | 'getting' | 'exact' | 'failed';
@@ -36,6 +40,14 @@ const browserDeps: PcmDeps = {
     return { left, right, sampleRate: decoded.sampleRate };
   },
 };
+
+/** Whether the start of a file holds a run of MP3 frames, read without loading the rest of the file. */
+async function startsLikeMp3(file: Blob): Promise<boolean> {
+  const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer());
+  const tag = id3TagLength(head);
+  const audio = tag > 0 ? new Uint8Array(await file.slice(tag, tag + SNIFF_BYTES).arrayBuffer()) : head;
+  return mapMp3Frames(audio) !== null;
+}
 
 export type OpenResult =
   | { readonly kind: 'ready'; readonly pcm: RecordingPcm }
@@ -125,12 +137,17 @@ export class RecordingPcm {
     const leadIn = options.leadInFrames ?? LEAD_IN_FRAMES;
     let bytes: ArrayBuffer;
     try {
+      // A long file that cannot be decoded a region at a time is refused before it is read whole.
+      if (durationSeconds > budgetSeconds && !(await startsLikeMp3(file))) return { kind: 'not-possible', reason: 'too-long' };
       bytes = await file.arrayBuffer();
     } catch {
       return { kind: 'not-possible', reason: 'undecodable' };
     }
     const map = mapMp3Frames(new Uint8Array(bytes));
-    if (map) return { kind: 'ready', pcm: new RecordingPcm(map.sampleRate, durationSeconds, bytes, map, deps, leadIn, chunkSeconds, budgetSeconds) };
+    // A map that ends well short of the recording means the scan stopped at a damaged frame; the rest would be silence marked exact.
+    if (map && totalSamples(map) / map.sampleRate + MAP_SHORTFALL_SECONDS >= durationSeconds) {
+      return { kind: 'ready', pcm: new RecordingPcm(map.sampleRate, durationSeconds, bytes, map, deps, leadIn, chunkSeconds, budgetSeconds) };
+    }
     if (durationSeconds > budgetSeconds) return { kind: 'not-possible', reason: 'too-long' };
     try {
       const decoded = await deps.decode(bytes);

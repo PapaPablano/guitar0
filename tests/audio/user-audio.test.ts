@@ -1085,6 +1085,29 @@ describe('UserAudioClock held jumps', () => {
     expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', 'failed']);
   });
 
+  it('clears the failed notice from the page when the player moves on, and not before', async () => {
+    const { clock, finish, holds, advance } = setup({ playing: true });
+    clock.seek(45);
+    await advance(0.3);
+    finish([], false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', 'failed']);
+    clock.pause();
+    expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', 'failed', null]);
+    clock.pause();
+    expect(holds).toHaveLength(3);
+  });
+
+  it('a new jump after a failed one replaces the failed notice', async () => {
+    const { clock, finish, holds, advance } = setup({ playing: true });
+    clock.seek(45);
+    await advance(0.3);
+    finish([], false);
+    await vi.advanceTimersByTimeAsync(0);
+    clock.seek(95);
+    expect(holds.map((h) => h?.phase ?? null)).toEqual(['waiting', 'failed', null, 'waiting']);
+  });
+
   it('a jump before the recording starts needs no copy', () => {
     const { clock, gate } = setup();
     clock.setOffset(-5);

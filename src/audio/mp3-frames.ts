@@ -59,7 +59,7 @@ function readHeader(bytes: Uint8Array, at: number): Header | null {
 }
 
 /** Bytes taken by an ID3v2 tag at the start of the file, or 0. */
-function id3Length(bytes: Uint8Array): number {
+export function id3TagLength(bytes: Uint8Array): number {
   if (bytes.length < 10 || bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return 0;
   const size = ((bytes[6] & 0x7f) << 21) | ((bytes[7] & 0x7f) << 14) | ((bytes[8] & 0x7f) << 7) | (bytes[9] & 0x7f);
   const footer = bytes[5] & 0x10 ? 10 : 0;
@@ -91,11 +91,17 @@ function readInfoFrame(bytes: Uint8Array, at: number, header: Header): { delay: 
 }
 
 /**
+ * Frames that must follow one another for a file to count as an MP3. A stray header-shaped run of bytes turns up in the first few
+ * thousand bytes of compressed audio in other formats about one time in five; several in a row do not.
+ */
+export const MIN_CHAINED_FRAMES = 3;
+
+/**
  * Maps the audio frames of an MP3. Null when the bytes are not an MP3 this can read (no Layer III frame where the audio
  * should start, or a free-format stream). Reading stops at the first damaged frame, so what is returned is always whole frames.
  */
 export function mapMp3Frames(bytes: Uint8Array): Mp3FrameMap | null {
-  let at = id3Length(bytes);
+  let at = id3TagLength(bytes);
   let first = readHeader(bytes, at);
   // Some files carry a little padding before the first frame; look a short way for it.
   for (let skipped = 0; !first && skipped < 4096 && at + 1 < bytes.length; skipped++) first = readHeader(bytes, ++at);
@@ -119,7 +125,7 @@ export function mapMp3Frames(bytes: Uint8Array): Mp3FrameMap | null {
     offsets.push(at);
     at += header.bytes;
   }
-  if (offsets.length === 0) return null;
+  if (offsets.length < MIN_CHAINED_FRAMES) return null;
   return {
     sampleRate: first.sampleRate,
     channels: first.channels,

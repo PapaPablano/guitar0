@@ -41,12 +41,15 @@ export interface ClickAudio {
 /** A count-in of short tones made with Web Audio: no sound file is needed. The first beat of the bar is higher. */
 export class ClickCountIn implements CountIn {
   private context: ClickAudio | null = null;
+  /** Changes with every play and cancel, so a count-in cancelled while its audio was resuming can tell and does not start. */
+  private generation = 0;
   private pending: { timer: ReturnType<typeof setTimeout>; finish: (completed: boolean) => void; oscillators: Oscillator[] } | null = null;
 
   constructor(private readonly makeContext: () => ClickAudio = () => new AudioContext() as unknown as ClickAudio) {}
 
   async play(beats: number, bpm: number): Promise<boolean> {
     this.cancel();
+    const mine = ++this.generation;
     let context: ClickAudio | null = null;
     try {
       this.context ??= this.makeContext();
@@ -55,6 +58,7 @@ export class ClickCountIn implements CountIn {
     } catch {
       // No sound to count with; the wait is still kept, so the player has the time to get ready.
     }
+    if (mine !== this.generation) return false;
     const times = clickTimes(beats, bpm, context ? context.currentTime : 0);
     const interval = 60 / Math.min(MAX_BPM, Math.max(MIN_BPM, Number.isFinite(bpm) ? bpm : 120));
     const oscillators: Oscillator[] = [];
@@ -84,6 +88,7 @@ export class ClickCountIn implements CountIn {
   }
 
   cancel(): void {
+    this.generation += 1;
     const pending = this.pending;
     if (!pending) return;
     this.pending = null;

@@ -44,8 +44,8 @@ describe('mapMp3Frames', () => {
 
   it('skips an ID3v2 tag before the audio', () => {
     const id3 = [0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 20, ...new Array(20).fill(0)];
-    const map = mapMp3Frames(bytesOf(id3, f128(), f128()))!;
-    expect(Array.from(map.frameOffsets)).toEqual([30, 447]);
+    const map = mapMp3Frames(bytesOf(id3, f128(), f128(), f128()))!;
+    expect(Array.from(map.frameOffsets)).toEqual([30, 447, 864]);
   });
 
   it('leaves out a leading Xing frame, which is not audio, and reads the encoder delay from its LAME tag', () => {
@@ -56,35 +56,35 @@ describe('mapMp3Frames', () => {
     info[44 + 21] = 0x24; // delay 576 = 0x240, padding 1000 = 0x3E8
     info[44 + 22] = 0x03;
     info[44 + 23] = 0xe8;
-    const map = mapMp3Frames(bytesOf(info, f128(), f128()))!;
-    expect(Array.from(map.frameOffsets)).toEqual([417, 834]);
+    const map = mapMp3Frames(bytesOf(info, f128(), f128(), f128()))!;
+    expect(Array.from(map.frameOffsets)).toEqual([417, 834, 1251]);
     expect(map.encoderDelay).toBe(576);
     expect(map.endPadding).toBe(1000);
   });
 
   it('gives MPEG-2 streams 576 samples a frame, and mono streams one channel', () => {
     // MPEG-2, 64 kbps (index 8) at 22.05 kHz: 72 * 64000 / 22050 = 208 bytes.
-    const two = mapMp3Frames(bytesOf(frame(mpeg2(8), 208), frame(mpeg2(8), 208)))!;
+    const two = mapMp3Frames(bytesOf(frame(mpeg2(8), 208), frame(mpeg2(8), 208), frame(mpeg2(8), 208)))!;
     expect(two.samplesPerFrame).toBe(576);
     expect(two.sampleRate).toBe(22050);
-    const mono = mapMp3Frames(bytesOf(frame(mpeg1(9, 0, 0, true), 417), frame(mpeg1(9, 0, 0, true), 417)))!;
+    const mono = mapMp3Frames(bytesOf(frame(mpeg1(9, 0, 0, true), 417), frame(mpeg1(9, 0, 0, true), 417), frame(mpeg1(9, 0, 0, true), 417)))!;
     expect(mono.channels).toBe(1);
   });
 
   it('stops at a truncated final frame rather than guess its length', () => {
-    const map = mapMp3Frames(bytesOf(f128(), f128(), f128().slice(0, 200)))!;
-    expect(Array.from(map.frameOffsets)).toEqual([0, 417]);
-    expect(map.endOffset).toBe(834);
+    const map = mapMp3Frames(bytesOf(f128(), f128(), f128(), f128().slice(0, 200)))!;
+    expect(Array.from(map.frameOffsets)).toEqual([0, 417, 834]);
+    expect(map.endOffset).toBe(1251);
   });
 
   it('stops at a damaged frame', () => {
-    const map = mapMp3Frames(bytesOf(f128(), f128(), [1, 2, 3, 4, 5], f128()))!;
-    expect(Array.from(map.frameOffsets)).toEqual([0, 417]);
+    const map = mapMp3Frames(bytesOf(f128(), f128(), f128(), [1, 2, 3, 4, 5], f128()))!;
+    expect(Array.from(map.frameOffsets)).toEqual([0, 417, 834]);
   });
 
   it('finds the first frame after a little padding', () => {
-    const map = mapMp3Frames(bytesOf([0, 0, 0, 0, 0, 0], f128(), f128()))!;
-    expect(Array.from(map.frameOffsets)).toEqual([6, 423]);
+    const map = mapMp3Frames(bytesOf([0, 0, 0, 0, 0, 0], f128(), f128(), f128()))!;
+    expect(Array.from(map.frameOffsets)).toEqual([6, 423, 840]);
   });
 
   it('is null for things that are not MP3: WAV, an M4A header, free format, Layer II, and empty input', () => {
@@ -95,6 +95,25 @@ describe('mapMp3Frames', () => {
     expect(mapMp3Frames(bytesOf(frame(mpeg1(0), 417), frame(mpeg1(0), 417)))).toBeNull();
     expect(mapMp3Frames(bytesOf(frame([0xff, 0xfd, 0x90, 0x00], 417)))).toBeNull();
     expect(mapMp3Frames(new Uint8Array(0))).toBeNull();
+  });
+});
+
+describe('telling an MP3 from other audio', () => {
+  it('is null for a stray frame header among other bytes, or fewer than three frames in a row', () => {
+    const noise = new Array(300).fill(0x5a);
+    expect(mapMp3Frames(bytesOf(noise, f128(), noise))).toBeNull();
+    expect(mapMp3Frames(bytesOf(f128()))).toBeNull();
+    expect(mapMp3Frames(bytesOf(f128(), f128()))).toBeNull();
+    expect(mapMp3Frames(bytesOf(f128(), f128(), f128()))).not.toBeNull();
+  });
+
+  it('is null for random bytes, whatever stray header-shaped run they happen to hold', () => {
+    let seed = 12345;
+    const next = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 8;
+    for (let trial = 0; trial < 300; trial++) {
+      const random = Uint8Array.from({ length: 4200 }, () => next() & 255);
+      expect(mapMp3Frames(random)).toBeNull();
+    }
   });
 });
 

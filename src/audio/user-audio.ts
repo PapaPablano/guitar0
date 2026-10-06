@@ -108,6 +108,8 @@ export class UserAudioClock implements Clock {
   private hold: { id: number; tab: number; phase: HoldPhase; since: number; resume: boolean } | null = null;
   private holdCount = 0;
   private onHold: ((state: HoldState | null) => void) | null = null;
+  /** True after a held jump was given up as failed, until the next action clears that notice from the page. */
+  private failedShown = false;
   /** Source time before which the coverage guard leaves playback alone. */
   private guardResumesAt = 0;
 
@@ -274,6 +276,7 @@ export class UserAudioClock implements Clock {
       // The part could not be made exact: the jump lands on the element in use, and the player is told it may be off.
       this.hold = null;
       this.guardResumesAt = this.source() + GUARD_BACKOFF_SECONDS;
+      this.failedShown = true;
       this.onHold?.({ phase: 'failed', tab: hold.tab });
       this.place(hold.tab, hold.resume);
       if (hold.resume) this.startWatcher();
@@ -303,7 +306,14 @@ export class UserAudioClock implements Clock {
 
   /** Gives up a held jump, as when the player pauses, plays or jumps somewhere else. */
   private cancelHold(): void {
-    if (!this.hold) return;
+    if (!this.hold) {
+      // the page is still showing that a jump could not be made exact; the player has moved on
+      if (this.failedShown) {
+        this.failedShown = false;
+        this.emitHold();
+      }
+      return;
+    }
     this.hold = null;
     this.countIn?.cancel();
     this.emitHold();
