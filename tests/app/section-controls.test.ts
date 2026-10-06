@@ -5,6 +5,7 @@ import {
   jumpTarget,
   landingText,
   loopFor,
+  precisionOf,
   readoutOf,
   renameSection,
   sectionIndexAt,
@@ -67,14 +68,43 @@ describe('readoutOf', () => {
     expect(readoutOf(sec, { barConfidence: confidence, barMatched: mostlyNot })).toBe('not matched');
   });
 
-  it('reads a bar with no onset peak as uncertain even when it was matched', () => {
+  it('reads a section whose bars all matched as confident even when no onset peak pinned them down', () => {
+    const matched = new Array<boolean>(10).fill(true);
+    expect(readoutOf(sec, { barConfidence: new Array<number>(10).fill(0), barMatched: matched })).toBe('confident');
     const confidence = new Array<number>(10).fill(5);
     confidence[4] = 0;
-    expect(readoutOf(sec, { barConfidence: confidence, barMatched: new Array<boolean>(10).fill(true) })).toBe('uncertain');
+    expect(readoutOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('confident');
+  });
+
+  it('allows a bar in ten to be played differently, and reads uncertain from there down to half', () => {
+    const long = { firstBar: 0, lastBar: 19, letter: 'A' };
+    const confidence = new Array<number>(20).fill(0);
+    const oneOff = new Array<boolean>(20).fill(true);
+    oneOff[7] = false;
+    expect(readoutOf(long, { barConfidence: confidence, barMatched: oneOff })).toBe('confident');
+    const threeOff = oneOff.slice();
+    threeOff[8] = false;
+    threeOff[9] = false;
+    expect(readoutOf(long, { barConfidence: confidence, barMatched: threeOff })).toBe('uncertain');
   });
 
   it('says it was not measured when there is nothing to read, as after a restore', () => {
     expect(readoutOf(sec, { barConfidence: [], barMatched: [] })).toBe('not measured');
+    expect(precisionOf(sec, { barConfidence: [], barMatched: [] })).toBe('');
+  });
+});
+
+describe('precisionOf', () => {
+  const sec = { firstBar: 2, lastBar: 5, letter: 'A' };
+  const matched = new Array<boolean>(10).fill(true);
+
+  it('says how many bars were placed to the beat and that the rest are within about a tenth of a second', () => {
+    const confidence = new Array<number>(10).fill(0);
+    expect(precisionOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('4 bars placed within about 0.1 s');
+    confidence[2] = 4;
+    confidence[5] = 3.2;
+    expect(precisionOf(sec, { barConfidence: confidence, barMatched: matched })).toBe('2 of 4 bars placed to the beat, the rest within about 0.1 s');
+    expect(precisionOf(sec, { barConfidence: new Array<number>(10).fill(5), barMatched: matched })).toBe('all 4 bars placed to the beat');
   });
 });
 

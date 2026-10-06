@@ -41,6 +41,7 @@ export function SectionPanel({ rows, onJump, onLoop, onRename }: SectionPanelPro
             )}
             <span className="muted">{row.bars}</span>
             <span className={`readout readout-${row.readout.replace(' ', '-')}`}>{row.readout}</span>
+            {row.precision && <span className="muted">{row.precision}</span>}
             {row.landing && <span className="muted">{row.landing}</span>}
             <button type="button" onClick={() => onJump(row.index)} aria-label={`Jump to ${row.label}`}>
               Jump

@@ -3,8 +3,12 @@ import { SECTION_NAME_MAX, type SectionRecord } from '../audio/recording-profile
 import type { Timeline } from '../model/score';
 import type { LoopBars } from '../render/tab-strip';
 
-/** Least standard score of a bar's onset peak for the bar to count as pinned down; the matcher's own cutoff. */
+/** Least standard score of a bar's onset peak for the bar to count as placed to the beat; the matcher's own cutoff. */
 const PINNED_PEAK = 3;
+/** The share of a section's bars that must match the tab for the section to read as confident. */
+const CONFIDENT_MATCHED = 0.9;
+/** Below this share the section was mostly played differently from the tab. */
+const NOT_MATCHED_BELOW = 0.5;
 
 /** How well the warm-up matched each bar, as the matcher reported it. Empty when it was not measured this session. */
 export interface BarHealth {
@@ -22,26 +26,44 @@ export interface SectionRow {
   /** The bar numbers as the tab shows them. */
   readonly bars: string;
   readonly readout: Readout;
+  /** How finely the bars were placed, such as "17 of 23 bars placed to the beat, the rest within about 0.1 s". */
+  readonly precision: string;
   /** How far the latest jump into the section landed from its anchor, or nothing before the first jump. */
   readonly landing: string;
 }
 
-/**
- * How far to trust a section's alignment, in words: not matched when most of its bars were played differently from
- * the tab, uncertain when some were or when a bar's onsets did not pin its anchor down, confident otherwise.
- */
-export function readoutOf(section: SectionRecord, health: BarHealth): Readout {
-  const { barConfidence, barMatched } = health;
-  if (barMatched.length === 0 || barConfidence.length === 0) return 'not measured';
+/** How many of a section's bars matched the tab and how many were also placed to the beat by their onsets. */
+function countBars(section: SectionRecord, health: BarHealth): { bars: number; matched: number; pinned: number } {
   let matched = 0;
   let pinned = 0;
   const bars = section.lastBar - section.firstBar + 1;
   for (let k = section.firstBar; k <= section.lastBar; k++) {
-    if (barMatched[k]) matched += 1;
-    if ((barConfidence[k] ?? 0) >= PINNED_PEAK) pinned += 1;
+    if (health.barMatched[k]) matched += 1;
+    if ((health.barConfidence[k] ?? 0) >= PINNED_PEAK) pinned += 1;
   }
-  if (matched / bars < 0.5) return 'not matched';
-  return matched < bars || pinned < bars ? 'uncertain' : 'confident';
+  return { bars, matched, pinned };
+}
+
+/**
+ * Whether the recording plays what the tab says, in words: not matched when most of the section's bars were played
+ * differently from the tab, uncertain when a good share were, confident otherwise. How finely each bar was placed is a
+ * separate matter (`precisionOf`): most bars of loud, dense music are matched surely but placed only to about a tenth of a second.
+ */
+export function readoutOf(section: SectionRecord, health: BarHealth): Readout {
+  if (health.barMatched.length === 0 || health.barConfidence.length === 0) return 'not measured';
+  const { bars, matched } = countBars(section, health);
+  if (matched / bars < NOT_MATCHED_BELOW) return 'not matched';
+  return matched / bars < CONFIDENT_MATCHED ? 'uncertain' : 'confident';
+}
+
+/** How finely the section's bars were placed; empty when nothing was measured. */
+export function precisionOf(section: SectionRecord, health: BarHealth): string {
+  if (health.barMatched.length === 0 || health.barConfidence.length === 0) return '';
+  const { bars, pinned } = countBars(section, health);
+  const noun = bars === 1 ? 'bar' : 'bars';
+  if (pinned === bars) return `all ${bars} ${noun} placed to the beat`;
+  if (pinned === 0) return `${bars} ${noun} placed within about 0.1 s`;
+  return `${pinned} of ${bars} ${noun} placed to the beat, the rest within about 0.1 s`;
 }
 
 export function landingText(errorSeconds: number): string {
@@ -66,6 +88,7 @@ export function describeSectionRows(
       letter: s.letter,
       bars: `bars ${first} to ${last}`,
       readout: readoutOf(s, health),
+      precision: precisionOf(s, health),
       landing: landings[index] === undefined ? '' : landingText(landings[index]),
     };
   });

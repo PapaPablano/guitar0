@@ -62,6 +62,10 @@ export const MATCH_OPTIONS = {
   anchorPeakMin: 3,
   /** A refinement closer than this to where the previous bar's steady run predicts is snapped to it, so a steady band shows no step; the error it allows never builds up past this. */
   snapSeconds: 0.02,
+  /** How many bars either side of an unpinned bar are averaged with it. */
+  settleBars: 3,
+  /** How far a bar's offset may sit from its neighbours' median and still count as the same steady stretch. */
+  settleSeconds: 0.15,
 } as const;
 
 type Options = typeof MATCH_OPTIONS;
@@ -263,6 +267,29 @@ function refineAnchor(barStart: number, guess: number, input: MatchInput, o: Opt
   return { seconds: barStart + (centre + best - reach) / ONSET_RATE, prominence: std > 0 ? (scores[best] - mean) / std : 0 };
 }
 
+/**
+ * A bar the onsets could not pin down keeps the path's value, and the path moves in whole frames, so from one bar to the
+ * next it can flip between two neighbouring offsets even when the band is steady. Each such bar takes the mean offset of the
+ * bars around it that sit within a frame and a half of it, which is finer than a frame and leaves a real jump (extra
+ * or skipped playing, a change of tempo) alone because the bars across it are not counted.
+ */
+function settleUnpinned(raw: number[], bars: readonly BarSpan[], confidence: readonly number[], fromPath: readonly number[], o: Options): void {
+  const offsets = raw.map((anchor, k) => anchor - bars[k].start);
+  const skipped = bars.map((_, k) => k + 1 < bars.length && fromPath[k + 1] - fromPath[k] < 0.1);
+  const reach = o.settleBars;
+  const tolerance = o.settleSeconds;
+  for (let k = 0; k < bars.length; k++) {
+    if (confidence[k] > 0 || skipped[k]) continue;
+    const near: number[] = [];
+    for (let j = Math.max(0, k - reach); j <= Math.min(bars.length - 1, k + reach); j++) if (!skipped[j]) near.push(offsets[j]);
+    const sorted = [...near].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    if (Math.abs(offsets[k] - median) > tolerance) continue;
+    const alike = near.filter((offset) => Math.abs(offset - median) <= tolerance);
+    raw[k] = bars[k].start + alike.reduce((sum, offset) => sum + offset, 0) / alike.length;
+  }
+}
+
 const round2 = (x: number): number => Math.round(x * 100) / 100;
 
 /** Runs of path cells of one kind: a wait (the recording plays on at one tab frame) or a skip (the tab runs on at one recording frame). */
@@ -288,11 +315,14 @@ function runsOf(path: PathCell[], move: 2 | 3, minFrames: number): { first: Path
   return runs;
 }
 
+/** How far, in frames, an offset may sit from the bar's median and still count as the same steady stretch. */
+const CLUSTER_FRAMES = 1.5;
+
 /**
- * One anchor for a bar from the diagonal cells of the path inside it: the median offset of those cells, taken from the
- * bar's start. A bar's notes play steadily, so the median is steadier than the path's value at the bar line, which
- * wobbles where extra playing begins; and when a wait falls inside the bar, the side holding most of its cells
- * decides which line the extra playing belongs to, which is the nearest one. Matched cells are preferred.
+ * One anchor for a bar from the diagonal cells of the path inside it: the offset of those cells, taken from the bar's
+ * start. A bar's notes play steadily, so this is steadier than the path's value at the bar line, which wobbles where
+ * extra playing begins; and when a wait falls inside the bar, the side holding most of its cells decides which line the
+ * extra playing belongs to, which is the nearest one. Matched cells are preferred.
  * Returns null for a bar with no diagonal cells.
  */
 function anchorFromCells(
@@ -312,7 +342,12 @@ function anchorFromCells(
   const offsets = good.length >= 3 ? good : all;
   if (offsets.length === 0) return null;
   offsets.sort((a, b) => a - b);
-  return bar.start + offsets[Math.floor(offsets.length / 2)] / CHROMA_RATE;
+  const median = offsets[Math.floor(offsets.length / 2)];
+  // The path moves in whole frames, so the median can only land on the frame grid. The offsets that stay near it are
+  // one steady stretch, and their mean is finer than a frame where the path wobbles between two neighbouring offsets.
+  const steady = offsets.filter((offset) => Math.abs(offset - median) <= CLUSTER_FRAMES);
+  const mean = steady.reduce((sum, offset) => sum + offset, 0) / steady.length;
+  return bar.start + mean / CHROMA_RATE;
 }
 
 /**
@@ -420,6 +455,7 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
       barConfidence[k] = refined.prominence;
     }
   }
+  settleUnpinned(raw, bars, barConfidence, fromPath, o);
   // A band that is steady shows no steps: a refinement within a few milliseconds of where the previous bar's run predicts is that prediction.
   const anchors: number[] = [raw[0]];
   for (let k = 1; k < bars.length; k++) {
