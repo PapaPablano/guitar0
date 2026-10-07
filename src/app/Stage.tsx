@@ -1,191 +1,130 @@
 import { useEffect, useRef } from 'react';
-import { renderFretboard, type LabelMode } from '../render/fretboard';
-import { barAtX, getBarTimelineLayout, renderBarTimeline } from '../render/bar-timeline';
-import { renderHighway } from '../render/highway';
-import {
-  getStripLayout,
-  renderTabStrip,
-  scoreBarAtX,
-  type LoopBars,
-} from '../render/tab-strip';
-import { playbackBarIndexAt } from '../model/bars';
 import type { Clock } from '../audio/clock';
+import { playbackBarIndexAt } from '../model/bars';
 import type { Timeline } from '../model/score';
-import type { BottomView } from '../render/composite';
+import type { LabelMode } from '../render/fretboard';
+import type { LoopBars } from '../render/tab-strip';
+import { drawSurface, surfaceLabel, type SurfaceKind } from './panel-draw';
+import { needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
+import { useBarSelect } from './use-bar-select';
+import { useNeckPhoto } from './use-neck-photo';
 
 interface StageProps {
   timeline: Timeline;
   trackIndex: number;
   clock: Clock;
-  /** Which view fills the bottom panel. */
-  bottomView: BottomView;
-  /** Upcoming steps the fretboard shows. */
+  /** Which panels are on the page. */
+  layout: StageLayout;
+  /** Upcoming steps the fretboard and the real guitar show. */
   lookahead: number;
-  /** What the fretboard dots say. */
+  /** What the dots say. */
   labelMode: LabelMode;
+  /** Whether the real guitar draws technique cues. */
+  neckCues: boolean;
+  onNeckCuesChange: (on: boolean) => void;
   loop: LoopBars | null;
   onLoopChange: (loop: LoopBars | null) => void;
   /** Called when the strip is clicked without dragging: seek to the start of a score bar. */
   onSeekBar: (scoreBar: number) => void;
   /** Called every frame so the parent can follow the clock (play state, time readout). */
   onFrame: (t: number) => void;
-}
-
-/** Sizes a canvas to its CSS box at the device pixel ratio and returns its 2D context. */
-function fitCanvas(canvas: HTMLCanvasElement): { ctx: CanvasRenderingContext2D; width: number; height: number } | null {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(1, Math.round(rect.width));
-  const height = Math.max(1, Math.round(rect.height));
-  if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-  }
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return { ctx, width, height };
+  onFullscreen: (panel: PanelId) => void;
 }
 
 export function Stage({
   timeline,
   trackIndex,
   clock,
-  bottomView,
+  layout,
   lookahead,
   labelMode,
+  neckCues,
+  onNeckCuesChange,
   loop,
   onLoopChange,
   onSeekBar,
   onFrame,
+  onFullscreen,
 }: StageProps) {
-  const highwayRef = useRef<HTMLCanvasElement>(null);
-  const stripRef = useRef<HTMLCanvasElement>(null);
-  const fretboardRef = useRef<HTMLCanvasElement>(null);
-  const timelineRef = useRef<HTMLCanvasElement>(null);
-  const loopRef = useRef(loop);
-  loopRef.current = loop;
-  const lookaheadRef = useRef(lookahead);
-  lookaheadRef.current = lookahead;
-  const labelModeRef = useRef(labelMode);
-  labelModeRef.current = labelMode;
-  const dragRef = useRef<{ anchorBar: number; moved: boolean } | null>(null);
-
-  // A view switch unmounts the canvas that owned any drag in progress.
-  useEffect(() => {
-    dragRef.current = null;
-  }, [bottomView]);
+  const canvases = useRef<Partial<Record<SurfaceKind, HTMLCanvasElement | null>>>({});
+  const photo = useNeckPhoto();
+  const panels = panelsOf(layout);
+  const bar = needsBarStrip(panels);
+  const key = `${layout.top}/${layout.bottom}`;
+  const liveRef = useRef({ loop, lookahead, labelMode, neckCues });
+  liveRef.current = { loop, lookahead, labelMode, neckCues };
+  const barSelect = useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeekBar, resetKey: key });
 
   useEffect(() => {
     let frame = 0;
     let lastBar = -1;
     const draw = () => {
       const t = clock.time();
-      const highway = highwayRef.current;
-      const strip = stripRef.current;
-      const fretboard = fretboardRef.current;
-      const barTimeline = timelineRef.current;
-      if (highway) {
-        const fit = fitCanvas(highway);
-        if (fit) renderHighway(fit.ctx, timeline, trackIndex, t, fit.width, fit.height);
-        const bar = playbackBarIndexAt(timeline, t);
-        if (bar !== lastBar) {
-          lastBar = bar;
-          const label = `Highway, bar ${timeline.bars[bar]?.scoreBar + 1} of ${timeline.scoreBarCount}, track ${timeline.tracks[trackIndex]?.name || trackIndex + 1}`;
-          highway.setAttribute('aria-label', label);
-          strip?.setAttribute('aria-label', label.replace('Highway', 'Tab strip'));
-          fretboardRef.current?.setAttribute('aria-label', label.replace('Highway', 'Fretboard'));
-          timelineRef.current?.setAttribute('aria-label', label.replace('Highway', 'Bar timeline'));
-        }
-      }
-      if (strip) {
-        const fit = fitCanvas(strip);
-        if (fit) renderTabStrip(fit.ctx, timeline, trackIndex, t, fit.width, fit.height, { loop: loopRef.current });
-      }
-      if (fretboard) {
-        const fit = fitCanvas(fretboard);
-        if (fit) renderFretboard(fit.ctx, timeline, trackIndex, t, fit.width, fit.height, { lookahead: lookaheadRef.current, labelMode: labelModeRef.current });
-      }
-      if (barTimeline) {
-        const fit = fitCanvas(barTimeline);
-        if (fit) renderBarTimeline(fit.ctx, timeline, t, fit.width, fit.height, { loop: loopRef.current });
+      const live = liveRef.current;
+      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current };
+      const playbackBar = playbackBarIndexAt(timeline, t);
+      const relabel = playbackBar !== lastBar;
+      lastBar = playbackBar;
+      for (const kind of Object.keys(canvases.current) as SurfaceKind[]) {
+        const canvas = canvases.current[kind];
+        if (!canvas) continue;
+        drawSurface(kind, canvas, state);
+        if (relabel) canvas.setAttribute('aria-label', surfaceLabel(kind, timeline, trackIndex, playbackBar));
       }
       onFrame(t);
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, onFrame, bottomView]);
+  }, [timeline, trackIndex, clock, onFrame, photo]);
 
-  function barFromEvent(e: React.PointerEvent<HTMLCanvasElement>): number | null {
-    const canvas = bottomView === 'fretboard' ? timelineRef.current : stripRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.round(rect.width);
-    const height = Math.round(rect.height);
-    const x = e.clientX - rect.left;
-    // a drag that overshoots the edge selects the nearest end bar
-    if (bottomView === 'fretboard') {
-      const inside = Math.min(Math.max(x, 0), width - 0.001);
-      return barAtX(getBarTimelineLayout(timeline, width, height), inside);
-    }
-    return scoreBarAtX(getStripLayout(timeline, trackIndex, width, height), timeline, clock.time(), x);
-  }
-
-  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    const bar = barFromEvent(e);
-    if (bar === null) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { anchorBar: bar, moved: false };
-  }
-
-  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const bar = barFromEvent(e);
-    if (bar === null) return;
-    if (bar !== drag.anchorBar) drag.moved = true;
-    if (drag.moved) {
-      onLoopChange({ startBar: Math.min(drag.anchorBar, bar), endBar: Math.max(drag.anchorBar, bar) });
-    }
-  }
-
-  function onPointerUp() {
-    const drag = dragRef.current;
-    dragRef.current = null;
-    if (drag && !drag.moved) onSeekBar(drag.anchorBar);
+  function panel(id: PanelId) {
+    const seekable = id === 'tab';
+    return (
+      <div className="stage-panel" key={id}>
+        <canvas
+          ref={(el) => {
+            canvases.current[id] = el;
+          }}
+          className={`panel-canvas panel-${id}`}
+          role="img"
+          aria-label={PANEL_NAMES[id]}
+          title={seekable ? 'Click a bar to jump there, drag across bars to loop them' : undefined}
+          {...(seekable ? barSelect('tab') : {})}
+        />
+        <div className="panel-tools">
+          {id === 'neck' && (
+            <button
+              type="button"
+              aria-pressed={neckCues}
+              onClick={() => onNeckCuesChange(!neckCues)}
+              title="Show how each note is played: hammer-ons, slides, bends and more"
+            >
+              Techniques {neckCues ? 'on' : 'off'}
+            </button>
+          )}
+          <button type="button" onClick={() => onFullscreen(id)} aria-label={`Full screen ${PANEL_NAMES[id]}`} title={`Full screen ${PANEL_NAMES[id]}`}>
+            ⤢
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="stage">
-      <canvas ref={highwayRef} className="highway" role="img" aria-label="Highway" />
-      {bottomView === 'tab' ? (
+      {panels.map(panel)}
+      {bar && (
         <canvas
-          ref={stripRef}
-          className="strip"
+          ref={(el) => {
+            canvases.current.bar = el;
+          }}
+          className="panel-canvas bar-timeline"
           role="img"
-          aria-label="Tab strip"
+          aria-label="Bar timeline"
           title="Click a bar to jump there, drag across bars to loop them"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+          {...barSelect('bar')}
         />
-      ) : (
-        <>
-          <canvas ref={fretboardRef} className="fretboard" role="img" aria-label="Fretboard" />
-          <canvas
-            ref={timelineRef}
-            className="bar-timeline"
-            role="img"
-            aria-label="Bar timeline"
-            title="Click a bar to jump there, drag across bars to loop them"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-          />
-        </>
       )}
     </div>
   );

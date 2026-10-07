@@ -3,8 +3,8 @@ import { initialViewState } from '../../src/app/ViewControls';
 import { clampLookahead } from '../../src/render/fretboard-steps';
 
 describe('initialViewState', () => {
-  it('starts on the tab strip with a look-ahead of 4 and fret labels', () => {
-    expect(initialViewState()).toEqual({ bottomView: 'tab', lookahead: 4, labelMode: 'fret' });
+  it('starts on the highway over the tab strip with a look-ahead of 4 and fret labels', () => {
+    expect(initialViewState()).toEqual({ layout: { top: 'highway', bottom: 'tab' }, lookahead: 4, labelMode: 'fret' });
   });
 
   it('returns a fresh object each time, so a reset never shares state', () => {

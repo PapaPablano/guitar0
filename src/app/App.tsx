@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
@@ -56,19 +56,23 @@ import { isDesktop } from './desktop';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
-import { NeckFullscreen } from './NeckFullscreen';
+import { PanelFullscreen } from './PanelFullscreen';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
-import { initialViewState, ViewControls, type BottomView } from './ViewControls';
+import { initialViewState, ViewControls } from './ViewControls';
+import { exportBottomView, saveLayout, type PanelId, type StageLayout } from './stage-layout';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
 import { assessSupport, readSupportEnvironment } from './support';
 import { FILE_TUNING, presetById, retuneTimeline } from '../model/retune';
-import { TuningPicker } from './TuningPicker';
-import { FileTuningPicker } from './FileTuningPicker';
+import { TuningChip } from './TuningChip';
+import { Menu } from './Menu';
+import { ShortcutLegend } from './ShortcutLegend';
+import { PracticeTools } from './PracticeTools';
+import { alignmentNeedsLook, availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
 import './app.css';
 
@@ -124,8 +128,13 @@ export function App() {
   /** Counts the player in when a held jump has paused playback. */
   const countIn = useRef(new ClickCountIn());
   const [exportOpen, setExportOpen] = useState(false);
-  const [neckFullscreen, setNeckFullscreen] = useState(false);
-  const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
+  const [fullscreenPanel, setFullscreenPanel] = useState<PanelId | null>(null);
+  const [tool, setTool] = useState<ToolId>('loop');
+  const [layout, setLayoutState] = useState<StageLayout>(() => initialViewState().layout);
+  const setLayout = useCallback((next: StageLayout) => {
+    setLayoutState(next);
+    saveLayout(next);
+  }, []);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
   /** Whether the neck shows technique cues: remembered between sessions, on until the player turns it off. */
@@ -487,7 +496,6 @@ export function App() {
     setUserAudioError(null);
     setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
     setTrackIndex(firstPlayableTrack(timeline));
-    setBottomView(initialViewState().bottomView);
     setLookahead(initialViewState().lookahead);
     setLabelMode(initialViewState().labelMode);
     setTuningId(FILE_TUNING);
@@ -697,7 +705,7 @@ export function App() {
     setPlaying(clock.playing);
   }, [clock, audioReady]);
 
-  const closeNeckFullscreen = useCallback(() => setNeckFullscreen(false), []);
+  const closeFullscreen = useCallback(() => setFullscreenPanel(null), []);
 
   const setLoopRange = useCallback((next: LoopBars | null) => {
     setLoop(next);
@@ -710,6 +718,7 @@ export function App() {
       const target = e.target as HTMLElement | null;
       const action = interpretKey(e.key, { tag: target?.tagName ?? 'body' });
       if (!action || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (action === 'toggle-fullscreen' && e.repeat) return;
       e.preventDefault();
       switch (action) {
         case 'toggle-play':
@@ -730,11 +739,14 @@ export function App() {
         case 'toggle-loop':
           if (loop) setLoopOn((on) => !on);
           break;
+        case 'toggle-fullscreen':
+          setFullscreenPanel((open) => (open ? null : layout.top));
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clock, timeline, loop, togglePlay, exportOpen]);
+  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
@@ -747,7 +759,7 @@ export function App() {
           <h1>Tab Highway</h1>
           <p className="error">{support.notice}</p>
         </section>
-        <Notices />
+      <Notices />
       </main>
     );
   }
@@ -761,12 +773,107 @@ export function App() {
           </p>
         )}
         <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} />
-        <Notices />
+      <Notices />
       </main>
     );
   }
 
   const track = timeline.tracks[trackIndex];
+
+  const toolPanels: Record<ToolId, ReactNode> = {
+    loop: (
+      <LoopControls
+        barCount={barCount}
+        loop={loop}
+        enabled={loopOn}
+        onChange={setLoopRange}
+        onToggle={() => setLoopOn((on) => !on)}
+      />
+    ),
+    sections: (
+      <SectionPanel
+        rows={describeSectionRows(sections, timeline, barHealth, landings)}
+        onJump={(index) => clock.seek(jumpTarget(sections[index], timeline))}
+        onLoop={(index) => setLoopRange(loopFor(sections[index], timeline))}
+        onRename={(index, name) => {
+          const next = renameSection(live.current.sections, index, name);
+          live.current.sections = next;
+          setSections(next);
+          scheduleProfileSave(live.current.alignment.base);
+        }}
+      />
+    ),
+    recording: (
+      <OffsetSlider
+        offsetSeconds={userClock || stems ? offset : null}
+        offsetControl={stateControls.showOffset}
+        fileName={userClock?.file?.name ?? stems?.title ?? null}
+        error={userAudioError}
+        onLoad={onLoadRecording}
+        onOffsetChange={(raw) => {
+          const seconds = clampOffset(raw);
+          offsetMoved.current = true;
+          offsetMovedSinceRun.current = true;
+          applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
+        }}
+        onRemove={onRemoveRecording}
+      />
+    ),
+    stems: (
+      <StemPanel
+        recording={userClock?.file ?? null}
+        durationSeconds={timeline.durationSeconds}
+        active={stems}
+        mix={mix}
+        onMixChange={(next) => {
+          setMix(next);
+          mixMoved.current = true;
+          if (isDesktop()) {
+            profileMix.current = next;
+            scheduleProfileSave(live.current.offset);
+          }
+        }}
+        onActivate={activateStems}
+      />
+    ),
+    alignment: (
+      <AlignmentPanel
+        status={alignStatus}
+        canReanalyse={stateControls.canReanalyse && !exportOpen}
+        change={alignChange}
+        landingStats={landingStats}
+        onDismissChange={() => setAlignChange(null)}
+        onReanalyse={() => {
+          if (!userClock?.file) return;
+          // A run the owner asks for starts clean: a failed attempt no longer holds it back.
+          offsetMoved.current = false;
+          alignAttempt.current = null;
+          redetectCause.current = null;
+          setAlignRequest({ file: userClock.file, clock: userClock });
+        }}
+      />
+    ),
+  };
+  const seekToBar = (bar: number) => {
+    const start = scoreBarStartSeconds(getStripLayout(timeline, trackIndex, 1, 1), bar);
+    if (start !== null) clock.seek(start);
+  };
+  const seekBarMarks = {
+    sections:
+      userClock || stems
+        ? describeSectionRows(sections, timeline, barHealth, landings)
+            .filter((row) => row.label !== 'Whole song')
+            .map((row) => ({ label: row.label, startSeconds: jumpTarget(sections[row.index], timeline) }))
+        : [],
+    loop: (() => {
+      if (!loopOn || !loop) return null;
+      const strip = getStripLayout(timeline, trackIndex, 1, 1);
+      const startSeconds = scoreBarStartSeconds(strip, loop.startBar);
+      if (startSeconds === null) return null;
+      return { startSeconds, endSeconds: scoreBarStartSeconds(strip, loop.endBar + 1) ?? timeline.durationSeconds };
+    })(),
+  };
+  const toolIds = availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0, desktop: isDesktop() });
 
   return (
     <main className="app">
@@ -780,42 +887,49 @@ export function App() {
             setTuningId(FILE_TUNING);
           }}
         />
-        <FileTuningPicker
+        <TuningChip
+          track={track}
+          sourceTrack={sourceTimeline?.tracks[trackIndex]}
           written={session.written[trackIndex]?.[0] ?? []}
-          current={sourceTimeline?.tracks[trackIndex]?.tuning ?? []}
-          onChange={onFileTuningChange}
+          tuningId={tuningId}
+          onTuningChange={setTuningId}
+          onFileTuningChange={onFileTuningChange}
         />
-        <TuningPicker track={sourceTimeline?.tracks[trackIndex]} value={tuningId} onChange={setTuningId} />
         <ViewControls
-          view={bottomView}
+          layout={layout}
           lookahead={lookahead}
           labelMode={labelMode}
-          onViewChange={setBottomView}
+          onLayoutChange={setLayout}
           onLookaheadChange={setLookahead}
           onLabelModeChange={setLabelMode}
         />
-        {songsterrLink && (
-          <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
-            Find on Songsterr
-          </a>
-        )}
-        <button type="button" onClick={() => setNeckFullscreen(true)}>
-          Full screen
-        </button>
-        <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady || stateControls.exportBlockedReason !== null} title={stateControls.exportBlockedReason ?? undefined}>
-          Export video
-        </button>
         <button
           type="button"
-          onClick={() => {
-            sessionToken.current += 1;
-            session.clock.dispose();
-            replaceUserClock(null);
-            setSession(null);
-          }}
+          className="primary"
+          onClick={() => { clock.pause(); setExportOpen(true); }}
+          disabled={!audioReady || stateControls.exportBlockedReason !== null}
+          title={stateControls.exportBlockedReason ?? undefined}
         >
-          Open another file
+          Export video
         </button>
+        <Menu label="More" ariaLabel="More: find on Songsterr, open another file" className="more-menu">
+          {songsterrLink && (
+            <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
+              Find on Songsterr
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              sessionToken.current += 1;
+              session.clock.dispose();
+              replaceUserClock(null);
+              setSession(null);
+            }}
+          >
+            Open another file
+          </button>
+        </Menu>
       </header>
       {track && !track.hasTabData && (
         <p className="notice" role="status">
@@ -826,16 +940,15 @@ export function App() {
         timeline={timeline}
         trackIndex={trackIndex}
         clock={clock}
-        bottomView={bottomView}
+        layout={layout}
+        neckCues={neckCues}
+        onNeckCuesChange={changeNeckCues}
+        onFullscreen={setFullscreenPanel}
         lookahead={lookahead}
         labelMode={labelMode}
         loop={loopOn ? loop : null}
         onLoopChange={setLoopRange}
-        onSeekBar={(bar) => {
-          const layout = getStripLayout(timeline, trackIndex, 1, 1);
-          const start = scoreBarStartSeconds(layout, bar);
-          if (start !== null) clock.seek(start);
-        }}
+        onSeekBar={seekToBar}
         onFrame={onFrame}
       />
       {audio.status === 'loading' && (
@@ -861,20 +974,7 @@ export function App() {
         onRestart={() => clock.seek(0)}
         onTempoChange={setTempoPercent}
         onSeek={(s) => clock.seek(s)}
-      />
-      <OffsetSlider
-        offsetSeconds={userClock || stems ? offset : null}
-        offsetControl={stateControls.showOffset}
-        fileName={userClock?.file?.name ?? stems?.title ?? null}
-        error={userAudioError}
-        onLoad={onLoadRecording}
-        onOffsetChange={(raw) => {
-          const seconds = clampOffset(raw);
-          offsetMoved.current = true;
-          offsetMovedSinceRun.current = true;
-          applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
-        }}
-        onRemove={onRemoveRecording}
+        marks={seekBarMarks}
       />
       {userClock && exactNotice && (
         <p className={hold || !warnsOfApproximateJumps ? 'muted note' : 'notice'} role="status">
@@ -890,65 +990,18 @@ export function App() {
           label={exactNotice}
         />
       )}
-      {(userClock || stems) && (
-        <AlignmentPanel
-          status={alignStatus}
-          canReanalyse={stateControls.canReanalyse && !exportOpen}
-          change={alignChange}
-          landingStats={landingStats}
-          onDismissChange={() => setAlignChange(null)}
-          onReanalyse={() => {
-            if (!userClock?.file) return;
-            // A run the owner asks for starts clean: a failed attempt no longer holds it back.
-            offsetMoved.current = false;
-            alignAttempt.current = null;
-            redetectCause.current = null;
-            setAlignRequest({ file: userClock.file, clock: userClock });
-          }}
-        />
-      )}
-      {(userClock || stems) && sections.length > 0 && (
-        <SectionPanel
-          rows={describeSectionRows(sections, timeline, barHealth, landings)}
-          onJump={(index) => clock.seek(jumpTarget(sections[index], timeline))}
-          onLoop={(index) => setLoopRange(loopFor(sections[index], timeline))}
-          onRename={(index, name) => {
-            const next = renameSection(live.current.sections, index, name);
-            live.current.sections = next;
-            setSections(next);
-            scheduleProfileSave(live.current.alignment.base);
-          }}
-        />
-      )}
-      <StemPanel
-        recording={userClock?.file ?? null}
-        durationSeconds={timeline.durationSeconds}
-        active={stems}
-        mix={mix}
-        onMixChange={(next) => {
-          setMix(next);
-          mixMoved.current = true;
-          if (isDesktop()) {
-            profileMix.current = next;
-            scheduleProfileSave(live.current.offset);
-          }
-        }}
-        onActivate={activateStems}
-      />
-      <LoopControls
-        barCount={barCount}
-        loop={loop}
-        enabled={loopOn}
-        onChange={setLoopRange}
-        onToggle={() => setLoopOn((on) => !on)}
-      />
+      <PracticeTools tools={toolIds.map((id) => ({ id, panel: toolPanels[id] }))} value={tool} onChange={setTool} attention={alignmentNeedsLook(alignStatus, alignChange) ? ['alignment'] : []} />
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
-      {neckFullscreen && (
-        <NeckFullscreen
+      {fullscreenPanel && (
+        <PanelFullscreen
+          panel={fullscreenPanel}
+          loop={loopOn ? loop : null}
+          onLoopChange={setLoopRange}
+          onSeekBar={seekToBar}
           timeline={timeline}
           trackIndex={trackIndex}
           clock={clock}
@@ -959,14 +1012,14 @@ export function App() {
           playing={playing}
           canPlay={audioReady}
           onTogglePlay={togglePlay}
-          onClose={closeNeckFullscreen}
+          onClose={closeFullscreen}
         />
       )}
       {exportOpen && (
         <ExportDialog
           timeline={timeline}
           trackIndex={trackIndex}
-          bottom={{ view: bottomView, lookahead, labelMode, neckCues }}
+          bottom={{ view: exportBottomView(layout), lookahead, labelMode, neckCues }}
           onNeckCuesChange={changeNeckCues}
           onClose={() => setExportOpen(false)}
           loopRange={exportLoopRange}
@@ -986,6 +1039,7 @@ export function App() {
           }
         />
       )}
+      <ShortcutLegend />
       <Notices />
     </main>
   );

@@ -6,6 +6,8 @@
   --text: #e8eaf0;
   --muted: #9aa1b3;
   --accent: #4dabf7;
+  --accent-warm: #f2b04a;
+  --accent-cool: #5fc8b4;
   --danger: #ff8787;
 }
 
@@ -91,18 +93,6 @@ button[aria-pressed='true'] {
   width: 100%;
   display: block;
   border-radius: 8px;
-}
-
-.highway {
-  flex: 3;
-  min-height: 0;
-}
-
-.strip {
-  flex: 2;
-  min-height: 0;
-  touch-action: none;
-  cursor: pointer;
 }
 
 .transport,
@@ -346,11 +336,6 @@ a.link-button:hover {
   border-color: var(--accent);
 }
 
-.fretboard {
-  flex: 3;
-  min-height: 0;
-}
-
 .bar-timeline {
   flex: none;
   height: 36px;
@@ -445,21 +430,30 @@ a.link-button:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.neck-fullscreen {
+.panel-fullscreen {
+  outline: none;
   position: fixed;
   inset: 0;
   z-index: 50;
+  display: flex;
+  flex-direction: column;
   background: #03141a;
 }
 
-.neck-fullscreen canvas {
+.panel-fullscreen canvas {
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: block;
   cursor: pointer;
 }
 
-.neck-fullscreen-close {
+.panel-fullscreen canvas.bar-timeline {
+  flex: none;
+  height: 56px;
+}
+
+.panel-fullscreen-close {
   position: absolute;
   top: 12px;
   right: 12px;
@@ -471,7 +465,7 @@ a.link-button:hover {
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.neck-fullscreen-hint {
+.panel-fullscreen-hint {
   position: absolute;
   bottom: 24px;
   left: 0;
@@ -517,7 +511,7 @@ a.link-button:hover {
   background: var(--text);
 }
 
-.neck-fullscreen-cues {
+.panel-fullscreen-cues {
   position: absolute;
   top: 12px;
   right: 62px;
@@ -529,6 +523,269 @@ a.link-button:hover {
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.neck-fullscreen-cues[aria-pressed='true'] {
+.panel-fullscreen-cues[aria-pressed='true'] {
   border-color: var(--accent);
+}
+
+.track-tabs {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.track-tabs button {
+  white-space: nowrap;
+}
+
+button.primary {
+  background: var(--accent-warm);
+  border-color: var(--accent-warm);
+  color: #1a1304;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  user-select: none;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu > summary::after {
+  content: ' \25BE';
+  color: var(--muted);
+}
+
+.menu[open] > summary,
+.menu > summary:hover {
+  border-color: var(--accent);
+}
+
+.menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 240px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.menu-panel .field {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.menu-panel select {
+  width: 100%;
+}
+
+.practice-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-chips button {
+  border-radius: 999px;
+  padding: 6px 16px;
+}
+
+.tool-panel[hidden] {
+  display: none;
+}
+
+.stage-panel {
+  position: relative;
+  flex: 1;
+  min-height: 160px;
+}
+
+.stage-panel .panel-canvas {
+  height: 100%;
+}
+
+.panel-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0.7;
+}
+
+.stage-panel:hover .panel-tools,
+.panel-tools:focus-within {
+  opacity: 1;
+}
+
+.panel-tools button {
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-canvas.panel-tab {
+  touch-action: none;
+  cursor: pointer;
+}
+
+.stage > .bar-timeline {
+  flex: none;
+}
+
+.seek-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+  padding-top: 16px;
+}
+
+.seek-wrap .seek {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  position: relative;
+}
+
+.seek-mark {
+  position: absolute;
+  top: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.seek-loop {
+  position: absolute;
+  top: 18px;
+  bottom: 2px;
+  background: rgb(95 200 180 / 0.35);
+  border: 1px solid var(--accent-cool);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.stepper output {
+  min-width: 1.5em;
+  text-align: center;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.shortcut-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.shortcut-legend kbd {
+  font-family: inherit;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 3px;
+}
+
+/* Narrow windows and touch screens: let the page shrink, wrap the header, and make controls easy to hit. */
+@media (max-width: 900px) {
+  .app {
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  .topbar h1 {
+    flex-basis: 100%;
+  }
+
+  .track-tabs {
+    flex-basis: 100%;
+  }
+
+  .stage {
+    height: clamp(520px, 80vh, 1300px);
+  }
+
+  .transport .time {
+    flex-basis: auto;
+  }
+
+  .seek-wrap {
+    flex-basis: 100%;
+    order: 5;
+  }
+
+  .menu-panel {
+    right: auto;
+    left: 0;
+    max-width: calc(100vw - 20px);
+  }
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .topbar button,
+  .menu > summary,
+  .transport button,
+  .tool-chips button,
+  .segmented button,
+  .stepper button,
+  .panel-tools button {
+    min-height: 44px;
+  }
+
+  .panel-tools button {
+    min-width: 44px;
+  }
+}
+
+.panel-fullscreen canvas {
+  touch-action: none;
+}
+
+.tool-chips button.attention::after {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--accent-warm);
 }

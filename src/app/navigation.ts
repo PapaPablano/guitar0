@@ -18,7 +18,8 @@ export type ShortcutAction =
   | 'seek-forward'
   | 'tempo-up'
   | 'tempo-down'
-  | 'toggle-loop';
+  | 'toggle-loop'
+  | 'toggle-fullscreen';
 
 export interface ShortcutTarget {
   readonly tag: string;
@@ -46,6 +47,9 @@ export function interpretKey(key: string, target: ShortcutTarget): ShortcutActio
     case 'l':
     case 'L':
       return 'toggle-loop';
+    case 'f':
+    case 'F':
+      return 'toggle-fullscreen';
     default:
       return null;
   }
