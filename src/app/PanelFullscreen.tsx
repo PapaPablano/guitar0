@@ -147,7 +147,7 @@ export function PanelFullscreen({
         ✕
       </button>
       {!playing && canPlay && (
-        <p className="panel-fullscreen-hint">
+        <p className="panel-fullscreen-hint" style={withBar ? { bottom: 76 } : undefined}>
           {seekable ? 'Press space to play' : 'Tap or press space to play'} · Esc to exit
         </p>
       )}
