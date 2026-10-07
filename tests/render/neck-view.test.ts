@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   drawNeckPhoto,
   PHOTO_FRET_COUNT,
+  PHOTO_HEIGHT,
+  PHOTO_WIDTH,
   photoNoteX,
   photoPlacement,
   photoRingRadius,
@@ -24,20 +26,20 @@ function draw(specs: NoteSpec[], t: number, w: number, h: number, lookahead?: nu
 }
 
 describe('photo geometry', () => {
-  it('has 24 frets, whose rings move toward the bridge as the fret number rises', () => {
-    expect(PHOTO_FRET_COUNT).toBe(24);
-    for (let f = 1; f < 24; f++) expect(photoNoteX(f + 1)).toBeGreaterThan(photoNoteX(f));
+  it('has 23 frets, whose rings move toward the bridge as the fret number rises', () => {
+    expect(PHOTO_FRET_COUNT).toBe(23);
+    for (let f = 1; f < PHOTO_FRET_COUNT; f++) expect(photoNoteX(f + 1)).toBeGreaterThan(photoNoteX(f));
     expect(photoNoteX(0)).toBeLessThan(photoNoteX(1));
   });
 
   it('keeps a fret beyond the last on the last fret', () => {
-    expect(photoNoteX(30)).toBe(photoNoteX(24));
+    expect(photoNoteX(30)).toBe(photoNoteX(PHOTO_FRET_COUNT));
   });
 
   it('runs the strings top to bottom, high e first, spreading toward the bridge', () => {
     for (let s = 1; s < 6; s++) expect(photoStringY(s, 6, 300)).toBeLessThan(photoStringY(s + 1, 6, 300));
-    const nut = photoStringY(6, 6, 145) - photoStringY(1, 6, 145);
-    const far = photoStringY(6, 6, 800) - photoStringY(1, 6, 800);
+    const nut = photoStringY(6, 6, 140) - photoStringY(1, 6, 140);
+    const far = photoStringY(6, 6, 810) - photoStringY(1, 6, 810);
     expect(far).toBeGreaterThan(nut);
   });
 
@@ -131,7 +133,7 @@ describe('the photo and the whole frame', () => {
     const place = photoPlacement(1920, 1080);
     const drawn = calls.findIndex((c) => c.name === 'drawImage');
     expect(drawn).toBeGreaterThanOrEqual(0);
-    expect(calls[drawn].args).toEqual([image, -place.centreX, -place.centreY]);
+    expect(calls[drawn].args).toEqual([image, -place.centreX, -place.centreY, PHOTO_WIDTH, PHOTO_HEIGHT]);
     expect(calls.findIndex((c) => c.name === 'arc')).toBeGreaterThan(drawn);
     expect(calls.some((c) => c.name === 'rotate')).toBe(false);
   });

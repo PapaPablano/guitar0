@@ -10,34 +10,34 @@ import type { NoteEvent, Timeline } from '../model/score';
 
 /**
  * The full-screen view draws glowing rings over a photograph of a real guitar neck. Everything here
- * is measured from that photo (`guitar-photo.jpg`, 1120 by 491, headstock on the left), in the
+ * is measured from that photo (`guitar-photo.jpg`, headstock on the left, shown at 949 by 475 of these units), in the
  * photo's own pixels, so the rings land on its frets and strings.
  */
-export const PHOTO_WIDTH = 1120;
-export const PHOTO_HEIGHT = 491;
+export const PHOTO_WIDTH = 949;
+export const PHOTO_HEIGHT = 475;
 
 /** X of the nut, then of each fret wire from fret 1 to fret 24. */
-const NUT_X = 137;
-const FRET_X = [181, 222, 262, 302, 339, 373, 408, 441, 472, 502, 531, 558, 584, 609, 633, 656, 677, 699, 720, 738, 755, 772, 790, 804] as const;
+const NUT_X = 134;
+const FRET_X = [182, 228, 273, 316, 356, 396, 430, 464, 499, 531, 560, 590, 617, 643, 667, 688, 709, 728, 746, 763, 779, 795, 810] as const;
 export const PHOTO_FRET_COUNT = FRET_X.length;
 /** X of the bridge, where the strings end. */
-const BRIDGE_X = 1095;
+const BRIDGE_X = 945;
 
 /** Y of each of the six strings (high e first) at these X positions; between them the strings run straight. */
-const STRING_KNOTS_X = [145, 300, 500, 600, 700, 800] as const;
+const STRING_KNOTS_X = [140, 270, 380, 520, 680, 810] as const;
 const STRING_KNOTS_Y: readonly (readonly number[])[] = [
-  [208, 210, 214, 215, 217, 218],
-  [217, 221, 226, 229, 231, 233],
-  [226, 231, 238, 242, 245, 248],
-  [236, 242, 251, 255, 259, 264],
-  [245, 253, 264, 269, 274, 279],
-  [255, 264, 276, 282, 288, 294],
+  [208, 206, 205, 203, 201, 199],
+  [217, 217, 216, 216, 215, 215],
+  [227, 227, 228, 229, 229, 230],
+  [237, 238, 240, 241, 243, 245],
+  [247, 250, 252, 254, 258, 260],
+  [257, 261, 264, 268, 272, 275],
 ];
 
 /** The stretch of the photo the view shows (the headstock to the last frets) and the row the neck runs along. */
 const VIEW_START = 20;
 const VIEW_END = 820;
-const NECK_ROW = 262;
+const NECK_ROW = 236;
 
 export interface PhotoPlacement {
   /** True on a tall screen: the photo is turned so the headstock is at the top, like a guitar held up. */
@@ -234,7 +234,7 @@ export interface PhotoContext extends DrawContext {
   translate(x: number, y: number): void;
   rotate(angle: number): void;
   scale(x: number, y: number): void;
-  drawImage(image: CanvasImageSource, x: number, y: number): void;
+  drawImage(image: CanvasImageSource, x: number, y: number, width: number, height: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
 }
 
@@ -253,7 +253,7 @@ export function drawNeckPhoto(
   ctx.translate(width / 2, height / 2);
   if (place.rotated) ctx.rotate(Math.PI / 2);
   ctx.scale(place.scale, place.scale);
-  ctx.drawImage(image, -place.centreX, -place.centreY);
+  ctx.drawImage(image, -place.centreX, -place.centreY, PHOTO_WIDTH, PHOTO_HEIGHT);
   ctx.restore();
 }
 
@@ -356,7 +356,8 @@ const boardBottom = (x: number) => photoStringY(6, 6, x) + 7;
 const BOARD_LEFT = NUT_X - 2;
 const BOARD_RIGHT = FRET_X[PHOTO_FRET_COUNT - 1] + 6;
 const FAR = 5000;
-const FRET_NUMBERS: readonly number[] = [3, 5, 7, 9, 12, 15, 17, 19, 21, 24];
+/** The frets that carry an inlay in the photo. */
+const FRET_NUMBERS: readonly number[] = [3, 5, 7, 9, 12, 14, 16, 18, 20, 23];
 const GLASS = '#9fe8ff';
 
 /** Fills a polygon given in photo coordinates. */
