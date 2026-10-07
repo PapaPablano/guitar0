@@ -12,7 +12,7 @@ import type { OutcomeTier } from './timeline-check';
 /** Recordings longer than this are not analysed, so memory stays bounded. */
 export const MAX_ANALYSIS_SECONDS = 30 * 60;
 /** A tab longer than this is not lined up automatically (the sound for it is rendered in memory). */
-export const MAX_ANALYSIS_TAB_SECONDS = 600;
+export const MAX_ANALYSIS_TAB_SECONDS = 15 * 60;
 
 export type AnalysisResult =
   | {

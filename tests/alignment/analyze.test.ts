@@ -148,6 +148,10 @@ describe('startAnalysis', () => {
     expect(deps.decode).not.toHaveBeenCalled();
   });
 
+  it('lines up a tab as long as fifteen minutes', () => {
+    expect(MAX_ANALYSIS_TAB_SECONDS).toBe(15 * 60);
+  });
+
   it('does not decode a recording whose length is not a finite number', async () => {
     const { deps } = fakes();
     for (const durationSeconds of [Number.NaN, Number.POSITIVE_INFINITY]) {

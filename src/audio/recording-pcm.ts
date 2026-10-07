@@ -5,7 +5,7 @@ import { frameAtSample, id3TagLength, mapMp3Frames, sliceForSamples, totalSample
 /** Seconds of the recording in each chunk. Whole seconds, so a chunk's edges are whole samples at any sample rate. */
 export const CHUNK_SECONDS = 10;
 /** Seconds of audio kept decoded at once; a longer recording keeps the stretches nearest where it is played. */
-export const BUDGET_SECONDS = 600;
+export const BUDGET_SECONDS = 15 * 60;
 /** Whole frames decoded before a stretch for the decoder to settle on; an MP3 frame can borrow bits from the frames before it. */
 const LEAD_IN_FRAMES = 4;
 /** How far past the first chunk the prefix used to line the timeline up reaches, in samples; the start trim is a few thousand at most. */
