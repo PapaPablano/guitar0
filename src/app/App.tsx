@@ -855,6 +855,10 @@ export function App() {
       />
     ),
   };
+  const seekToBar = (bar: number) => {
+    const start = scoreBarStartSeconds(getStripLayout(timeline, trackIndex, 1, 1), bar);
+    if (start !== null) clock.seek(start);
+  };
   const seekBarMarks = {
     sections:
       userClock || stems
@@ -948,11 +952,7 @@ export function App() {
         labelMode={labelMode}
         loop={loopOn ? loop : null}
         onLoopChange={setLoopRange}
-        onSeekBar={(bar) => {
-          const layout = getStripLayout(timeline, trackIndex, 1, 1);
-          const start = scoreBarStartSeconds(layout, bar);
-          if (start !== null) clock.seek(start);
-        }}
+        onSeekBar={seekToBar}
         onFrame={onFrame}
       />
       {audio.status === 'loading' && (
@@ -1005,10 +1005,7 @@ export function App() {
           panel={fullscreenPanel}
           loop={loopOn ? loop : null}
           onLoopChange={setLoopRange}
-          onSeekBar={(bar) => {
-            const start = scoreBarStartSeconds(getStripLayout(timeline, trackIndex, 1, 1), bar);
-            if (start !== null) clock.seek(start);
-          }}
+          onSeekBar={seekToBar}
           timeline={timeline}
           trackIndex={trackIndex}
           clock={clock}

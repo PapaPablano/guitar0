@@ -24,6 +24,11 @@ export function useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeek
 
   return (kind: 'tab' | 'bar') => {
     const barOf = (e: PointerEvent<HTMLCanvasElement>) => barAtPointer(kind, e.currentTarget, e.clientX, timeline, trackIndex, clock.time());
+    const end = () => {
+      const d = drag.current;
+      drag.current = null;
+      if (d && !d.moved) onSeekBar(d.anchorBar);
+    };
     return {
       onPointerDown(e: PointerEvent<HTMLCanvasElement>) {
         const bar = barOf(e);
@@ -39,16 +44,8 @@ export function useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeek
         if (bar !== d.anchorBar) d.moved = true;
         if (d.moved) onLoopChange({ startBar: Math.min(d.anchorBar, bar), endBar: Math.max(d.anchorBar, bar) });
       },
-      onPointerUp() {
-        const d = drag.current;
-        drag.current = null;
-        if (d && !d.moved) onSeekBar(d.anchorBar);
-      },
-      onPointerCancel() {
-        const d = drag.current;
-        drag.current = null;
-        if (d && !d.moved) onSeekBar(d.anchorBar);
-      },
+      onPointerUp: end,
+      onPointerCancel: end,
     };
   };
 }
