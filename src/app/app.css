@@ -6,6 +6,8 @@
   --text: #e8eaf0;
   --muted: #9aa1b3;
   --accent: #4dabf7;
+  --accent-warm: #f2b04a;
+  --accent-cool: #5fc8b4;
   --danger: #ff8787;
 }
 
@@ -534,9 +536,9 @@ a.link-button:hover {
 }
 
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #06121c;
+  background: var(--accent-warm);
+  border-color: var(--accent-warm);
+  color: #1a1304;
   font-weight: 600;
 }
 
@@ -692,7 +694,8 @@ button.primary:hover:not(:disabled) {
   position: absolute;
   top: 18px;
   bottom: 2px;
-  background: rgb(77 171 247 / 0.3);
+  background: rgb(95 200 180 / 0.35);
+  border: 1px solid var(--accent-cool);
   border-radius: 3px;
   pointer-events: none;
 }
@@ -719,4 +722,55 @@ button.primary:hover:not(:disabled) {
   border-radius: 4px;
   padding: 0 5px;
   margin-right: 3px;
+}
+
+/* Narrow windows and touch screens: let the page shrink, wrap the header, and make controls easy to hit. */
+@media (max-width: 900px) {
+  .app {
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  .topbar h1 {
+    flex-basis: 100%;
+  }
+
+  .track-tabs {
+    flex-basis: 100%;
+  }
+
+  .stage {
+    height: clamp(520px, 80vh, 1300px);
+  }
+
+  .transport .time {
+    flex-basis: auto;
+  }
+
+  .seek-wrap {
+    flex-basis: 100%;
+    order: 5;
+  }
+
+  .menu-panel {
+    right: auto;
+    left: 0;
+    max-width: calc(100vw - 20px);
+  }
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .topbar button,
+  .menu > summary,
+  .transport button,
+  .tool-chips button,
+  .segmented button,
+  .stepper button,
+  .panel-tools button {
+    min-height: 44px;
+  }
+
+  .panel-tools button {
+    min-width: 44px;
+  }
 }
