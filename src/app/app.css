@@ -93,18 +93,6 @@ button[aria-pressed='true'] {
   border-radius: 8px;
 }
 
-.highway {
-  flex: 3;
-  min-height: 0;
-}
-
-.strip {
-  flex: 2;
-  min-height: 0;
-  touch-action: none;
-  cursor: pointer;
-}
-
 .transport,
 .loop-controls {
   display: flex;
@@ -346,11 +334,6 @@ a.link-button:hover {
   border-color: var(--accent);
 }
 
-.fretboard {
-  flex: 3;
-  min-height: 0;
-}
-
 .bar-timeline {
   flex: none;
   height: 36px;
@@ -445,21 +428,29 @@ a.link-button:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.neck-fullscreen {
+.panel-fullscreen {
   position: fixed;
   inset: 0;
   z-index: 50;
+  display: flex;
+  flex-direction: column;
   background: #03141a;
 }
 
-.neck-fullscreen canvas {
+.panel-fullscreen canvas {
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: block;
   cursor: pointer;
 }
 
-.neck-fullscreen-close {
+.panel-fullscreen canvas.bar-timeline {
+  flex: none;
+  height: 56px;
+}
+
+.panel-fullscreen-close {
   position: absolute;
   top: 12px;
   right: 12px;
@@ -471,7 +462,7 @@ a.link-button:hover {
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.neck-fullscreen-hint {
+.panel-fullscreen-hint {
   position: absolute;
   bottom: 24px;
   left: 0;
@@ -517,7 +508,7 @@ a.link-button:hover {
   background: var(--text);
 }
 
-.neck-fullscreen-cues {
+.panel-fullscreen-cues {
   position: absolute;
   top: 12px;
   right: 62px;
@@ -529,7 +520,7 @@ a.link-button:hover {
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.neck-fullscreen-cues[aria-pressed='true'] {
+.panel-fullscreen-cues[aria-pressed='true'] {
   border-color: var(--accent);
 }
 
@@ -626,4 +617,50 @@ button.primary:hover:not(:disabled) {
 
 .tool-panel[hidden] {
   display: none;
+}
+
+.stage-panel {
+  position: relative;
+  flex: 1;
+  min-height: 160px;
+}
+
+.stage-panel .panel-canvas {
+  height: 100%;
+}
+
+.panel-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0.7;
+}
+
+.stage-panel:hover .panel-tools,
+.panel-tools:focus-within {
+  opacity: 1;
+}
+
+.panel-tools button {
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-canvas.panel-tab {
+  touch-action: none;
+  cursor: pointer;
+}
+
+.stage > .bar-timeline {
+  flex: none;
 }

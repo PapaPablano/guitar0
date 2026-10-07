@@ -56,12 +56,13 @@ import { isDesktop } from './desktop';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
-import { NeckFullscreen } from './NeckFullscreen';
+import { PanelFullscreen } from './PanelFullscreen';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
-import { initialViewState, ViewControls, type BottomView } from './ViewControls';
+import { initialViewState, ViewControls } from './ViewControls';
+import { exportBottomView, saveLayout, type PanelId, type StageLayout } from './stage-layout';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
@@ -126,9 +127,13 @@ export function App() {
   /** Counts the player in when a held jump has paused playback. */
   const countIn = useRef(new ClickCountIn());
   const [exportOpen, setExportOpen] = useState(false);
-  const [neckFullscreen, setNeckFullscreen] = useState(false);
+  const [fullscreenPanel, setFullscreenPanel] = useState<PanelId | null>(null);
   const [tool, setTool] = useState<ToolId>('loop');
-  const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
+  const [layout, setLayoutState] = useState<StageLayout>(() => initialViewState().layout);
+  const setLayout = useCallback((next: StageLayout) => {
+    setLayoutState(next);
+    saveLayout(next);
+  }, []);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
   /** Whether the neck shows technique cues: remembered between sessions, on until the player turns it off. */
@@ -490,7 +495,6 @@ export function App() {
     setUserAudioError(null);
     setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
     setTrackIndex(firstPlayableTrack(timeline));
-    setBottomView(initialViewState().bottomView);
     setLookahead(initialViewState().lookahead);
     setLabelMode(initialViewState().labelMode);
     setTuningId(FILE_TUNING);
@@ -700,7 +704,7 @@ export function App() {
     setPlaying(clock.playing);
   }, [clock, audioReady]);
 
-  const closeNeckFullscreen = useCallback(() => setNeckFullscreen(false), []);
+  const closeFullscreen = useCallback(() => setFullscreenPanel(null), []);
 
   const setLoopRange = useCallback((next: LoopBars | null) => {
     setLoop(next);
@@ -733,11 +737,14 @@ export function App() {
         case 'toggle-loop':
           if (loop) setLoopOn((on) => !on);
           break;
+        case 'toggle-fullscreen':
+          setFullscreenPanel((open) => (open ? null : layout.top));
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clock, timeline, loop, togglePlay, exportOpen]);
+  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
@@ -868,14 +875,14 @@ export function App() {
           onFileTuningChange={onFileTuningChange}
         />
         <ViewControls
-          view={bottomView}
+          layout={layout}
           lookahead={lookahead}
           labelMode={labelMode}
-          onViewChange={setBottomView}
+          onLayoutChange={setLayout}
           onLookaheadChange={setLookahead}
           onLabelModeChange={setLabelMode}
         />
-        <button type="button" onClick={() => setNeckFullscreen(true)}>
+        <button type="button" onClick={() => setFullscreenPanel(layout.top)}>
           Full screen
         </button>
         <button
@@ -915,7 +922,10 @@ export function App() {
         timeline={timeline}
         trackIndex={trackIndex}
         clock={clock}
-        bottomView={bottomView}
+        layout={layout}
+        neckCues={neckCues}
+        onNeckCuesChange={changeNeckCues}
+        onFullscreen={setFullscreenPanel}
         lookahead={lookahead}
         labelMode={labelMode}
         loop={loopOn ? loop : null}
@@ -971,8 +981,15 @@ export function App() {
           {error}
         </p>
       )}
-      {neckFullscreen && (
-        <NeckFullscreen
+      {fullscreenPanel && (
+        <PanelFullscreen
+          panel={fullscreenPanel}
+          loop={loopOn ? loop : null}
+          onLoopChange={setLoopRange}
+          onSeekBar={(bar) => {
+            const start = scoreBarStartSeconds(getStripLayout(timeline, trackIndex, 1, 1), bar);
+            if (start !== null) clock.seek(start);
+          }}
           timeline={timeline}
           trackIndex={trackIndex}
           clock={clock}
@@ -983,14 +1000,14 @@ export function App() {
           playing={playing}
           canPlay={audioReady}
           onTogglePlay={togglePlay}
-          onClose={closeNeckFullscreen}
+          onClose={closeFullscreen}
         />
       )}
       {exportOpen && (
         <ExportDialog
           timeline={timeline}
           trackIndex={trackIndex}
-          bottom={{ view: bottomView, lookahead, labelMode, neckCues }}
+          bottom={{ view: exportBottomView(layout), lookahead, labelMode, neckCues }}
           onNeckCuesChange={changeNeckCues}
           onClose={() => setExportOpen(false)}
           loopRange={exportLoopRange}

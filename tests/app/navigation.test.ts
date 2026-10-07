@@ -34,6 +34,8 @@ describe('interpretKey', () => {
     expect(interpretKey('ArrowUp', body)).toBe('tempo-up');
     expect(interpretKey('ArrowDown', body)).toBe('tempo-down');
     expect(interpretKey('l', body)).toBe('toggle-loop');
+    expect(interpretKey('f', body)).toBe('toggle-fullscreen');
+    expect(interpretKey('F', { tag: 'input' })).toBeNull();
     expect(interpretKey('x', body)).toBeNull();
   });
 
