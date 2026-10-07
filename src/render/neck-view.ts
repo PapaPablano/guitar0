@@ -430,21 +430,13 @@ function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: n
   ctx.globalAlpha = 1;
 }
 
-/** Photo-X at a fret that may fall between two whole frets. */
-function fretX(fret: number): number {
-  const low = Math.floor(fret);
-  const high = Math.ceil(fret);
-  const a = photoNoteX(low);
-  return a + (photoNoteX(high) - a) * (fret - low);
-}
-
 /** The screen positions the technique cues are drawn against. */
 function neckSpace(place: PhotoPlacement, stringCount: number, width: number, height: number, poses?: ReadonlyMap<string, FingerPose>): NeckSpace {
   return {
     ring: (note) => markerCentre(place, stringCount, note, poses?.get(note.id)),
     rest: (note) => markerCentre(place, stringCount, note),
     at: (string, fret) => {
-      const px = fretX(fret);
+      const px = photoNoteXAt(fret);
       return photoToScreen(place, px, photoStringY(string, stringCount, px));
     },
     scale: place.scale,
