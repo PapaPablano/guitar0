@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
@@ -69,6 +69,8 @@ import { assessSupport, readSupportEnvironment } from './support';
 import { FILE_TUNING, presetById, retuneTimeline } from '../model/retune';
 import { TuningChip } from './TuningChip';
 import { Menu } from './Menu';
+import { PracticeTools } from './PracticeTools';
+import { availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
 import './app.css';
 
@@ -125,6 +127,7 @@ export function App() {
   const countIn = useRef(new ClickCountIn());
   const [exportOpen, setExportOpen] = useState(false);
   const [neckFullscreen, setNeckFullscreen] = useState(false);
+  const [tool, setTool] = useState<ToolId>('loop');
   const [bottomView, setBottomView] = useState<BottomView>(() => initialViewState().bottomView);
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
@@ -768,6 +771,82 @@ export function App() {
 
   const track = timeline.tracks[trackIndex];
 
+  const toolPanels: Record<ToolId, ReactNode> = {
+    loop: (
+      <LoopControls
+        barCount={barCount}
+        loop={loop}
+        enabled={loopOn}
+        onChange={setLoopRange}
+        onToggle={() => setLoopOn((on) => !on)}
+      />
+    ),
+    sections: (
+      <SectionPanel
+        rows={describeSectionRows(sections, timeline, barHealth, landings)}
+        onJump={(index) => clock.seek(jumpTarget(sections[index], timeline))}
+        onLoop={(index) => setLoopRange(loopFor(sections[index], timeline))}
+        onRename={(index, name) => {
+          const next = renameSection(live.current.sections, index, name);
+          live.current.sections = next;
+          setSections(next);
+          scheduleProfileSave(live.current.alignment.base);
+        }}
+      />
+    ),
+    recording: (
+      <OffsetSlider
+        offsetSeconds={userClock || stems ? offset : null}
+        offsetControl={stateControls.showOffset}
+        fileName={userClock?.file?.name ?? stems?.title ?? null}
+        error={userAudioError}
+        onLoad={onLoadRecording}
+        onOffsetChange={(raw) => {
+          const seconds = clampOffset(raw);
+          offsetMoved.current = true;
+          offsetMovedSinceRun.current = true;
+          applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
+        }}
+        onRemove={onRemoveRecording}
+      />
+    ),
+    stems: (
+      <StemPanel
+        recording={userClock?.file ?? null}
+        durationSeconds={timeline.durationSeconds}
+        active={stems}
+        mix={mix}
+        onMixChange={(next) => {
+          setMix(next);
+          mixMoved.current = true;
+          if (isDesktop()) {
+            profileMix.current = next;
+            scheduleProfileSave(live.current.offset);
+          }
+        }}
+        onActivate={activateStems}
+      />
+    ),
+    alignment: (
+      <AlignmentPanel
+        status={alignStatus}
+        canReanalyse={stateControls.canReanalyse && !exportOpen}
+        change={alignChange}
+        landingStats={landingStats}
+        onDismissChange={() => setAlignChange(null)}
+        onReanalyse={() => {
+          if (!userClock?.file) return;
+          // A run the owner asks for starts clean: a failed attempt no longer holds it back.
+          offsetMoved.current = false;
+          alignAttempt.current = null;
+          redetectCause.current = null;
+          setAlignRequest({ file: userClock.file, clock: userClock });
+        }}
+      />
+    ),
+  };
+  const toolIds = availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0, desktop: isDesktop() });
+
   return (
     <main className="app">
       <header className="topbar">
@@ -872,20 +951,6 @@ export function App() {
         onTempoChange={setTempoPercent}
         onSeek={(s) => clock.seek(s)}
       />
-      <OffsetSlider
-        offsetSeconds={userClock || stems ? offset : null}
-        offsetControl={stateControls.showOffset}
-        fileName={userClock?.file?.name ?? stems?.title ?? null}
-        error={userAudioError}
-        onLoad={onLoadRecording}
-        onOffsetChange={(raw) => {
-          const seconds = clampOffset(raw);
-          offsetMoved.current = true;
-          offsetMovedSinceRun.current = true;
-          applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
-        }}
-        onRemove={onRemoveRecording}
-      />
       {userClock && exactNotice && (
         <p className={hold || !warnsOfApproximateJumps ? 'muted note' : 'notice'} role="status">
           {exactNotice}
@@ -900,58 +965,7 @@ export function App() {
           label={exactNotice}
         />
       )}
-      {(userClock || stems) && (
-        <AlignmentPanel
-          status={alignStatus}
-          canReanalyse={stateControls.canReanalyse && !exportOpen}
-          change={alignChange}
-          landingStats={landingStats}
-          onDismissChange={() => setAlignChange(null)}
-          onReanalyse={() => {
-            if (!userClock?.file) return;
-            // A run the owner asks for starts clean: a failed attempt no longer holds it back.
-            offsetMoved.current = false;
-            alignAttempt.current = null;
-            redetectCause.current = null;
-            setAlignRequest({ file: userClock.file, clock: userClock });
-          }}
-        />
-      )}
-      {(userClock || stems) && sections.length > 0 && (
-        <SectionPanel
-          rows={describeSectionRows(sections, timeline, barHealth, landings)}
-          onJump={(index) => clock.seek(jumpTarget(sections[index], timeline))}
-          onLoop={(index) => setLoopRange(loopFor(sections[index], timeline))}
-          onRename={(index, name) => {
-            const next = renameSection(live.current.sections, index, name);
-            live.current.sections = next;
-            setSections(next);
-            scheduleProfileSave(live.current.alignment.base);
-          }}
-        />
-      )}
-      <StemPanel
-        recording={userClock?.file ?? null}
-        durationSeconds={timeline.durationSeconds}
-        active={stems}
-        mix={mix}
-        onMixChange={(next) => {
-          setMix(next);
-          mixMoved.current = true;
-          if (isDesktop()) {
-            profileMix.current = next;
-            scheduleProfileSave(live.current.offset);
-          }
-        }}
-        onActivate={activateStems}
-      />
-      <LoopControls
-        barCount={barCount}
-        loop={loop}
-        enabled={loopOn}
-        onChange={setLoopRange}
-        onToggle={() => setLoopOn((on) => !on)}
-      />
+      <PracticeTools tools={toolIds.map((id) => ({ id, panel: toolPanels[id] }))} value={tool} onChange={setTool} />
       {error && (
         <p role="alert" className="error">
           {error}

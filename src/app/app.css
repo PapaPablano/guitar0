@@ -606,3 +606,24 @@ button.primary:hover:not(:disabled) {
 .menu-panel select {
   width: 100%;
 }
+
+.practice-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-chips button {
+  border-radius: 999px;
+  padding: 6px 16px;
+}
+
+.tool-panel[hidden] {
+  display: none;
+}
