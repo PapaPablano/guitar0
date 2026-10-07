@@ -1,4 +1,8 @@
+import { seekMarks, type SeekMarksInput } from './transport-marks';
+
 interface TransportProps {
+  /** Section labels and the loop band to show along the seek bar. */
+  marks?: Pick<SeekMarksInput, 'sections' | 'loop'>;
   /** True until the sound is ready: playback controls are inactive. */
   disabled: boolean;
   playing: boolean;
@@ -27,7 +31,9 @@ export function Transport({
   onRestart,
   onTempoChange,
   onSeek,
+  marks,
 }: TransportProps) {
+  const along = seekMarks({ durationSeconds, sections: marks?.sections ?? [], loop: marks?.loop ?? null });
   return (
     <div className="transport" role="group" aria-label="Transport">
       <button type="button" onClick={onTogglePlay} disabled={disabled} aria-label={playing ? 'Pause' : 'Play'}>
@@ -36,17 +42,25 @@ export function Transport({
       <button type="button" onClick={onRestart} disabled={disabled} aria-label="Restart from the beginning">
         Restart
       </button>
-      <input
-        className="seek"
-        type="range"
-        min={0}
-        max={Math.max(0.01, durationSeconds)}
-        step={0.01}
-        value={Math.min(seconds, durationSeconds)}
-        onChange={(e) => onSeek(Number(e.target.value))}
-        disabled={disabled}
-        aria-label="Position"
-      />
+      <div className="seek-wrap">
+        {along.sections.map((m) => (
+          <span key={`${m.label}-${m.left}`} className="seek-mark" style={{ left: `${m.left}%` }}>
+            {m.label}
+          </span>
+        ))}
+        {along.loop && <span className="seek-loop" style={{ left: `${along.loop.left}%`, width: `${along.loop.width}%` }} aria-hidden="true" />}
+        <input
+          className="seek"
+          type="range"
+          min={0}
+          max={Math.max(0.01, durationSeconds)}
+          step={0.01}
+          value={Math.min(seconds, durationSeconds)}
+          onChange={(e) => onSeek(Number(e.target.value))}
+          disabled={disabled}
+          aria-label="Position"
+        />
+      </div>
       <span className="time" aria-hidden="true">
         {formatTime(seconds)} / {formatTime(durationSeconds)}
       </span>

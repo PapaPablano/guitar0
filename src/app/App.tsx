@@ -70,6 +70,7 @@ import { assessSupport, readSupportEnvironment } from './support';
 import { FILE_TUNING, presetById, retuneTimeline } from '../model/retune';
 import { TuningChip } from './TuningChip';
 import { Menu } from './Menu';
+import { ShortcutLegend } from './ShortcutLegend';
 import { PracticeTools } from './PracticeTools';
 import { availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
@@ -757,7 +758,8 @@ export function App() {
           <h1>Tab Highway</h1>
           <p className="error">{support.notice}</p>
         </section>
-        <Notices />
+        <ShortcutLegend />
+      <Notices />
       </main>
     );
   }
@@ -771,7 +773,8 @@ export function App() {
           </p>
         )}
         <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} />
-        <Notices />
+        <ShortcutLegend />
+      <Notices />
       </main>
     );
   }
@@ -851,6 +854,21 @@ export function App() {
         }}
       />
     ),
+  };
+  const seekBarMarks = {
+    sections:
+      userClock || stems
+        ? describeSectionRows(sections, timeline, barHealth, landings)
+            .filter((row) => row.label !== 'Whole song')
+            .map((row) => ({ label: row.label, startSeconds: jumpTarget(sections[row.index], timeline) }))
+        : [],
+    loop: (() => {
+      if (!loopOn || !loop) return null;
+      const strip = getStripLayout(timeline, trackIndex, 1, 1);
+      const startSeconds = scoreBarStartSeconds(strip, loop.startBar);
+      if (startSeconds === null) return null;
+      return { startSeconds, endSeconds: scoreBarStartSeconds(strip, loop.endBar + 1) ?? timeline.durationSeconds };
+    })(),
   };
   const toolIds = availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0, desktop: isDesktop() });
 
@@ -960,6 +978,7 @@ export function App() {
         onRestart={() => clock.seek(0)}
         onTempoChange={setTempoPercent}
         onSeek={(s) => clock.seek(s)}
+        marks={seekBarMarks}
       />
       {userClock && exactNotice && (
         <p className={hold || !warnsOfApproximateJumps ? 'muted note' : 'notice'} role="status">
@@ -1027,6 +1046,7 @@ export function App() {
           }
         />
       )}
+      <ShortcutLegend />
       <Notices />
     </main>
   );

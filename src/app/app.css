@@ -664,3 +664,59 @@ button.primary:hover:not(:disabled) {
 .stage > .bar-timeline {
   flex: none;
 }
+
+.seek-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+  padding-top: 16px;
+}
+
+.seek-wrap .seek {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  position: relative;
+}
+
+.seek-mark {
+  position: absolute;
+  top: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.seek-loop {
+  position: absolute;
+  top: 18px;
+  bottom: 2px;
+  background: rgb(77 171 247 / 0.3);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.stepper output {
+  min-width: 1.5em;
+  text-align: center;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.shortcut-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.shortcut-legend kbd {
+  font-family: inherit;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 3px;
+}

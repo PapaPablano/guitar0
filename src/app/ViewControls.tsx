@@ -87,21 +87,16 @@ export function ViewControls({ layout, lookahead, labelMode, onLayoutChange, onL
         </div>
       )}
       {dots && (
-        <label className="field">
+        <div role="group" aria-label="Notes ahead" className="field stepper">
           Notes ahead
-          <input
-            type="number"
-            min={MIN_LOOKAHEAD}
-            max={MAX_LOOKAHEAD}
-            value={lookahead}
-            onChange={(e) => {
-              // an emptied field keeps the previous value while the player types
-              if (e.target.value === '') return;
-              onLookaheadChange(clampLookahead(Number(e.target.value)));
-            }}
-            aria-label="Notes ahead, 1 to 8"
-          />
-        </label>
+          <button type="button" aria-label="Fewer notes ahead" disabled={lookahead <= MIN_LOOKAHEAD} onClick={() => onLookaheadChange(clampLookahead(lookahead - 1))}>
+            −
+          </button>
+          <output aria-live="polite">{lookahead}</output>
+          <button type="button" aria-label="More notes ahead" disabled={lookahead >= MAX_LOOKAHEAD} onClick={() => onLookaheadChange(clampLookahead(lookahead + 1))}>
+            +
+          </button>
+        </div>
       )}
     </div>
   );
