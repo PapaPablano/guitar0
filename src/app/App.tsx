@@ -62,7 +62,7 @@ import { TrackPicker } from './TrackPicker';
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
-import { exportBottomView, saveLayout, type PanelId, type StageLayout } from './stage-layout';
+import { saveLayout, type PanelId, type StageLayout } from './stage-layout';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
@@ -1019,7 +1019,8 @@ export function App() {
         <ExportDialog
           timeline={timeline}
           trackIndex={trackIndex}
-          bottom={{ view: exportBottomView(layout), lookahead, labelMode, neckCues }}
+          stageLayout={layout}
+          view={{ lookahead, labelMode, neckCues }}
           onNeckCuesChange={changeNeckCues}
           onClose={() => setExportOpen(false)}
           loopRange={exportLoopRange}

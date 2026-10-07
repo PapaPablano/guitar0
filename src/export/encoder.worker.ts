@@ -1,11 +1,11 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 import { AlignmentMap, type AlignmentData } from '../audio/alignment-map';
 import { hydrateTimeline, type TimelineData } from '../model/serialize';
-import { renderComposite, type BottomOptions, type CompositeContext } from '../render/composite';
+import type { PanelId } from '../app/stage-layout';
+import { renderStageFrame, type ExportViewOptions, type FrameContext } from '../render/stage-frame';
 import { tabTimeAt, type PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
-import { renderNeckFrame, type PhotoContext } from '../render/neck-view';
-import { AUDIO_CHANNELS, frameCount, frameTime, type ExportLayout, type ExportPreset } from './presets';
+import { AUDIO_CHANNELS, frameCount, frameTime, type ExportPreset } from './presets';
 
 export interface StartMessage {
   type: 'start';
@@ -13,11 +13,11 @@ export interface StartMessage {
   trackIndex: number;
   preset: ExportPreset;
   audio: PcmAudio;
-  /** The bottom view the video shows, chosen when the export started. */
-  bottom: BottomOptions;
-  /** Which picture each frame shows; 'neck' needs `photo`. */
-  layout?: ExportLayout;
-  /** The guitar photo for the neck layout, loaded on the main thread. */
+  /** The panels each frame shows, top to bottom, chosen when the export started. */
+  panels: PanelId[];
+  /** The look-ahead, dot labels and technique cues in use when the export started. */
+  view: ExportViewOptions;
+  /** The guitar photo, loaded on the main thread; needed when the real guitar is one of the panels. */
   photo?: ImageBitmap;
   /** How long the video lasts: the tab plus any extra playing the tab waits through. */
   outputSeconds: number;
@@ -74,7 +74,7 @@ async function run(msg: StartMessage): Promise<void> {
   videoEncoder.configure(videoConfigFor(preset));
   const audioEncoder = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: onError });
   audioEncoder.configure(audioConfig());
-  if (msg.layout === 'neck' && !msg.photo) throw new Error('The guitar photo was not loaded for the neck layout.');
+  if (msg.panels.includes('neck') && !msg.photo) throw new Error('The guitar photo was not loaded for the real guitar view.');
 
   // Audio first: it is already rendered, so it goes in as one-second blocks.
   const block = audio.sampleRate;
@@ -104,16 +104,7 @@ async function run(msg: StartMessage): Promise<void> {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     if (failure) throw failure;
     const t = tabTimeAt(alignment, frameTime(frame, preset.fps));
-    if (msg.layout === 'neck') {
-      renderNeckFrame(ctx as unknown as PhotoContext, msg.photo ?? null, timeline, msg.trackIndex, t, preset.width, preset.height, {
-        lookahead: msg.bottom.lookahead,
-        labelMode: msg.bottom.labelMode,
-        techniqueCues: msg.bottom.neckCues,
-        zoom: true,
-      });
-    } else {
-      renderComposite(ctx as unknown as CompositeContext, timeline, msg.trackIndex, t, preset.width, preset.height, { bottom: msg.bottom });
-    }
+    renderStageFrame(ctx as unknown as FrameContext, timeline, msg.trackIndex, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null });
     const videoFrame = new VideoFrame(canvas, {
       timestamp: Math.round((frame * 1e6) / preset.fps),
       duration: Math.round(1e6 / preset.fps),

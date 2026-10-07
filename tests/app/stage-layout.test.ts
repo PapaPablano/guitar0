@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_LAYOUT,
-  exportBottomView,
   loadLayout,
   needsBarStrip,
   normaliseLayout,
@@ -79,13 +78,10 @@ describe('needsBarStrip', () => {
   });
 });
 
-describe('showsDots and exportBottomView', () => {
+describe('showsDots', () => {
   it('follow the panels on show', () => {
     expect(showsDots({ top: 'highway', bottom: 'tab' })).toBe(false);
     expect(showsDots({ top: 'highway', bottom: 'neck' })).toBe(true);
-    expect(exportBottomView({ top: 'highway', bottom: 'fretboard' })).toBe('fretboard');
-    expect(exportBottomView({ top: 'fretboard', bottom: 'tab' })).toBe('tab');
-    expect(exportBottomView({ top: 'highway', bottom: 'neck' })).toBe('tab');
     expect(panelsOf({ top: 'tab', bottom: null })).toEqual(['tab']);
   });
 });

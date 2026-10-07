@@ -5,8 +5,9 @@ import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../ex
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
-import { estimateMegabytes, PRESETS, presetById, type ExportLayout, type ExportPreset } from '../export/presets';
-import type { BottomOptions } from '../render/composite';
+import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
+import type { ExportViewOptions } from '../render/stage-frame';
+import { panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
 import type { Timeline } from '../model/score';
 
 type Phase =
@@ -19,8 +20,10 @@ type Phase =
 interface ExportDialogProps {
   timeline: Timeline;
   trackIndex: number;
-  /** The bottom view and look-ahead in use when the dialog opened; the video shows the same. */
-  bottom: BottomOptions;
+  /** The views on the page when the dialog opened; the video shows the same ones. */
+  stageLayout: StageLayout;
+  /** The look-ahead, dot labels and technique cues in use when the dialog opened; the video shows the same. */
+  view: ExportViewOptions;
   /** Changes the one remembered choice of whether the neck shows technique cues; the checkbox here and the switch in full screen share it. */
   onNeckCuesChange?: (on: boolean) => void;
   /** Produces the whole song's audio at original tempo: the synth mix or the user's recording. */
@@ -42,10 +45,10 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
-  const [layout, setLayout] = useState<ExportLayout>('practice');
+  const panels = panelsOf(stageLayout);
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
   const job = useRef<ExportJob | null>(null);
@@ -127,7 +130,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, g
     try {
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
-      const photo = layout === 'neck' ? await loadNeckPhoto() : undefined;
+      const photo = panels.includes('neck') ? await loadNeckPhoto() : undefined;
       if (!current()) {
         photo?.close();
         return;
@@ -138,8 +141,8 @@ export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, g
         trackIndex,
         preset,
         audio,
-        bottom,
-        layout,
+        panels,
+        view,
         photo,
         alignment,
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
@@ -195,16 +198,13 @@ export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, g
                     ))}
                   </select>
                 </label>
-                <label className="field">
-                  Video layout
-                  <select value={layout} onChange={(e) => setLayout(e.target.value === 'neck' ? 'neck' : 'practice')}>
-                    <option value="practice">Practice screen (highway and tab or fretboard)</option>
-                    <option value="neck">Full screen neck (guitar photo)</option>
-                  </select>
-                </label>
-                {layout === 'neck' && onNeckCuesChange && (
+                <p>
+                  Shows: {panels.map((p) => PANEL_NAMES[p]).join(' + ')}{' '}
+                  <span className="muted">(change it under Views on the player)</span>
+                </p>
+                {panels.includes('neck') && onNeckCuesChange && (
                   <label className="field">
-                    <input type="checkbox" checked={bottom.neckCues ?? true} onChange={(e) => onNeckCuesChange(e.target.checked)} /> Show
+                    <input type="checkbox" checked={view.neckCues ?? true} onChange={(e) => onNeckCuesChange(e.target.checked)} /> Show
                     technique cues (hammer-ons, slides, bends)
                   </label>
                 )}

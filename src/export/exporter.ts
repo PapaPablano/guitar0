@@ -4,8 +4,9 @@ import type { AlignmentData, AlignmentMap } from '../audio/alignment-map';
 import type { PcmAudio } from './audio';
 import { exportLength, fitPcm } from './audio';
 import type { StartMessage, WorkerReply } from './encoder.worker';
-import type { BottomOptions } from '../render/composite';
-import type { ExportLayout, ExportPreset } from './presets';
+import type { PanelId } from '../app/stage-layout';
+import type { ExportViewOptions } from '../render/stage-frame';
+import type { ExportPreset } from './presets';
 
 export interface ExportJob {
   /** Resolves with the finished MP4, or rejects with `ExportCancelled` or an Error. */
@@ -25,9 +26,10 @@ export function startExport(args: {
   trackIndex: number;
   preset: ExportPreset;
   audio: PcmAudio;
-  bottom: BottomOptions;
-  /** What each frame shows; the neck layout needs `photo`. */
-  layout?: ExportLayout;
+  /** The panels each frame shows, top to bottom. */
+  panels: readonly PanelId[];
+  view: ExportViewOptions;
+  /** The guitar photo; needed when the real guitar is one of the panels. */
   photo?: ImageBitmap;
   /** Where the recording sits against the tab; the video lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
@@ -70,8 +72,8 @@ export function startExport(args: {
         trackIndex: args.trackIndex,
         preset: args.preset,
         audio,
-        bottom: args.bottom,
-        layout: args.layout,
+        panels: [...args.panels],
+        view: args.view,
         photo: args.photo,
         outputSeconds,
         alignment,

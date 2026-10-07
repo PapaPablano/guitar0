@@ -4,7 +4,7 @@ import { checkExportSupport, INSECURE_MESSAGE, UNSUPPORTED_MESSAGE, videoConfigF
 import { estimateMegabytes, frameCount, frameTime, PRESETS, presetById } from '../../src/export/presets';
 import { hydrateTimeline, serializeTimeline } from '../../src/model/serialize';
 import { buildTimeline, loadAlphaTex } from '../../src/model/alphatab-adapter';
-import { HIGHWAY_SHARE, renderComposite, type CompositeContext } from '../../src/render/composite';
+import { frameLayout, renderStageFrame, type FrameContext } from '../../src/render/stage-frame';
 import { renderHighway } from '../../src/render/highway';
 import { REPEAT_AND_TEMPO } from '../fixtures/fixtures';
 import { makeTimeline } from '../helpers/make-timeline';
@@ -99,7 +99,7 @@ describe('timeline serialization', () => {
   });
 });
 
-describe('composite frame', () => {
+describe('stage frame', () => {
   const timeline = makeTimeline([
     { start: 1, end: 1.5, string: 2, fret: 5 },
     { start: 2, end: 3, string: 4, fret: 7 },
@@ -108,7 +108,7 @@ describe('composite frame', () => {
   function composite(t: number, w = 1920, h = 1080) {
     const { ctx, calls } = createRecordingContext();
     // the recording context records any method call, including translate, rect and clip
-    renderComposite(ctx as unknown as CompositeContext, timeline, 0, t, w, h);
+    renderStageFrame(ctx as unknown as FrameContext, timeline, 0, t, w, h, ['highway', 'tab']);
     return calls;
   }
 
@@ -119,7 +119,7 @@ describe('composite frame', () => {
 
   it('puts the same note heads on the highway part as the live highway draws', () => {
     const t = frameTime(90, 60);
-    const highwayHeight = Math.round(1080 * HIGHWAY_SHARE);
+    const highwayHeight = frameLayout(1080, 2, false).panels[0].height;
     const live = createRecordingContext();
     renderHighway(live.ctx, timeline, 0, t, 1920, highwayHeight);
     const liveArcs = live.calls.filter((c) => c.name === 'arc');

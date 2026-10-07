@@ -70,12 +70,6 @@ export function showsDots(layout: StageLayout): boolean {
   return panelsOf(layout).some((p) => p === 'fretboard' || p === 'neck');
 }
 
-/** The video export's bottom view for a layout: the fretboard when it is shown without the tab strip. */
-export function exportBottomView(layout: StageLayout): 'tab' | 'fretboard' {
-  const panels = panelsOf(layout);
-  return panels.includes('fretboard') && !panels.includes('tab') ? 'fretboard' : 'tab';
-}
-
 export const LAYOUT_KEY = 'tab-highway.stage-layout';
 
 export function loadLayout(storage: ProfileStorage | null = defaultProfileStorage()): StageLayout {

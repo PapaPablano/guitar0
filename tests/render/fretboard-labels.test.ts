@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeNeck, renderFretboard, stringLineY, type LabelMode } from '../../src/render/fretboard';
 import { emphasisAt } from '../../src/render/emphasis';
-import { frameLayout, renderComposite, type CompositeContext } from '../../src/render/composite';
+import { frameLayout, renderStageFrame, type FrameContext } from '../../src/render/stage-frame';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
 
@@ -103,13 +103,11 @@ describe('export uses the chosen label mode', () => {
     const timeline = makeTimeline(specs, 2, 6);
     const frame = (mode: LabelMode) => {
       const { ctx, calls } = createRecordingContext();
-      renderComposite(ctx as unknown as CompositeContext, timeline, 0, 1.2, 1920, 1080, {
-        bottom: { view: 'fretboard', lookahead: 4, labelMode: mode },
-      });
+      renderStageFrame(ctx as unknown as FrameContext, timeline, 0, 1.2, 1920, 1080, ['highway', 'fretboard'], { lookahead: 4, labelMode: mode });
       return texts(calls);
     };
     expect(frame('note')).toContain('C');
     expect(frame('fret')).not.toContain('C');
-    expect(frameLayout(1080).fretboardHeight).toBeGreaterThan(0);
+    expect(frameLayout(1080, 2, true).panels[1].height).toBeGreaterThan(0);
   });
 });
