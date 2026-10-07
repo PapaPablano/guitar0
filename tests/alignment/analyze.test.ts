@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { barFactsOf, barSpansOf, MAX_ANALYSIS_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
+import { barFactsOf, barSpansOf, MAX_ANALYSIS_SECONDS, MAX_ANALYSIS_TAB_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
 import { FEATURE_RATE } from '../../src/alignment/features';
 import { runMatchJob, type MatchJob, type MatchJobResult } from '../../src/alignment/job';
-import { MAX_EXPORT_SECONDS } from '../../src/export/presets';
 import { makeTimeline } from '../helpers/make-timeline';
 import { barSpans, inserted, renderSong, shifted, songNotes, unrelatedMusic } from '../helpers/synthetic-audio';
 
@@ -144,7 +143,7 @@ describe('startAnalysis', () => {
     const { deps } = fakes();
     const long = startAnalysis(args({ durationSeconds: MAX_ANALYSIS_SECONDS + 1 }), deps);
     expect(await long.result).toEqual({ kind: 'not-found', reason: 'too-long' });
-    const tabLong = startAnalysis(args({ tabSeconds: MAX_EXPORT_SECONDS + 1 }), deps);
+    const tabLong = startAnalysis(args({ tabSeconds: MAX_ANALYSIS_TAB_SECONDS + 1 }), deps);
     expect(await tabLong.result).toEqual({ kind: 'not-found', reason: 'too-long' });
     expect(deps.decode).not.toHaveBeenCalled();
   });

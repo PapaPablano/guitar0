@@ -1,5 +1,4 @@
 import type { PcmAudio } from './audio';
-import { MAX_EXPORT_SECONDS } from './presets';
 
 /** A span of the tab's timeline, in seconds. */
 export interface TimeRange {
@@ -11,15 +10,10 @@ export type AudioExportPlan =
   | { readonly ok: true; readonly startSeconds: number; readonly durationSeconds: number }
   | { readonly ok: false; readonly reason: string };
 
-function formatDuration(seconds: number): string {
-  const whole = Math.round(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-}
-
 /**
  * Decides what an audio export renders. With no range it is the whole song; with a range it is just
- * that span (clipped to the song's end). The duration cap applies to what is rendered, so a short
- * range of a long song is fine. An empty range or one outside the song is refused with a message.
+ * that span (clipped to the song's end). There is no length limit. An empty range or one outside the song
+ * is refused with a message.
  */
 export function planAudioExport(songSeconds: number, range: TimeRange | null): AudioExportPlan {
   let startSeconds = 0;
@@ -35,12 +29,6 @@ export function planAudioExport(songSeconds: number, range: TimeRange | null): A
     }
   }
   const durationSeconds = endSeconds - startSeconds;
-  if (durationSeconds > MAX_EXPORT_SECONDS) {
-    return {
-      ok: false,
-      reason: `This ${range ? 'section' : 'song'} is ${formatDuration(durationSeconds)} long. Export is limited to ${formatDuration(MAX_EXPORT_SECONDS)}.`,
-    };
-  }
   return { ok: true, startSeconds, durationSeconds };
 }
 

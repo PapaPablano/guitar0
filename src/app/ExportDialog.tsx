@@ -5,7 +5,7 @@ import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../ex
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
-import { estimateMegabytes, MAX_EXPORT_SECONDS, PRESETS, presetById, type ExportLayout, type ExportPreset } from '../export/presets';
+import { estimateMegabytes, PRESETS, presetById, type ExportLayout, type ExportPreset } from '../export/presets';
 import type { BottomOptions } from '../render/composite';
 import type { Timeline } from '../model/score';
 
@@ -56,7 +56,6 @@ export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, g
   const preset = presetById(presetId);
   /** The tab plus any extra playing: how long the video and the whole-song audio last. */
   const songSeconds = exportLength(timeline.durationSeconds, alignment);
-  const tooLong = songSeconds > MAX_EXPORT_SECONDS;
 
   useEffect(() => {
     let live = true;
@@ -220,12 +219,6 @@ export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, g
                     looped section (audio file)
                   </label>
                 )}
-                {tooLong && (
-                  <p role="alert" className="error">
-                    This song is {formatDuration(songSeconds)} long. Export is limited to{' '}
-                    {formatDuration(MAX_EXPORT_SECONDS)}.
-                  </p>
-                )}
               </>
             )}
           </>
@@ -259,7 +252,7 @@ export function ExportDialog({ timeline, trackIndex, bottom, onNeckCuesChange, g
             <button
               type="button"
               onClick={() => void start()}
-              disabled={!support || !support.supported || tooLong}
+              disabled={!support || !support.supported}
             >
               Start export
             </button>

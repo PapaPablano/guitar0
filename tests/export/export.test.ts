@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { concatPcm, deinterleave, fitPcm } from '../../src/export/audio';
 import { checkExportSupport, INSECURE_MESSAGE, UNSUPPORTED_MESSAGE, videoConfigFor, type ExportEnvironment } from '../../src/export/capability';
-import { estimateMegabytes, frameCount, frameTime, MAX_EXPORT_SECONDS, PRESETS, presetById } from '../../src/export/presets';
+import { estimateMegabytes, frameCount, frameTime, PRESETS, presetById } from '../../src/export/presets';
 import { hydrateTimeline, serializeTimeline } from '../../src/model/serialize';
 import { buildTimeline, loadAlphaTex } from '../../src/model/alphatab-adapter';
 import { HIGHWAY_SHARE, renderComposite, type CompositeContext } from '../../src/render/composite';
@@ -86,11 +86,6 @@ describe('checkExportSupport', () => {
   });
 });
 
-describe('length cap', () => {
-  it('is a fixed, documented limit', () => {
-    expect(MAX_EXPORT_SECONDS).toBe(600);
-  });
-});
 
 describe('timeline serialization', () => {
   it('round-trips through plain data and structured clone', () => {

@@ -19,9 +19,6 @@ export const AUDIO_SAMPLE_RATE = 48000;
 export const AUDIO_CHANNELS = 2;
 export const AUDIO_BITRATE = 160_000;
 
-/** Songs longer than this are refused before encoding starts, to keep memory in check. */
-export const MAX_EXPORT_SECONDS = 600;
-
 export const PRESETS: readonly ExportPreset[] = [
   { id: 'landscape', label: '1080p, 60 fps (landscape)', width: 1920, height: 1080, fps: 60, videoBitrate: 8_000_000, videoCodec: VIDEO_CODEC },
   { id: 'vertical', label: '1080 x 1920, 30 fps (vertical)', width: 1080, height: 1920, fps: 30, videoBitrate: 6_000_000, videoCodec: VIDEO_CODEC },

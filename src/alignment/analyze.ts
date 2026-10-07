@@ -1,6 +1,5 @@
 import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
 import type { PcmAudio } from '../export/audio';
-import { MAX_EXPORT_SECONDS } from '../export/presets';
 import type { Timeline } from '../model/score';
 import type { WorkerMessage, WorkerReply } from './alignment.worker';
 import { readSharedPcm } from '../audio/shared-pcm';
@@ -12,6 +11,8 @@ import type { OutcomeTier } from './timeline-check';
 
 /** Recordings longer than this are not analysed, so memory stays bounded. */
 export const MAX_ANALYSIS_SECONDS = 30 * 60;
+/** A tab longer than this is not lined up automatically (the sound for it is rendered in memory). */
+export const MAX_ANALYSIS_TAB_SECONDS = 600;
 
 export type AnalysisResult =
   | {
@@ -152,7 +153,7 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
   };
 
   void (async () => {
-    if (!Number.isFinite(args.durationSeconds) || args.durationSeconds > MAX_ANALYSIS_SECONDS || args.tabSeconds > MAX_EXPORT_SECONDS) {
+    if (!Number.isFinite(args.durationSeconds) || args.durationSeconds > MAX_ANALYSIS_SECONDS || args.tabSeconds > MAX_ANALYSIS_TAB_SECONDS) {
       return settle({ kind: 'not-found', reason: 'too-long' });
     }
     let recording: Float32Array;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { audioFilename, encodeWav, planAudioExport, slicePcm } from '../../src/export/audio-file';
-import { MAX_EXPORT_SECONDS } from '../../src/export/presets';
 
 function ascii(view: DataView, at: number, n: number): string {
   let s = '';
@@ -62,14 +61,9 @@ describe('planAudioExport', () => {
     expect(planAudioExport(540, { startSeconds: 100, endSeconds: 130 })).toEqual({ ok: true, startSeconds: 100, durationSeconds: 30 });
   });
 
-  it('refuses a whole song over the cap, in the existing wording style', () => {
-    const plan = planAudioExport(MAX_EXPORT_SECONDS + 1, null);
-    expect(plan).toEqual({ ok: false, reason: 'This song is 10:01 long. Export is limited to 10:00.' });
-  });
-
-  it('refuses a range over the cap', () => {
-    const plan = planAudioExport(1200, { startSeconds: 0, endSeconds: 700 });
-    expect(plan.ok).toBe(false);
+  it('has no length limit: a whole long song and a long range are both planned', () => {
+    expect(planAudioExport(3 * 3600, null)).toEqual({ ok: true, startSeconds: 0, durationSeconds: 3 * 3600 });
+    expect(planAudioExport(7200, { startSeconds: 0, endSeconds: 3600 })).toEqual({ ok: true, startSeconds: 0, durationSeconds: 3600 });
   });
 
   it('refuses an empty range and a range outside the song', () => {
