@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { availableTools, currentTool } from '../../src/app/practice-tools';
+import { alignmentNeedsLook, availableTools, currentTool } from '../../src/app/practice-tools';
 
 describe('availableTools', () => {
   it('offers loop, recording and stems with nothing loaded', () => {
@@ -26,5 +26,15 @@ describe('currentTool', () => {
   it('keeps the wanted tool while it is available and falls back to the first when it goes away', () => {
     expect(currentTool('stems', ['loop', 'stems'])).toBe('stems');
     expect(currentTool('alignment', ['loop', 'stems'])).toBe('loop');
+  });
+});
+
+describe('alignmentNeedsLook', () => {
+  it('flags results that are not a clean line-up, and any change from detecting again', () => {
+    expect(alignmentNeedsLook({ phase: 'failed', reason: 'decode' }, null)).toBe(true);
+    expect(alignmentNeedsLook({ phase: 'roughly', skipped: 0 }, null)).toBe(true);
+    expect(alignmentNeedsLook({ phase: 'lined-up', skipped: 0 }, null)).toBe(false);
+    expect(alignmentNeedsLook({ phase: 'idle' }, null)).toBe(false);
+    expect(alignmentNeedsLook({ phase: 'lined-up', skipped: 0 }, '3 bars re-pinned')).toBe(true);
   });
 });

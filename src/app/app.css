@@ -431,6 +431,7 @@ a.link-button:hover {
 }
 
 .panel-fullscreen {
+  outline: none;
   position: fixed;
   inset: 0;
   z-index: 50;
@@ -565,7 +566,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .menu > summary::after {
-  content: ' BE';
+  content: ' \25BE';
   color: var(--muted);
 }
 
@@ -773,4 +774,18 @@ button.primary:hover:not(:disabled) {
   .panel-tools button {
     min-width: 44px;
   }
+}
+
+.panel-fullscreen canvas {
+  touch-action: none;
+}
+
+.tool-chips button.attention::after {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--accent-warm);
 }

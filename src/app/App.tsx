@@ -72,7 +72,7 @@ import { TuningChip } from './TuningChip';
 import { Menu } from './Menu';
 import { ShortcutLegend } from './ShortcutLegend';
 import { PracticeTools } from './PracticeTools';
-import { availableTools, type ToolId } from './practice-tools';
+import { alignmentNeedsLook, availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
 import './app.css';
 
@@ -718,6 +718,7 @@ export function App() {
       const target = e.target as HTMLElement | null;
       const action = interpretKey(e.key, { tag: target?.tagName ?? 'body' });
       if (!action || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (action === 'toggle-fullscreen' && e.repeat) return;
       e.preventDefault();
       switch (action) {
         case 'toggle-play':
@@ -758,7 +759,6 @@ export function App() {
           <h1>Tab Highway</h1>
           <p className="error">{support.notice}</p>
         </section>
-        <ShortcutLegend />
       <Notices />
       </main>
     );
@@ -773,7 +773,6 @@ export function App() {
           </p>
         )}
         <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} />
-        <ShortcutLegend />
       <Notices />
       </main>
     );
@@ -904,9 +903,6 @@ export function App() {
           onLookaheadChange={setLookahead}
           onLabelModeChange={setLabelMode}
         />
-        <button type="button" onClick={() => setFullscreenPanel(layout.top)}>
-          Full screen
-        </button>
         <button
           type="button"
           className="primary"
@@ -994,7 +990,7 @@ export function App() {
           label={exactNotice}
         />
       )}
-      <PracticeTools tools={toolIds.map((id) => ({ id, panel: toolPanels[id] }))} value={tool} onChange={setTool} />
+      <PracticeTools tools={toolIds.map((id) => ({ id, panel: toolPanels[id] }))} value={tool} onChange={setTool} attention={alignmentNeedsLook(alignStatus, alignChange) ? ['alignment'] : []} />
       {error && (
         <p role="alert" className="error">
           {error}

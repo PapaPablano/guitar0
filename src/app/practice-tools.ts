@@ -1,3 +1,5 @@
+import type { AlignStatus } from './auto-align';
+
 export type ToolId = 'loop' | 'sections' | 'recording' | 'stems' | 'alignment';
 
 export const TOOL_NAMES: Record<ToolId, string> = {
@@ -21,4 +23,10 @@ export function availableTools(flags: { hasAudioSource: boolean; hasSections: bo
 /** The tool to show: the one asked for if it is still available, else the first. */
 export function currentTool(wanted: ToolId, available: readonly ToolId[]): ToolId {
   return available.includes(wanted) ? wanted : available[0];
+}
+
+/** True when alignment has something the player should see: a result that is not a clean line-up, or a change from detecting again. */
+export function alignmentNeedsLook(status: AlignStatus, change: string | null): boolean {
+  if (change) return true;
+  return status.phase === 'roughly' || status.phase === 'not-found' || status.phase === 'failed' || status.phase === 'kept-previous';
 }

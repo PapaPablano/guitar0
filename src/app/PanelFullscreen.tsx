@@ -63,6 +63,9 @@ export function PanelFullscreen({
 
   useEffect(() => {
     const root = rootRef.current;
+    // Keys must reach the page, not the button that opened this view (Space on a focused button is left to the button).
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    root?.focus();
     let entered = false;
     // A browser can refuse (or lack) full screen; the overlay still covers the window then.
     root?.requestFullscreen?.().then(
@@ -83,6 +86,7 @@ export function PanelFullscreen({
       document.removeEventListener('fullscreenchange', onChange);
       window.removeEventListener('keydown', onKey);
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      opener?.focus();
     };
   }, [onClose]);
 
@@ -109,7 +113,7 @@ export function PanelFullscreen({
 
   const name = PANEL_NAMES[panel];
   return (
-    <div ref={rootRef} className="panel-fullscreen" role="dialog" aria-label={`Full screen ${name}`}>
+    <div ref={rootRef} tabIndex={-1} className="panel-fullscreen" role="dialog" aria-label={`Full screen ${name}`}>
       <canvas
         ref={mainRef}
         role="img"

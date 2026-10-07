@@ -1,4 +1,4 @@
-import { interpretKey, type ShortcutAction } from './navigation';
+import type { ShortcutAction } from './navigation';
 
 /** What the legend says for each key action; a missing entry is a type error, so a new shortcut cannot go unlisted. */
 export const SHORTCUT_LEGEND: Record<ShortcutAction, { readonly keys: readonly string[]; readonly text: string }> = {
@@ -20,11 +20,4 @@ export function shortcutLegend(): { action: ShortcutAction; keys: string[]; text
     keys: SHORTCUT_LEGEND[action].keys.map((k) => KEY_NAMES[k] ?? k.toUpperCase()),
     text: SHORTCUT_LEGEND[action].text,
   }));
-}
-
-/** True when every listed key really triggers its action, so the legend cannot drift from the handler. */
-export function legendMatchesHandler(): boolean {
-  return (Object.keys(SHORTCUT_LEGEND) as ShortcutAction[]).every((action) =>
-    SHORTCUT_LEGEND[action].keys.every((key) => interpretKey(key, { tag: 'body' }) === action),
-  );
 }

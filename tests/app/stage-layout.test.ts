@@ -34,6 +34,10 @@ describe('setPanel', () => {
     expect(setPanel({ top: 'highway', bottom: 'tab' }, 'top', null)).toEqual({ top: 'highway', bottom: 'tab' });
   });
 
+  it('ignores choosing the top panel for an empty bottom slot, so a panel is never on twice', () => {
+    expect(setPanel({ top: 'highway', bottom: null }, 'bottom', 'highway')).toEqual({ top: 'highway', bottom: null });
+  });
+
   it('can fill an empty bottom slot', () => {
     expect(setPanel({ top: 'neck', bottom: null }, 'bottom', 'tab')).toEqual({ top: 'neck', bottom: 'tab' });
   });

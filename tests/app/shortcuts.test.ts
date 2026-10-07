@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { interpretKey } from '../../src/app/navigation';
-import { legendMatchesHandler, SHORTCUT_LEGEND, shortcutLegend } from '../../src/app/shortcuts';
+import { SHORTCUT_LEGEND, shortcutLegend } from '../../src/app/shortcuts';
 
 describe('shortcut legend', () => {
   it('lists only keys the handler really maps to that action', () => {
-    expect(legendMatchesHandler()).toBe(true);
     for (const [action, entry] of Object.entries(SHORTCUT_LEGEND)) {
       for (const key of entry.keys) expect(interpretKey(key, { tag: 'body' })).toBe(action);
     }

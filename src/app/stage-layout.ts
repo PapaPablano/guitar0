@@ -48,7 +48,8 @@ export function setPanel(layout: StageLayout, slot: 'top' | 'bottom', id: PanelI
     return id === layout.bottom ? { top: id, bottom: layout.top } : { top: id, bottom: layout.bottom };
   }
   if (id === null) return { top: layout.top, bottom: null };
-  return id === layout.top ? { top: layout.bottom ?? DEFAULT_LAYOUT.top, bottom: id } : { top: layout.top, bottom: id };
+  if (id === layout.top) return layout.bottom === null ? layout : { top: layout.bottom, bottom: id };
+  return { top: layout.top, bottom: id };
 }
 
 export function swapPanels(layout: StageLayout): StageLayout {
