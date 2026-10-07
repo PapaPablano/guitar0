@@ -3,6 +3,9 @@ import { photoNoteX, photoPlacement, photoRingRadius, photoStringY, photoToScree
 import { emphasisAt } from '../../src/render/emphasis';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
+import { cuesAt } from '../../src/render/neck-cue-model';
+import { bendInset, drawNeckCues, type NeckSpace } from '../../src/render/neck-cues';
+import { DEFAULT_THEME } from '../../src/render/theme';
 
 const W = 1920;
 const H = 1080;
@@ -236,10 +239,12 @@ describe('a video frame and a live frame', () => {
 
 describe('the ring as the finger', () => {
   const bend = (string: number, semitones: number, fret = 7): NoteSpec[] => [{ start: 1, end: 2, string, fret, techniques: { bend: semitones } }];
-  /** The centre of the playing note's ring: the last ring or ellipse traced, less any traced after it by cues. */
+  /** The centre of the playing note's ring. */
   const ring = (calls: Call[], after = 0) => {
-    const traced = calls.filter((c) => c.name === 'arc' || c.name === 'ellipse');
-    const last = traced[traced.length - 1 - after];
+    // a pushed ring is an ellipse, and nothing else drawn is; a round one is the last arc less those cues draw after it
+    const ellipses = calls.filter((c) => c.name === 'ellipse');
+    const traced = ellipses.length > 0 ? ellipses : calls.filter((c) => c.name === 'arc');
+    const last = traced[traced.length - 1 - (ellipses.length > 0 ? 0 : after)];
     return { x: last.args[0] as number, y: last.args[1] as number, name: last.name, args: last.args };
   };
   const rest = (string: number, fret: number, w = W, h = H, count = 6) => {
@@ -282,9 +287,10 @@ describe('the ring as the finger', () => {
   });
 
   it('eases the lit string back to straight at the bridge', () => {
+    // the bridge is the furthest point the string reaches along the screen
     const end = (specs: NoteSpec[], t: number) => {
       const points = lines(draw(specs, t, true));
-      return points[points.length - 1];
+      return points.reduce((far, p) => (p.x > far.x ? p : far));
     };
     const straight = end([{ start: 1, end: 2, string: 3, fret: 7 }], 1.9);
     const bent = end(bend(3, 2), 1.9);
@@ -336,5 +342,100 @@ describe('the ring as the finger', () => {
     const size = photoRingRadius(7) * photoPlacement(W, H).scale * 1.5;
     const tops = named(calls, 'moveTo').filter((c) => Math.abs((c.args[0] as number) - r.x) < 1e-6 && Math.abs((c.args[1] as number) - (r.y - size)) < 1e-6);
     expect(tops.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the bend inset', () => {
+  /** A made-up screen with high e at the top and frets running right, like the wide layout. */
+  const wide = (width = 800, height = 600): NeckSpace => ({
+    ring: (n) => ({ x: 100 + n.fret * 40, y: 100 + n.string * 60, r: 12 }),
+    rest: (n) => ({ x: 100 + n.fret * 40, y: 100 + n.string * 60, r: 12 }),
+    at: (string, fret) => ({ x: 100 + fret * 40, y: 100 + string * 60 }),
+    scale: 1,
+    width,
+    height,
+    stringCount: 6,
+  });
+  /** The same, upright: high e on the right and frets running down. */
+  const upright = (): NeckSpace => ({
+    ring: (n) => ({ x: 600 - n.string * 60, y: 100 + n.fret * 40, r: 12 }),
+    rest: (n) => ({ x: 600 - n.string * 60, y: 100 + n.fret * 40, r: 12 }),
+    at: (string, fret) => ({ x: 600 - string * 60, y: 100 + fret * 40 }),
+    scale: 1,
+    width: 700,
+    height: 900,
+    stringCount: 6,
+  });
+  const bendAt = (string: number, semitones = 2, fret = 7, t = 1.9) => {
+    const notes = makeTimeline([{ start: 1, end: 2, string, fret, techniques: { bend: semitones } }]).notesForTrack(0);
+    return cuesAt(notes, t).bends[0];
+  };
+
+  it('covers AE2: pushes the bent string sideways across its neighbours, in the bend direction', () => {
+    const b = bendInset(wide(), bendAt(2))!;
+    const a = bendInset(wide(), bendAt(5))!;
+    // in the wide layout the strings run down the screen, so toward low E is down
+    expect(b.pushed.y).toBeGreaterThan(b.strings[b.index].y);
+    expect(a.pushed.y).toBeLessThan(a.strings[a.index].y);
+    expect(b.pushed.x).toBeCloseTo(b.strings[b.index].x, 6);
+    // the neighbours stay where they are
+    expect(b.strings).toHaveLength(6);
+  });
+
+  it('pushes a half-step bend about half as far as a full-step bend', () => {
+    const push = (semitones: number) => {
+      const shape = bendInset(wide(), bendAt(2, semitones))!;
+      return shape.pushed.y - shape.strings[shape.index].y;
+    };
+    expect(push(1) / push(2)).toBeCloseTo(0.5, 6);
+  });
+
+  it('orders the strings the way they run on screen: reversed in the upright layout', () => {
+    const shape = bendInset(upright(), bendAt(2))!;
+    // high e is on the right when upright, so toward low E is toward the left
+    expect(shape.pushed.x).toBeLessThan(shape.strings[shape.index].x);
+    expect(shape.strings[0].x).toBeGreaterThan(shape.strings[5].x);
+  });
+
+  it('shows one inset, for the lowest-pitched bend, when several sound together', () => {
+    const notes = makeTimeline([
+      { start: 1, end: 2, string: 2, fret: 7, techniques: { bend: 2 } },
+      { start: 1, end: 2, string: 5, fret: 7, techniques: { bend: 2 } },
+    ]).notesForTrack(0);
+    const { ctx, calls } = createRecordingContext();
+    drawNeckCues(ctx, wide(), cuesAt(notes, 1.9), DEFAULT_THEME);
+    const first = bendInset(wide(), cuesAt(notes, 1.9).bends[0])!;
+    expect(first.index).toBe(4);
+    expect(named(calls, 'closePath')).toHaveLength(1);
+  });
+
+  it('keeps the inset inside the frame wherever the ring is', () => {
+    const edges: [number, number][] = [[1, 1], [6, 1], [1, 20], [6, 20]];
+    for (const space of [wide(300, 200), wide(), upright()]) {
+      for (const [string, fret] of edges) {
+        const shape = bendInset(space, bendAt(string, 2, fret))!;
+        for (const c of shape.corners) {
+          expect(c.x).toBeGreaterThanOrEqual(-1e-6);
+          expect(c.y).toBeGreaterThanOrEqual(-1e-6);
+          expect(c.x).toBeLessThanOrEqual(space.width + 1e-6);
+          expect(c.y).toBeLessThanOrEqual(space.height + 1e-6);
+        }
+      }
+    }
+  });
+
+  it('draws nothing when no note is bending', () => {
+    const notes = makeTimeline([{ start: 1, end: 2, string: 3, fret: 7, techniques: { vibrato: true } }]).notesForTrack(0);
+    const { ctx, calls } = createRecordingContext();
+    drawNeckCues(ctx, wide(), cuesAt(notes, 1.5), DEFAULT_THEME);
+    expect(calls).toEqual([]);
+    const ended = makeTimeline([{ start: 1, end: 2, string: 3, fret: 7, techniques: { bend: 2 } }]).notesForTrack(0);
+    expect(cuesAt(ended, 2.5).bends).toEqual([]);
+  });
+
+  it('is drawn with the neck view when cues are on and not when they are off', () => {
+    const specs: NoteSpec[] = [{ start: 1, end: 2, string: 3, fret: 7, techniques: { bend: 2 } }];
+    const closes = (cues: boolean) => named(draw(specs, 1.9, cues), 'closePath').length;
+    expect(closes(true)).toBeGreaterThan(closes(false));
   });
 });

@@ -70,6 +70,13 @@ export interface FingerPose {
   readonly press: number;
 }
 
+/** A bend sounding now: the note, how far into its bend it is (0 to 1) and which way its string is pushed (see `bendSide`). */
+export interface BendCue {
+  readonly note: NoteEvent;
+  readonly amount: number;
+  readonly side: 1 | -1;
+}
+
 export interface NeckCues {
   readonly arcs: readonly ArcCue[];
   readonly comets: readonly CometCue[];
@@ -82,9 +89,11 @@ export interface NeckCues {
   readonly pulse: PulseCue | null;
   /** The finger pose by note id, only for notes that move. */
   readonly poses: ReadonlyMap<string, FingerPose>;
+  /** The bends sounding now, the one on the lowest-pitched string first. */
+  readonly bends: readonly BendCue[];
 }
 
-const NONE: NeckCues = { arcs: [], comets: [], effects: new Map(), harmonics: [], unpicked: new Set(), pulse: null, poses: new Map() };
+const NONE: NeckCues = { arcs: [], comets: [], effects: new Map(), harmonics: [], unpicked: new Set(), pulse: null, poses: new Map(), bends: [] };
 
 /**
  * Which way a bent string is pushed on a track with `stringCount` strings: 1 toward the lower-pitched neighbour for the upper half of
@@ -168,6 +177,7 @@ export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number
   const harmonics: NoteEvent[] = [];
   const unpicked = new Set<string>();
   const poses = new Map<string, FingerPose>();
+  const bends: BendCue[] = [];
   const pose = (note: NoteEvent): { fret: number; across: number; press: number } => {
     const existing = poses.get(note.id);
     return existing ? { ...existing } : { fret: note.fret, across: 0, press: 1 };
@@ -183,6 +193,7 @@ export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number
     comets.push(...noteComets);
     const effect = effectOf(note, t);
     if (effect) effects.set(note.id, effect);
+    if (effect && effect.bend > 0) bends.push({ note, amount: effect.bend, side: bendSide(note.string, stringCount) });
     if (tech.harmonic) harmonics.push(note);
 
     const moving = pose(note);
@@ -223,7 +234,8 @@ export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number
       pulse = { from, to, progress: smooth((t - steps.playing.startSeconds) / span) };
     }
   }
-  return { arcs, comets, effects, harmonics, unpicked, pulse, poses };
+  bends.sort((a, b) => b.note.string - a.note.string);
+  return { arcs, comets, effects, harmonics, unpicked, pulse, poses, bends };
 }
 
 function setIfMoved(poses: Map<string, FingerPose>, note: NoteEvent, pose: FingerPose): void {

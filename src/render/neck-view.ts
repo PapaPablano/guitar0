@@ -346,7 +346,7 @@ export function renderNeckView(
       drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true, ringWidth(note), poseOf(note));
     }
   }
-  if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, cues.poses), cues, theme);
+  if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, width, height, cues.poses), cues, theme);
   ctx.restore();
 }
 
@@ -439,7 +439,7 @@ function fretX(fret: number): number {
 }
 
 /** The screen positions the technique cues are drawn against. */
-function neckSpace(place: PhotoPlacement, stringCount: number, poses?: ReadonlyMap<string, FingerPose>): NeckSpace {
+function neckSpace(place: PhotoPlacement, stringCount: number, width: number, height: number, poses?: ReadonlyMap<string, FingerPose>): NeckSpace {
   return {
     ring: (note) => markerCentre(place, stringCount, note, poses?.get(note.id)),
     rest: (note) => markerCentre(place, stringCount, note),
@@ -448,6 +448,9 @@ function neckSpace(place: PhotoPlacement, stringCount: number, poses?: ReadonlyM
       return photoToScreen(place, px, photoStringY(string, stringCount, px));
     },
     scale: place.scale,
+    width,
+    height,
+    stringCount,
   };
 }
 

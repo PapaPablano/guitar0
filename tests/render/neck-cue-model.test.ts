@@ -321,3 +321,30 @@ describe('the finger pose', () => {
     }
   });
 });
+
+describe('the sounding bends', () => {
+  it('lists a bend while it sounds, with its size and side, and nothing before or after', () => {
+    const notes = notesOf([{ start: 1, end: 2, string: 2, fret: 7, techniques: { bend: 2 } }]);
+    const at = (t: number) => cuesAt(notes, t).bends;
+    expect(at(0.5)).toEqual([]);
+    expect(at(2.2)).toEqual([]);
+    expect(at(1.9)).toHaveLength(1);
+    expect(at(1.9)[0]).toMatchObject({ side: 1 });
+    expect(at(1.9)[0].note.id).toBe(notes[0].id);
+    expect(at(1.9)[0].amount).toBeGreaterThan(0.9);
+  });
+
+  it('puts the lowest-pitched bend first when several sound together', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 2, fret: 7, techniques: { bend: 2 } },
+      { start: 1, end: 2, string: 5, fret: 7, techniques: { bend: 1 } },
+    ]);
+    const bends = cuesAt(notes, 1.9).bends;
+    expect(bends.map((b) => b.note.string)).toEqual([5, 2]);
+    expect(bends[0].side).toBe(-1);
+  });
+
+  it('lists no bend for notes without one', () => {
+    expect(cuesAt(notesOf([{ start: 1, end: 2, techniques: { vibrato: true } }]), 1.5).bends).toEqual([]);
+  });
+});
