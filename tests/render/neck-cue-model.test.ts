@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cuesAt, nextOnString } from '../../src/render/neck-cue-model';
+import { bendSide, cuesAt, nextOnString, SHIVER_HERTZ } from '../../src/render/neck-cue-model';
+import { DEFAULT_LOOKAHEAD } from '../../src/render/fretboard-steps';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 
 const notesOf = (specs: NoteSpec[]) => makeTimeline(specs).notesForTrack(0);
@@ -207,5 +208,116 @@ describe('nextOnString', () => {
     ]);
     expect(nextOnString(notes, notes[0])?.fret).toBe(9);
     expect(nextOnString(notes, notes[2])).toBeUndefined();
+  });
+});
+
+describe('the finger pose', () => {
+  const DEFAULT_LOOK = DEFAULT_LOOKAHEAD;
+  const bendOn = (string: number, semitones: number) => notesOf([{ start: 1, end: 2, string, fret: 7, techniques: { bend: semitones } }]);
+  const acrossAt = (notes: ReturnType<typeof notesOf>, t: number, count = 6) => cuesAt(notes, t, DEFAULT_LOOK, count).poses.get(notes[0].id)?.across ?? 0;
+
+  it('covers AE1: bends the upper-half strings toward the lower-pitched neighbour and the rest the other way', () => {
+    expect(acrossAt(bendOn(2, 2), 1.9)).toBeGreaterThan(0);
+    expect(acrossAt(bendOn(3, 2), 1.9)).toBeGreaterThan(0);
+    expect(acrossAt(bendOn(1, 2), 1.9)).toBeGreaterThan(0);
+    expect(acrossAt(bendOn(4, 2), 1.9)).toBeLessThan(0);
+    expect(acrossAt(bendOn(5, 2), 1.9)).toBeLessThan(0);
+    expect(acrossAt(bendOn(6, 2), 1.9)).toBeLessThan(0);
+  });
+
+  it('keeps the same rule on a four-string bass and a seven-string guitar', () => {
+    expect(bendSide(2, 4)).toBe(1);
+    expect(bendSide(3, 4)).toBe(-1);
+    expect(bendSide(3, 7)).toBe(1);
+    expect(bendSide(4, 7)).toBe(-1);
+    expect(acrossAt(bendOn(3, 2), 1.9, 4)).toBeLessThan(0);
+  });
+
+  it('covers AE3: moves a half-step bend about half as far as a full-step one, and caps beyond two semitones', () => {
+    const half = Math.abs(acrossAt(bendOn(2, 1), 1.9));
+    const full = Math.abs(acrossAt(bendOn(2, 2), 1.9));
+    const more = Math.abs(acrossAt(bendOn(2, 4), 1.9));
+    expect(half).toBeGreaterThan(0);
+    expect(half / full).toBeCloseTo(0.5, 6);
+    expect(more).toBeCloseTo(full, 9);
+    expect(full).toBeLessThan(1);
+  });
+
+  it('eases in from nothing at the start of the note and is gone once it ends', () => {
+    const notes = bendOn(2, 2);
+    expect(acrossAt(notes, 1)).toBe(0);
+    expect(Math.abs(acrossAt(notes, 1.1))).toBeLessThan(Math.abs(acrossAt(notes, 1.5)));
+    expect(acrossAt(notes, 2.1)).toBe(0);
+  });
+
+  it('covers AE4: rocks a vibrato note with the shared wave while it sounds, and settles after', () => {
+    const notes = notesOf([{ start: 1, end: 3, string: 3, techniques: { vibrato: true } }]);
+    const t = 1.5 + 1 / (4 * SHIVER_HERTZ);
+    const a = acrossAt(notes, t);
+    expect(a).not.toBe(0);
+    expect(acrossAt(notes, t + 1 / SHIVER_HERTZ)).toBeCloseTo(a, 6);
+    expect(acrossAt(notes, t + 1 / (2 * SHIVER_HERTZ))).toBeCloseTo(-a, 6);
+    expect(acrossAt(notes, 3.2)).toBe(0);
+  });
+
+  it('covers AE4: carries the ring along a shift slide from the starting fret to the target', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 4, fret: 5, techniques: { slide: 'shift' } },
+      { start: 2, end: 2.5, string: 4, fret: 9 },
+    ]);
+    const fretAt = (t: number) => cuesAt(notes, t).poses.get(notes[0].id)?.fret ?? notes[0].fret;
+    expect(fretAt(1)).toBeCloseTo(5, 9);
+    expect(fretAt(1.5)).toBeCloseTo(7, 9);
+    expect(fretAt(1.99)).toBeCloseTo(9, 1);
+    expect(fretAt(2.1)).toBe(5);
+  });
+
+  it('brings a slide into a note from three frets away just before it starts', () => {
+    const notes = notesOf([{ start: 1, end: 2, string: 3, fret: 7, techniques: { slide: 'in-below' } }]);
+    const pose = (t: number) => cuesAt(notes, t).poses.get(notes[0].id);
+    expect(pose(0.875)?.fret).toBeCloseTo(5.5, 9);
+    expect(pose(1.5)).toBeUndefined();
+  });
+
+  it('taps a hammer-on destination down right after it starts, and not later', () => {
+    const notes = notesOf([
+      { start: 1, end: 1.5, string: 3, fret: 5, techniques: { hammerPull: 'origin' } },
+      { start: 1.5, end: 2, string: 3, fret: 7, techniques: { hammerPull: 'destination' } },
+    ]);
+    const press = (id: string, t: number) => cuesAt(notes, t).poses.get(id)?.press ?? 1;
+    expect(press(notes[1].id, 1.52)).toBeLessThan(1);
+    expect(press(notes[1].id, 1.9)).toBe(1);
+    expect(press(notes[0].id, 1.2)).toBe(1);
+  });
+
+  it('lifts a pull-off origin near its end, and not earlier', () => {
+    const notes = notesOf([
+      { start: 1, end: 1.5, string: 3, fret: 9, techniques: { hammerPull: 'origin' } },
+      { start: 1.5, end: 2, string: 3, fret: 7, techniques: { hammerPull: 'destination' } },
+    ]);
+    const press = (id: string, t: number) => cuesAt(notes, t).poses.get(id)?.press ?? 1;
+    expect(press(notes[0].id, 1.48)).toBeLessThan(1);
+    expect(press(notes[0].id, 1.1)).toBe(1);
+    expect(press(notes[1].id, 1.52)).toBe(1);
+  });
+
+  it('covers AE5: gives a plain note, and any note outside the window, no pose', () => {
+    const plain = notesOf([{ start: 1, end: 2 }, { start: 30, end: 31, techniques: { bend: 2 } }]);
+    for (const t of [0.5, 1.5, 2.5]) expect(cuesAt(plain, t).poses.size).toBe(0);
+  });
+
+  it('draws the same effects, arcs and comets when no string count is given', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 2, techniques: { bend: 2, vibrato: true } },
+      { start: 2, end: 3, string: 4, fret: 5, techniques: { slide: 'shift' } },
+      { start: 3, end: 4, string: 4, fret: 9 },
+    ]);
+    for (const t of [1.5, 2.5]) {
+      const a = cuesAt(notes, t);
+      const b = cuesAt(notes, t, DEFAULT_LOOK, 6);
+      expect(b.effects).toEqual(a.effects);
+      expect(b.arcs).toEqual(a.arcs);
+      expect(b.comets).toEqual(a.comets);
+    }
   });
 });
