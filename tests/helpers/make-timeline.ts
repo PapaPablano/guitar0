@@ -22,7 +22,7 @@ export interface NoteSpec {
 }
 
 /** Builds a Timeline by hand, with no alphaTab involved, for renderer tests. */
-export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4): Timeline {
+export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4, stringCount = 6): Timeline {
   const notes: NoteEvent[] = specs
     .map((s, i) => ({
       id: `n${i}`,
@@ -51,8 +51,8 @@ export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4): Timel
   const track: TrackInfo = {
     index: 0,
     name: 'Guitar',
-    stringCount: 6,
-    tuning: [64, 59, 55, 50, 45, 40],
+    stringCount,
+    tuning: [64, 59, 55, 50, 45, 40, 35, 30].slice(0, stringCount),
     hasTabData: true,
     isPercussion: false,
   };

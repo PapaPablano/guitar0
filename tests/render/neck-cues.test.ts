@@ -7,9 +7,9 @@ import { createRecordingContext, type Call } from '../helpers/recording-context'
 const W = 1920;
 const H = 1080;
 
-function draw(specs: NoteSpec[], t: number, cues: boolean | undefined, w = W, h = H): Call[] {
+function draw(specs: NoteSpec[], t: number, cues: boolean | undefined, w = W, h = H, stringCount = 6): Call[] {
   const { ctx, calls } = createRecordingContext();
-  renderNeckView(ctx, makeTimeline(specs), 0, t, w, h, cues === undefined ? {} : { techniqueCues: cues });
+  renderNeckView(ctx, makeTimeline(specs, 2, 4, stringCount), 0, t, w, h, cues === undefined ? {} : { techniqueCues: cues });
   return calls;
 }
 
@@ -105,21 +105,6 @@ describe('slides', () => {
 
 describe('bend, vibrato and palm mute', () => {
   const note = (techniques: NoteSpec['techniques']): NoteSpec[] => [{ start: 1, end: 2, string: 3, fret: 5, techniques }];
-  /** Where the lit string ends, at the bridge. */
-  const bridgeY = (specs: NoteSpec[], t: number) => {
-    const points = lines(draw(specs, t, true));
-    return points[points.length - 1].y;
-  };
-
-  it('covers AE3: bends the lit string away from the lower strings, a full bend more than a half step, and not at all without a bend', () => {
-    const straight = bridgeY(note(undefined), 1.9);
-    const half = bridgeY(note({ bend: 1 }), 1.9);
-    const full = bridgeY(note({ bend: 2 }), 1.9);
-    expect(half).toBeLessThan(straight);
-    expect(full).toBeLessThan(half);
-    expect(straight - full).toBeCloseTo(2 * (straight - half), 3);
-  });
-
   it('draws the bent string as a curve of many points', () => {
     expect(lines(draw(note({ bend: 2 }), 1.9, true)).length).toBeGreaterThan(lines(draw(note(undefined), 1.9, true)).length + 20);
   });
@@ -246,5 +231,110 @@ describe('a video frame and a live frame', () => {
     };
     expect(arcsIn(true)).toBeGreaterThan(0);
     expect(arcsIn(false)).toBe(0);
+  });
+});
+
+describe('the ring as the finger', () => {
+  const bend = (string: number, semitones: number, fret = 7): NoteSpec[] => [{ start: 1, end: 2, string, fret, techniques: { bend: semitones } }];
+  /** The centre of the playing note's ring: the last ring or ellipse traced, less any traced after it by cues. */
+  const ring = (calls: Call[], after = 0) => {
+    const traced = calls.filter((c) => c.name === 'arc' || c.name === 'ellipse');
+    const last = traced[traced.length - 1 - after];
+    return { x: last.args[0] as number, y: last.args[1] as number, name: last.name, args: last.args };
+  };
+  const rest = (string: number, fret: number, w = W, h = H, count = 6) => {
+    const place = photoPlacement(w, h);
+    const px = photoNoteX(fret);
+    return photoToScreen(place, px, photoStringY(string, count, px));
+  };
+
+  it('covers AE1: bends the B string toward low E and the A string toward high e', () => {
+    const b = ring(draw(bend(2, 2), 1.9, true));
+    const a = ring(draw(bend(5, 2), 1.9, true));
+    // in the wide layout high e is at the top, so toward low E is down the screen
+    expect(b.y).toBeGreaterThan(rest(2, 7).y + 1);
+    expect(a.y).toBeLessThan(rest(5, 7).y - 1);
+    expect(b.x).toBeCloseTo(rest(2, 7).x, 6);
+  });
+
+  it('puts the bend the right way for a four-string bass', () => {
+    const upper = ring(draw(bend(2, 2), 1.9, true, W, H, 4));
+    const lower = ring(draw(bend(3, 2), 1.9, true, W, H, 4));
+    expect(upper.y).toBeGreaterThan(rest(2, 7, W, H, 4).y + 1);
+    expect(lower.y).toBeLessThan(rest(3, 7, W, H, 4).y - 1);
+  });
+
+  it('turns the same bends the right way on screen in the upright layout, where high e is on the right', () => {
+    const b = ring(draw(bend(2, 2), 1.9, true, 1080, 1920));
+    const a = ring(draw(bend(5, 2), 1.9, true, 1080, 1920));
+    expect(b.x).toBeLessThan(rest(2, 7, 1080, 1920).x - 1);
+    expect(a.x).toBeGreaterThan(rest(5, 7, 1080, 1920).x + 1);
+  });
+
+  it('covers AE2: stretches the ring of a bend and starts the lit string at the displaced ring', () => {
+    const calls = draw(bend(3, 2), 1.9, true);
+    const r = ring(calls);
+    expect(r.name).toBe('ellipse');
+    const [, , rx, ry] = r.args as number[];
+    expect(Math.max(rx, ry)).toBeGreaterThan(Math.min(rx, ry) * 1.2);
+    const starts = named(calls, 'moveTo').map((c) => ({ x: c.args[0] as number, y: c.args[1] as number }));
+    expect(starts.some((p) => Math.abs(p.x - r.x) < 1e-6 && Math.abs(p.y - r.y) < 1e-6)).toBe(true);
+  });
+
+  it('eases the lit string back to straight at the bridge', () => {
+    const end = (specs: NoteSpec[], t: number) => {
+      const points = lines(draw(specs, t, true));
+      return points[points.length - 1];
+    };
+    const straight = end([{ start: 1, end: 2, string: 3, fret: 7 }], 1.9);
+    const bent = end(bend(3, 2), 1.9);
+    expect(bent.y).toBeCloseTo(straight.y, 6);
+  });
+
+  it('covers AE3: moves the ring of a half-step bend about half as far as a full-step bend', () => {
+    const at = (semitones: number) => ring(draw(bend(2, semitones), 1.9, true)).y - rest(2, 7).y;
+    expect(at(1) / at(2)).toBeCloseTo(0.5, 6);
+  });
+
+  it('covers AE4: rocks the ring of a vibrato note and settles it after the note', () => {
+    const note: NoteSpec[] = [{ start: 1, end: 3, string: 3, fret: 7, techniques: { vibrato: true } }];
+    const t = 1.5 + 1 / 28;
+    const up = ring(draw(note, t, true)).y;
+    const down = ring(draw(note, t + 1 / 14, true)).y;
+    expect(up).not.toBeCloseTo(down, 3);
+    expect(Math.abs(up - rest(3, 7).y)).toBeGreaterThan(0.5);
+    expect(ring(draw(note, 3.3, true)).y).toBeCloseTo(rest(3, 7).y, 6);
+  });
+
+  it('covers AE4: carries the ring along a slide', () => {
+    const slide: NoteSpec[] = [
+      { start: 1, end: 2, string: 4, fret: 5, techniques: { slide: 'shift' } },
+      { start: 2, end: 2.5, string: 4, fret: 9 },
+    ];
+    // the comet's head and the arrival pulse add seven arcs after the ring
+    expect(ring(draw(slide, 1.5, true), 7).x).toBeCloseTo(rest(4, 7).x, 6);
+    expect(ring(draw(slide, 1.5, false)).x).toBeCloseTo(rest(4, 5).x, 6);
+  });
+
+  it('shrinks the ring a moment as a hammer-on lands and leaves it round', () => {
+    const notes: NoteSpec[] = [
+      { start: 1, end: 1.5, string: 3, fret: 5, techniques: { hammerPull: 'origin' } },
+      { start: 1.5, end: 2, string: 3, fret: 7, techniques: { hammerPull: 'destination' } },
+    ];
+    const radius = (t: number) => arcs(draw(notes, t, true)).filter((a) => a.alpha > 0.5).pop()!.r;
+    expect(radius(1.52)).toBeLessThan(radius(1.9));
+  });
+
+  it('covers AE5: draws a plain note the same with the cues on as off', () => {
+    const plainNote: NoteSpec[] = [{ start: 1, end: 2, string: 3, fret: 7 }];
+    for (const t of [0.8, 1.5, 2.2]) expect(draw(plainNote, t, true)).toEqual(draw(plainNote, t, false));
+  });
+
+  it('keeps the diamond of a harmonic on the displaced ring', () => {
+    const calls = draw([{ start: 1, end: 2, string: 3, fret: 7, techniques: { bend: 2, harmonic: true } }], 1.9, true);
+    const r = ring(calls);
+    const size = photoRingRadius(7) * photoPlacement(W, H).scale * 1.5;
+    const tops = named(calls, 'moveTo').filter((c) => Math.abs((c.args[0] as number) - r.x) < 1e-6 && Math.abs((c.args[1] as number) - (r.y - size)) < 1e-6);
+    expect(tops.length).toBeGreaterThan(0);
   });
 });

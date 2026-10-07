@@ -5,8 +5,10 @@ import { stringColor, type HighwayTheme } from './theme';
 
 /** Where things are on the screen, as the neck view places them; the cues are drawn without knowing about the photo. */
 export interface NeckSpace {
-  /** The ring of a note: its centre and radius. */
+  /** The ring of a note as drawn: its centre and radius, where its finger is while it moves. */
   ring(note: NoteEvent): { x: number; y: number; r: number };
+  /** The ring of a note at rest, ignoring any motion. */
+  rest(note: NoteEvent): { x: number; y: number; r: number };
   /** The point on a string at a fret, which may be between whole frets. */
   at(string: number, fret: number): { x: number; y: number };
   /** Screen pixels per photo pixel, to keep line widths in step with the picture. */
@@ -113,8 +115,8 @@ function drawDiamond(ctx: DrawContext, space: NeckSpace, note: NoteEvent): void 
 function drawPulse(ctx: DrawContext, space: NeckSpace, cues: NeckCues): void {
   const pulse = cues.pulse;
   if (!pulse) return;
-  const a = space.ring(pulse.from);
-  const b = space.ring(pulse.to);
+  const a = space.rest(pulse.from);
+  const b = space.rest(pulse.to);
   const at = (p: number) => ({ x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p });
   const radius = Math.max(3, Math.min(a.r, b.r) * 0.38);
   ctx.fillStyle = PULSE;

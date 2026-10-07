@@ -1,7 +1,7 @@
 import type { DrawContext } from './draw-context';
 import { DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
 import { emphasisAt } from './emphasis';
-import { cuesAt, type NeckCues, type NoteEffect } from './neck-cue-model';
+import { BEND_REACH, bendSide, cuesAt, SHIVER_HERTZ, SHIVER_REACH, type FingerPose, type NeckCues, type NoteEffect } from './neck-cue-model';
 import { drawNeckCues, type NeckSpace } from './neck-cues';
 import { DEFAULT_LABEL_MODE, dotText, type LabelMode } from './fretboard';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
@@ -202,6 +202,26 @@ export function photoNoteX(fret: number): number {
   return (before + FRET_X[shown - 1]) / 2;
 }
 
+/** Photo-X of a finger at a fret that may be between whole frets, as it is while a slide carries it. */
+export function photoNoteXAt(fret: number): number {
+  const low = Math.floor(fret);
+  const high = Math.ceil(fret);
+  if (low === high) return photoNoteX(low);
+  return photoNoteX(low) + (photoNoteX(high) - photoNoteX(low)) * (fret - low);
+}
+
+/**
+ * Photo pixels a finger at photo-X `x` on `string` is off its string when it is `across` gaps over, positive toward the
+ * lower-pitched neighbour. A gap is the distance to the neighbour on that side, or to the other one at the edge of the neck.
+ */
+function acrossOffset(string: number, stringCount: number, x: number, across: number): number {
+  if (across === 0) return 0;
+  const toward = string + (across > 0 ? 1 : -1);
+  const neighbour = toward >= 1 && toward <= stringCount ? toward : string - (across > 0 ? 1 : -1);
+  const gap = neighbour >= 1 && neighbour <= stringCount ? Math.abs(photoStringY(neighbour, stringCount, x) - photoStringY(string, stringCount, x)) : 10;
+  return across * gap;
+}
+
 /** Ring radius in photo pixels: it follows the gap between frets, which narrows up the neck. */
 export function photoRingRadius(fret: number): number {
   const shown = Math.min(Math.max(fret, 1), PHOTO_FRET_COUNT);
@@ -293,7 +313,8 @@ export function renderNeckView(
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, spelling: spellingForTuning(tuning) };
   const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount) : photoPlacement(width, height);
-  const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD) : null;
+  const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount) : null;
+  const poseOf = (note: NoteEvent) => cues?.poses.get(note.id);
   /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
   const unpicked = (note: NoteEvent) => cues?.unpicked.has(note.id) ?? false;
   const ringWidth = (note: NoteEvent) => (cues?.effects.get(note.id)?.muted ? 0.6 : 1);
@@ -304,28 +325,28 @@ export function renderNeckView(
   drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues);
   steps.trail.forEach((step, i) => {
     for (const note of step.notes) {
-      drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note));
+      drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
     }
   });
   steps.upcoming.forEach((step, i) => {
     for (const note of step.notes) {
       const soft = unpicked(note);
       const grow = soft ? 1 : emphasisAt(note.startSeconds, note.endSeconds, t).scale;
-      drawRing(ctx, place, stringCount, note, 0.8 * grow, (0.9 - i * 0.1) * (soft ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note));
+      drawRing(ctx, place, stringCount, note, 0.8 * grow, (0.9 - i * 0.1) * (soft ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
     }
   });
   if (steps.playing) {
     for (const note of steps.playing.notes) {
       const e = emphasisAt(note.startSeconds, note.endSeconds, t);
       if (unpicked(note)) {
-        drawRing(ctx, place, stringCount, note, 1.1, UNPICKED_STRENGTH, theme, naming, false, ringWidth(note));
+        drawRing(ctx, place, stringCount, note, 1.1, UNPICKED_STRENGTH, theme, naming, false, ringWidth(note), poseOf(note));
         continue;
       }
-      if (e.sounding) drawHalo(ctx, place, stringCount, note, e.scale, e.pop, theme);
-      drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true, ringWidth(note));
+      if (e.sounding) drawHalo(ctx, place, stringCount, note, e.scale, e.pop, theme, poseOf(note));
+      drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true, ringWidth(note), poseOf(note));
     }
   }
-  if (cues) drawNeckCues(ctx, neckSpace(place, stringCount), cues, theme);
+  if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, cues.poses), cues, theme);
   ctx.restore();
 }
 
@@ -418,9 +439,10 @@ function fretX(fret: number): number {
 }
 
 /** The screen positions the technique cues are drawn against. */
-function neckSpace(place: PhotoPlacement, stringCount: number): NeckSpace {
+function neckSpace(place: PhotoPlacement, stringCount: number, poses?: ReadonlyMap<string, FingerPose>): NeckSpace {
   return {
-    ring: (note) => markerCentre(place, stringCount, note),
+    ring: (note) => markerCentre(place, stringCount, note, poses?.get(note.id)),
+    rest: (note) => markerCentre(place, stringCount, note),
     at: (string, fret) => {
       const px = fretX(fret);
       return photoToScreen(place, px, photoStringY(string, stringCount, px));
@@ -429,10 +451,25 @@ function neckSpace(place: PhotoPlacement, stringCount: number): NeckSpace {
   };
 }
 
-function markerCentre(place: PhotoPlacement, stringCount: number, note: NoteEvent): { x: number; y: number; r: number } {
-  const px = photoNoteX(note.fret);
-  const at = photoToScreen(place, px, photoStringY(note.string, stringCount, px));
-  return { ...at, r: photoRingRadius(note.fret) * place.scale };
+/** Where a note's ring is on the screen: at its fret and string, or where its finger is while it moves. */
+function markerCentre(place: PhotoPlacement, stringCount: number, note: NoteEvent, pose?: FingerPose): { x: number; y: number; r: number } {
+  const px = pose ? photoNoteXAt(pose.fret) : photoNoteX(note.fret);
+  const py = photoStringY(note.string, stringCount, px) + (pose ? acrossOffset(note.string, stringCount, px, pose.across) : 0);
+  return { ...photoToScreen(place, px, py), r: photoRingRadius(note.fret) * place.scale * (pose?.press ?? 1) };
+}
+
+/** How far a bending finger stretches its ring along the bend, at a full bend. */
+const RING_STRETCH = 0.5;
+
+/** The way a ring is stretched when its finger is pushed across the strings: the angle of the push on the screen and how far, 0 to 1. */
+function ringStretch(place: PhotoPlacement, stringCount: number, note: NoteEvent, pose?: FingerPose): { angle: number; amount: number } | null {
+  if (!pose || pose.across === 0) return null;
+  const pushed = markerCentre(place, stringCount, note, pose);
+  const level = markerCentre(place, stringCount, note, { ...pose, across: 0 });
+  const dx = pushed.x - level.x;
+  const dy = pushed.y - level.y;
+  if (Math.hypot(dx, dy) < 1e-9) return null;
+  return { angle: Math.atan2(dy, dx), amount: Math.min(1, Math.abs(pose.across) / BEND_REACH) };
 }
 
 /** The string lit from a note's ring to the bridge: a soft wide glow under a bright core. */
@@ -448,8 +485,9 @@ function drawLitStrings(
 ): void {
   const light = (note: NoteEvent, base: number) => {
     const effect = cues?.effects.get(note.id);
+    const pose = cues?.poses.get(note.id);
     const strength = base * (effect?.muted ? MUTED_STRENGTH : 1) * (cues?.unpicked.has(note.id) ? UNPICKED_STRENGTH : 1);
-    const from = photoNoteX(note.fret);
+    const from = pose ? photoNoteXAt(pose.fret) : photoNoteX(note.fret);
     const stops = effect && (effect.bend > 0 || effect.shiver > 0) ? sampledStops(from) : [from, ...STRING_KNOTS_X.filter((k) => k > from), BRIDGE_X];
     ctx.strokeStyle = stringColor(theme, note.string);
     for (const [grow, alpha] of [[9, 0.12], [5, 0.22], [2, 0.95]] as const) {
@@ -476,10 +514,6 @@ function drawLitStrings(
 
 /** A lit string drawn at half strength for a palm-muted note. */
 const MUTED_STRENGTH = 0.5;
-/** Share of the gap between strings a full bend moves the lit string, and the most a vibrato wave moves it. */
-const BEND_REACH = 0.55;
-const SHIVER_REACH = 0.12;
-const SHIVER_HERTZ = 7;
 /** Points along a string that bends or shivers, enough to look like a curve. */
 const SAMPLES = 24;
 
@@ -488,17 +522,16 @@ function sampledStops(from: number): number[] {
 }
 
 /**
- * How far, in photo pixels, a bent or shivering note moves its lit string off the straight line at photo-X `x`: up, away from the
- * lower strings, by a share of the gap to the next string. It grows from nothing at the ring, so the string leaves it bending.
+ * How far, in photo pixels, a bent or shivering note's lit string is off the straight line at photo-X `x`. The string leaves the
+ * displaced ring and runs straight to the bridge, which does not move, so the offset tapers to nothing there; a vibrato wave
+ * travels along it from the ring.
  */
 function stringOffset(effect: NoteEffect | undefined, string: number, stringCount: number, x: number, from: number, t: number): number {
   if (!effect || (effect.bend === 0 && effect.shiver === 0)) return 0;
-  const gap = string > 1 ? photoStringY(string, stringCount, x) - photoStringY(string - 1, stringCount, x) : photoStringY(2, stringCount, x) - photoStringY(1, stringCount, x);
-  const along = Math.min(1, Math.max(0, (x - from) / Math.max(1, (BRIDGE_X - from) * 0.35)));
-  const ramp = along * along * (3 - 2 * along);
-  const bend = -effect.bend * BEND_REACH * gap * ramp;
-  const wave = effect.shiver * SHIVER_REACH * gap * ramp * Math.sin(2 * Math.PI * SHIVER_HERTZ * t - x * 0.06);
-  return bend + wave;
+  const taper = 1 - Math.min(1, Math.max(0, (x - from) / Math.max(1, BRIDGE_X - from)));
+  const wave = effect.shiver * SHIVER_REACH * Math.sin(2 * Math.PI * SHIVER_HERTZ * t - (x - from) * 0.06);
+  const share = (effect.bend * BEND_REACH * bendSide(string, stringCount) + wave) * taper;
+  return acrossOffset(string, stringCount, x, share);
 }
 
 /** A soft pair of rings around the note being played; wider right at its start. */
@@ -510,8 +543,9 @@ function drawHalo(
   scale: number,
   pop: number,
   theme: HighwayTheme,
+  pose?: FingerPose,
 ): void {
-  const { x, y, r } = markerCentre(place, stringCount, note);
+  const { x, y, r } = markerCentre(place, stringCount, note, pose);
   ctx.strokeStyle = stringColor(theme, note.string);
   for (const [extra, alpha, width] of [[9 + 12 * pop, 0.14, 7], [4 + 6 * pop, 0.3, 3]] as const) {
     ctx.globalAlpha = alpha;
@@ -535,12 +569,15 @@ function drawRing(
   naming: Naming,
   playing: boolean,
   outline = 1,
+  pose?: FingerPose,
 ): void {
   if (alpha <= 0.02) return;
-  const { x, y, r } = markerCentre(place, stringCount, note);
+  const { x, y, r } = markerCentre(place, stringCount, note, pose);
   const radius = r * scale;
+  const stretch = ringStretch(place, stringCount, note, pose);
   ctx.beginPath();
-  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  if (stretch) ctx.ellipse(x, y, radius * (1 + RING_STRETCH * stretch.amount), radius, stretch.angle, 0, Math.PI * 2);
+  else ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fillStyle = '#03141a';
   ctx.globalAlpha = alpha * 0.65;
   ctx.fill();
