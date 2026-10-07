@@ -81,31 +81,51 @@ export function photoPlacement(width: number, height: number, window?: NeckWindo
   };
 }
 
-/** How much of the neck the zoomed view shows along the screen, in photo pixels: roughly the first dozen frets. */
+/** How much of the neck the zoomed view shows along the screen at most while following, in photo pixels: roughly the first dozen frets. */
 export const ZOOM_SPAN = 480;
-/** The zoomed view looks from this long before a moment to this long after it, and glides over that stretch. */
-const FOLLOW_BEHIND = 0.6;
-const FOLLOW_AHEAD = 2.4;
-const FOLLOW_SMOOTHING = [-1, -0.67, -0.33, 0, 0.33, 0.67, 1] as const;
+/** Each look at the notes covers this long before a moment to this long after it. */
+const FOLLOW_BEHIND = 1;
+const FOLLOW_AHEAD = 3;
+/** The view is the average of looks spread over this long either side of the moment, so it drifts instead of jumping at each note. */
+const FOLLOW_SMOOTH_SECONDS = 3;
+const FOLLOW_STEPS = 12;
 
-/** The middle of the notes around time `t`: the ones just played and the ones coming up. */
-function followTarget(notes: readonly NoteEvent[], t: number): number {
-  let sum = 0;
-  let count = 0;
-  let lastX = (VIEW_START + VIEW_END) / 2;
-  let lastStart = -Infinity;
+interface FollowLook {
+  readonly centre: number;
+  readonly span: number;
+}
+
+/** The middle and width of the frets in the notes just played and coming up around time `t`, or null if there are none. */
+function lookAt(notes: readonly NoteEvent[], t: number): FollowLook | null {
+  let low = Infinity;
+  let high = -Infinity;
   for (const note of notes) {
+    if (note.startSeconds < t - FOLLOW_BEHIND || note.startSeconds > t + FOLLOW_AHEAD) continue;
     const x = photoNoteX(note.fret);
-    if (note.startSeconds <= t && note.startSeconds > lastStart) {
-      lastStart = note.startSeconds;
-      lastX = x;
-    }
-    if (note.startSeconds >= t - FOLLOW_BEHIND && note.startSeconds <= t + FOLLOW_AHEAD) {
-      sum += x;
-      count += 1;
-    }
+    if (x < low) low = x;
+    if (x > high) high = x;
   }
-  return count > 0 ? sum / count : lastX;
+  return high < low ? null : { centre: (low + high) / 2, span: high - low };
+}
+
+/**
+ * Where the zoomed view sits at time `t` for a song too wide to show whole: the average of many looks around `t`.
+ * A passage that uses most of the neck averages out wide, so the view pulls back to show it, and a passage in one
+ * position settles close in; neither jumps at each note.
+ */
+function followView(notes: readonly NoteEvent[], t: number, fallbackCentre: number): FollowLook {
+  let centre = 0;
+  let span = 0;
+  let count = 0;
+  for (let i = -FOLLOW_STEPS; i <= FOLLOW_STEPS; i++) {
+    const look = lookAt(notes, t + (i / FOLLOW_STEPS) * FOLLOW_SMOOTH_SECONDS);
+    if (!look) continue;
+    centre += look.centre;
+    span += look.span;
+    count += 1;
+  }
+  if (count === 0) return { centre: fallbackCentre, span: 0 };
+  return { centre: centre / count, span: span / count };
 }
 
 /** Room left around the lowest and highest frets used, in photo pixels (about a fret and a half low down the neck). */
@@ -159,10 +179,9 @@ export function zoomedPlacement(
   let centreX = (range.lowX + range.highX) / 2;
   let span = fitSpan;
   if (fitSpan > ZOOM_SPAN) {
-    span = ZOOM_SPAN;
-    let sum = 0;
-    for (const offset of FOLLOW_SMOOTHING) sum += followTarget(notes, t + offset);
-    centreX = sum / FOLLOW_SMOOTHING.length;
+    const view = followView(notes, t, centreX);
+    centreX = view.centre;
+    span = Math.min(fitSpan, Math.max(ZOOM_SPAN, view.span + 2 * FIT_MARGIN));
   }
   const centreY = (photoStringY(range.lowString, stringCount, centreX) + photoStringY(range.highString, stringCount, centreX)) / 2;
   return photoPlacement(width, height, { centreX, span, centreY });
