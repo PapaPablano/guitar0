@@ -6,19 +6,17 @@ interface TrackPickerProps {
   onChange: (index: number) => void;
 }
 
+/** One button per playable track; hidden when there is only one. */
 export function TrackPicker({ tracks, value, onChange }: TrackPickerProps) {
   const playable = tracks.filter((t) => !t.isPercussion);
   if (playable.length <= 1) return null;
   return (
-    <label className="field">
-      Track
-      <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
-        {playable.map((t) => (
-          <option key={t.index} value={t.index}>
-            {t.name || `Track ${t.index + 1}`}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div role="group" aria-label="Track" className="segmented track-tabs">
+      {playable.map((t) => (
+        <button key={t.index} type="button" aria-pressed={t.index === value} onClick={() => onChange(t.index)}>
+          {t.name || `Track ${t.index + 1}`}
+        </button>
+      ))}
+    </div>
   );
 }

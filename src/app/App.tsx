@@ -67,8 +67,8 @@ import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
 import { assessSupport, readSupportEnvironment } from './support';
 import { FILE_TUNING, presetById, retuneTimeline } from '../model/retune';
-import { TuningPicker } from './TuningPicker';
-import { FileTuningPicker } from './FileTuningPicker';
+import { TuningChip } from './TuningChip';
+import { Menu } from './Menu';
 import { WRITTEN } from './file-tuning-options';
 import './app.css';
 
@@ -780,12 +780,14 @@ export function App() {
             setTuningId(FILE_TUNING);
           }}
         />
-        <FileTuningPicker
+        <TuningChip
+          track={track}
+          sourceTrack={sourceTimeline?.tracks[trackIndex]}
           written={session.written[trackIndex]?.[0] ?? []}
-          current={sourceTimeline?.tracks[trackIndex]?.tuning ?? []}
-          onChange={onFileTuningChange}
+          tuningId={tuningId}
+          onTuningChange={setTuningId}
+          onFileTuningChange={onFileTuningChange}
         />
-        <TuningPicker track={sourceTimeline?.tracks[trackIndex]} value={tuningId} onChange={setTuningId} />
         <ViewControls
           view={bottomView}
           lookahead={lookahead}
@@ -794,28 +796,36 @@ export function App() {
           onLookaheadChange={setLookahead}
           onLabelModeChange={setLabelMode}
         />
-        {songsterrLink && (
-          <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
-            Find on Songsterr
-          </a>
-        )}
         <button type="button" onClick={() => setNeckFullscreen(true)}>
           Full screen
         </button>
-        <button type="button" onClick={() => { clock.pause(); setExportOpen(true); }} disabled={!audioReady || stateControls.exportBlockedReason !== null} title={stateControls.exportBlockedReason ?? undefined}>
-          Export video
-        </button>
         <button
           type="button"
-          onClick={() => {
-            sessionToken.current += 1;
-            session.clock.dispose();
-            replaceUserClock(null);
-            setSession(null);
-          }}
+          className="primary"
+          onClick={() => { clock.pause(); setExportOpen(true); }}
+          disabled={!audioReady || stateControls.exportBlockedReason !== null}
+          title={stateControls.exportBlockedReason ?? undefined}
         >
-          Open another file
+          Export video
         </button>
+        <Menu label="More" ariaLabel="More: find on Songsterr, open another file" className="more-menu">
+          {songsterrLink && (
+            <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
+              Find on Songsterr
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              sessionToken.current += 1;
+              session.clock.dispose();
+              replaceUserClock(null);
+              setSession(null);
+            }}
+          >
+            Open another file
+          </button>
+        </Menu>
       </header>
       {track && !track.hasTabData && (
         <p className="notice" role="status">
