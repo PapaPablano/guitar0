@@ -11,6 +11,7 @@ import {
   photoToScreen,
   renderNeckFrame,
   renderNeckView,
+  CAMERA_MOVE_MIN,
   zoomedPlacement,
   ZOOM_SPAN,
   type PhotoContext,
@@ -182,6 +183,77 @@ describe('the zoomed view', () => {
 
   it('is the same for the same time', () => {
     expect(zoomedPlacement(540, 1170, notes, 3.3)).toEqual(zoomedPlacement(540, 1170, notes, 3.3));
+  });
+
+  describe('following per bar', () => {
+    const centre = (ns: typeof notes, t: number) => zoomedPlacement(1920, 1080, ns, t).centreX;
+    // Two-second bars; frets 0 and 17 widen the song past what one view shows.
+    const song = makeTimeline([
+      { start: 0, end: 0.4, fret: 0 },
+      { start: 0.5, end: 0.9, fret: 2 },
+      { start: 1, end: 1.4, fret: 3 },
+      { start: 2, end: 2.4, fret: 3 },
+      { start: 2.5, end: 2.9, fret: 2 },
+      { start: 4, end: 4.4, fret: 15 },
+      { start: 5, end: 5.4, fret: 17 },
+      { start: 6, end: 6.4, fret: 15 },
+    ]).notesForTrack(0);
+
+    it('holds still for the whole of a bar', () => {
+      const a = centre(song, 0.1);
+      for (const t of [0.5, 1, 1.9]) expect(centre(song, t)).toBe(a);
+      const b = centre(song, 4.9);
+      for (const t of [4.9, 5.5, 5.9]) expect(centre(song, t)).toBe(b);
+    });
+
+    it('stays put when the next bar is only a small move away', () => {
+      expect(photoNoteX(3) - photoNoteX(2)).toBeLessThan(CAMERA_MOVE_MIN);
+      expect(centre(song, 2.2)).toBe(centre(song, 0.1));
+    });
+
+    it('moves for a real shift, steadily and without overshoot, and settles on the new bar', () => {
+      const before = centre(song, 3);
+      const after = centre(song, 5.9);
+      expect(after).toBeGreaterThan(before + CAMERA_MOVE_MIN);
+      let last = before;
+      for (let t = 3; t <= 6; t += 0.05) {
+        const c = centre(song, t);
+        expect(c).toBeGreaterThanOrEqual(last - 1e-9);
+        expect(c).toBeLessThanOrEqual(after + 1e-9);
+        last = c;
+      }
+      expect(centre(song, 6.4)).toBe(after);
+    });
+
+    it('keeps gliding smoothly when real shifts come in quick succession', () => {
+      const quick = makeTimeline(
+        [2, 16, 2, 16, 2, 16].map((fret, i) => ({ start: i * 0.5, end: i * 0.5 + 0.2, fret })),
+        0.5,
+        6,
+      ).notesForTrack(0);
+      let last = centre(quick, 0);
+      let biggest = 0;
+      for (let t = 0; t <= 3.5; t += 0.02) {
+        const c = centre(quick, t);
+        biggest = Math.max(biggest, Math.abs(c - last));
+        last = c;
+      }
+      const jump = photoNoteX(16) - photoNoteX(2);
+      expect(biggest).toBeLessThan(jump / 10);
+      // Each new bar's move has already begun by the time its first note arrives, so the camera never trails far behind.
+      expect(Math.abs(centre(quick, 2.5) - photoNoteX(16))).toBeLessThan(jump * 0.6);
+    });
+
+    it('frames a repeated section the same way both times', () => {
+      const repeat = makeTimeline([
+        { start: 0, end: 0.4, fret: 2 },
+        { start: 2, end: 2.4, fret: 16 },
+        { start: 4, end: 4.4, fret: 2 },
+        { start: 6, end: 6.4, fret: 16 },
+      ]).notesForTrack(0);
+      expect(centre(repeat, 1.0)).toBeCloseTo(centre(repeat, 4.4), 6);
+      expect(centre(repeat, 3.5)).toBeCloseTo(centre(repeat, 6.4), 6);
+    });
   });
 
   it('frames the lowest to the highest fret a short-range song uses, and holds still', () => {

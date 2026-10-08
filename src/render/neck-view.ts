@@ -83,87 +83,79 @@ export function photoPlacement(width: number, height: number, window?: NeckWindo
 
 /** How much of the neck the zoomed view shows along the screen while following, in photo pixels: roughly the first dozen frets. It never changes, so the zoom does not breathe. */
 export const ZOOM_SPAN = 480;
-/** Each look at the notes covers this long before a moment to this long after it. */
-const FOLLOW_BEHIND = 1;
-const FOLLOW_AHEAD = 3;
-/** The camera path is worked out once per song at this spacing, and read back by interpolation. */
-const PATH_STEP = 0.05;
-/** Looks are averaged bell-shaped over this many seconds either side, so notes entering and leaving never step the target. */
-const TARGET_SIGMA = 4;
-const TARGET_RADIUS = 12;
-/** The camera eases toward the target like a critically damped spring (no overshoot, so no rocking); this is its time constant in seconds. */
-const CAMERA_TAU = 1.2;
+/** The camera holds still through a bar and only moves when the next bar's middle is at least this far (photo pixels, about two frets low down the neck) from where it already sits. */
+export const CAMERA_MOVE_MIN = 60;
+/** A move starts this long before the new bar's first note and takes this long; it eases in and out and never overshoots. */
+const GLIDE_LEAD = 0.25;
+const GLIDE_SECONDS = 0.6;
 
-/** The middle of the frets in the notes just played and coming up around time `t`, or null if there are none. */
-function lookCentre(notes: readonly NoteEvent[], t: number): number | null {
-  let low = Infinity;
-  let high = -Infinity;
-  for (const note of notes) {
-    if (note.startSeconds < t - FOLLOW_BEHIND || note.startSeconds > t + FOLLOW_AHEAD) continue;
-    const x = photoNoteX(note.fret);
-    if (x < low) low = x;
-    if (x > high) high = x;
-  }
-  return high < low ? null : (low + high) / 2;
+interface CameraMove {
+  readonly start: number;
+  readonly from: number;
+  readonly to: number;
 }
 
-const paths = new WeakMap<readonly NoteEvent[], Float64Array>();
+interface CameraPath {
+  readonly first: number;
+  readonly moves: readonly CameraMove[];
+}
+
+/** The camera's centre at `t`: the latest move to have started, part of the way along its glide, or the first frame before any. */
+function centreAt(first: number, moves: readonly CameraMove[], t: number): number {
+  for (let i = moves.length - 1; i >= 0; i--) {
+    const move = moves[i];
+    if (t < move.start) continue;
+    const u = Math.min(1, (t - move.start) / GLIDE_SECONDS);
+    return move.from + (move.to - move.from) * (u * u * (3 - 2 * u));
+  }
+  return first;
+}
+
+const paths = new WeakMap<readonly NoteEvent[], CameraPath>();
 
 /**
- * The camera's centre over the whole song, sampled every PATH_STEP seconds: the smoothed middle of the notes, followed by a
- * damped spring. The spring starts and ends each move gently and never overshoots, so alternating positions
- * are glided across instead of rocked between. Built from the notes alone, so exported frames match the screen.
+ * The camera over the whole song, one frame per played bar: the middle of the frets that bar uses. It holds that frame for the
+ * whole bar and glides to the next bar's frame only when it is clearly somewhere else, so alternating nearby positions never
+ * rock it. Played-bar order means a repeated section frames the same each time. Built from the notes alone, so exported frames match the screen.
  */
-function cameraPath(notes: readonly NoteEvent[]): Float64Array {
+function cameraPath(notes: readonly NoteEvent[]): CameraPath {
   const cached = paths.get(notes);
   if (cached) return cached;
-  let end = 0;
-  for (const note of notes) end = Math.max(end, note.startSeconds);
-  const count = Math.ceil((end + FOLLOW_AHEAD) / PATH_STEP) + 2;
-  const raw = new Float64Array(count);
-  let last = NaN;
-  for (let i = 0; i < count; i++) {
-    const c = lookCentre(notes, i * PATH_STEP);
-    if (c !== null) last = c;
-    raw[i] = c ?? last;
-  }
-  const first = raw.find((v) => !Number.isNaN(v)) ?? 0;
-  for (let i = 0; i < count && Number.isNaN(raw[i]); i++) raw[i] = first;
-  const taps = Math.round(TARGET_RADIUS / PATH_STEP);
-  const weights = Array.from({ length: 2 * taps + 1 }, (_, k) => Math.exp(-0.5 * (((k - taps) * PATH_STEP) / TARGET_SIGMA) ** 2));
-  const path = new Float64Array(count);
-  let position = 0;
-  let velocity = 0;
-  const omega = 1 / CAMERA_TAU;
-  for (let i = 0; i < count; i++) {
-    let sum = 0;
-    let weight = 0;
-    for (let k = -taps; k <= taps; k++) {
-      const j = Math.min(count - 1, Math.max(0, i + k));
-      sum += raw[j] * weights[k + taps];
-      weight += weights[k + taps];
+  const bars = new Map<number, { low: number; high: number; start: number }>();
+  for (const note of notes) {
+    const x = photoNoteX(note.fret);
+    const bar = bars.get(note.playbackBar);
+    if (!bar) bars.set(note.playbackBar, { low: x, high: x, start: note.startSeconds });
+    else {
+      bar.low = Math.min(bar.low, x);
+      bar.high = Math.max(bar.high, x);
+      bar.start = Math.min(bar.start, note.startSeconds);
     }
-    const target = sum / weight;
-    if (i === 0) position = target;
-    // Critically damped spring, stepped exactly for this spacing.
-    const x = position - target;
-    const e = Math.exp(-omega * PATH_STEP);
-    const nextX = (x + (velocity + omega * x) * PATH_STEP) * e;
-    velocity = (velocity - omega * (velocity + omega * x) * PATH_STEP) * e;
-    position = target + nextX;
-    path[i] = position;
   }
+  const frames = [...bars.values()].sort((p, q) => p.start - q.start);
+  const moves: CameraMove[] = [];
+  let first = 0;
+  if (frames.length > 0) {
+    first = (frames[0].low + frames[0].high) / 2;
+    let held = first;
+    for (const frame of frames.slice(1)) {
+      const centre = (frame.low + frame.high) / 2;
+      if (Math.abs(centre - held) < CAMERA_MOVE_MIN) continue;
+      // A move that comes due while the last is still gliding sets off from wherever the camera has got to, so quick shifts never queue up.
+      const start = frame.start - GLIDE_LEAD;
+      moves.push({ start, from: centreAt(first, moves, start), to: centre });
+      held = centre;
+    }
+  }
+  const path = { first, moves };
   paths.set(notes, path);
   return path;
 }
 
 /** Where the following camera is centred at time `t`. */
 function followCentre(notes: readonly NoteEvent[], t: number): number {
-  const path = cameraPath(notes);
-  const at = Math.min(path.length - 1, Math.max(0, t / PATH_STEP));
-  const i = Math.floor(at);
-  const next = Math.min(path.length - 1, i + 1);
-  return path[i] + (path[next] - path[i]) * (at - i);
+  const { first, moves } = cameraPath(notes);
+  return centreAt(first, moves, t);
 }
 
 /** Room left around the lowest and highest frets used, in photo pixels (about a fret and a half low down the neck). */
