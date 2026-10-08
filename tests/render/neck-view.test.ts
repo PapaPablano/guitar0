@@ -225,6 +225,25 @@ describe('the zoomed view', () => {
       expect(centre(song, 6.4)).toBe(after);
     });
 
+    it('keeps gliding smoothly when real shifts come in quick succession', () => {
+      const quick = makeTimeline(
+        [2, 16, 2, 16, 2, 16].map((fret, i) => ({ start: i * 0.5, end: i * 0.5 + 0.2, fret })),
+        0.5,
+        6,
+      ).notesForTrack(0);
+      let last = centre(quick, 0);
+      let biggest = 0;
+      for (let t = 0; t <= 3.5; t += 0.02) {
+        const c = centre(quick, t);
+        biggest = Math.max(biggest, Math.abs(c - last));
+        last = c;
+      }
+      const jump = photoNoteX(16) - photoNoteX(2);
+      expect(biggest).toBeLessThan(jump / 10);
+      // Each new bar's move has already begun by the time its first note arrives, so the camera never trails far behind.
+      expect(Math.abs(centre(quick, 2.5) - photoNoteX(16))).toBeLessThan(jump * 0.6);
+    });
+
     it('frames a repeated section the same way both times', () => {
       const repeat = makeTimeline([
         { start: 0, end: 0.4, fret: 2 },

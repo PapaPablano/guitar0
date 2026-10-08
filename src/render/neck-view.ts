@@ -100,6 +100,17 @@ interface CameraPath {
   readonly moves: readonly CameraMove[];
 }
 
+/** The camera's centre at `t`: the latest move to have started, part of the way along its glide, or the first frame before any. */
+function centreAt(first: number, moves: readonly CameraMove[], t: number): number {
+  for (let i = moves.length - 1; i >= 0; i--) {
+    const move = moves[i];
+    if (t < move.start) continue;
+    const u = Math.min(1, (t - move.start) / GLIDE_SECONDS);
+    return move.from + (move.to - move.from) * (u * u * (3 - 2 * u));
+  }
+  return first;
+}
+
 const paths = new WeakMap<readonly NoteEvent[], CameraPath>();
 
 /**
@@ -127,13 +138,12 @@ function cameraPath(notes: readonly NoteEvent[]): CameraPath {
   if (frames.length > 0) {
     first = (frames[0].low + frames[0].high) / 2;
     let held = first;
-    let free = -Infinity;
     for (const frame of frames.slice(1)) {
       const centre = (frame.low + frame.high) / 2;
       if (Math.abs(centre - held) < CAMERA_MOVE_MIN) continue;
-      const start = Math.max(frame.start - GLIDE_LEAD, free);
-      moves.push({ start, from: held, to: centre });
-      free = start + GLIDE_SECONDS;
+      // A move that comes due while the last is still gliding sets off from wherever the camera has got to, so quick shifts never queue up.
+      const start = frame.start - GLIDE_LEAD;
+      moves.push({ start, from: centreAt(first, moves, start), to: centre });
       held = centre;
     }
   }
@@ -145,13 +155,7 @@ function cameraPath(notes: readonly NoteEvent[]): CameraPath {
 /** Where the following camera is centred at time `t`. */
 function followCentre(notes: readonly NoteEvent[], t: number): number {
   const { first, moves } = cameraPath(notes);
-  let centre = first;
-  for (const move of moves) {
-    if (t < move.start) break;
-    const u = Math.min(1, (t - move.start) / GLIDE_SECONDS);
-    centre = move.from + (move.to - move.from) * (u * u * (3 - 2 * u));
-  }
-  return centre;
+  return centreAt(first, moves, t);
 }
 
 /** Room left around the lowest and highest frets used, in photo pixels (about a fret and a half low down the neck). */
