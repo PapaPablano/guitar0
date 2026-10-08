@@ -85,9 +85,21 @@ export function photoPlacement(width: number, height: number, window?: NeckWindo
 export const ZOOM_SPAN = 480;
 /** The camera holds still through a bar and only moves when the next bar's middle is at least this far (photo pixels, about two frets low down the neck) from where it already sits. */
 export const CAMERA_MOVE_MIN = 60;
+/** A bar of only harmonics or slides moves the camera only for a shift this big (photo pixels, about five frets low down the neck): those notes are easy to follow without a closer look. */
+export const CAMERA_LOOSE_MOVE_MIN = 150;
 /** A move starts this long before the new bar's first note and takes this long; it eases in and out and never overshoots. */
 const GLIDE_LEAD = 0.25;
 const GLIDE_SECONDS = 0.6;
+
+/**
+ * How much a note should pull the camera. Muted (x) and open-string notes never do: they sit off the stretch being fretted and
+ * are shown as symbols instead. Harmonics and slides pull only when a bar has nothing fretted, and then only for a big shift.
+ */
+function cameraPull(note: NoteEvent): 'none' | 'loose' | 'firm' {
+  if (note.techniques.dead || note.fret <= 0) return 'none';
+  if (note.techniques.harmonic || note.techniques.slide !== 'none') return 'loose';
+  return 'firm';
+}
 
 interface CameraMove {
   readonly start: number;
@@ -121,18 +133,30 @@ const paths = new WeakMap<readonly NoteEvent[], CameraPath>();
 function cameraPath(notes: readonly NoteEvent[]): CameraPath {
   const cached = paths.get(notes);
   if (cached) return cached;
-  const bars = new Map<number, { low: number; high: number; start: number }>();
+  interface Reach {
+    low: number;
+    high: number;
+    start: number;
+  }
+  const bars = new Map<number, { firm?: Reach; loose?: Reach }>();
   for (const note of notes) {
+    const pull = cameraPull(note);
+    if (pull === 'none') continue;
     const x = photoNoteX(note.fret);
-    const bar = bars.get(note.playbackBar);
-    if (!bar) bars.set(note.playbackBar, { low: x, high: x, start: note.startSeconds });
+    const bar = bars.get(note.playbackBar) ?? {};
+    bars.set(note.playbackBar, bar);
+    const reach = bar[pull];
+    if (!reach) bar[pull] = { low: x, high: x, start: note.startSeconds };
     else {
-      bar.low = Math.min(bar.low, x);
-      bar.high = Math.max(bar.high, x);
-      bar.start = Math.min(bar.start, note.startSeconds);
+      reach.low = Math.min(reach.low, x);
+      reach.high = Math.max(reach.high, x);
+      reach.start = Math.min(reach.start, note.startSeconds);
     }
   }
-  const frames = [...bars.values()].sort((p, q) => p.start - q.start);
+  const frames = [...bars.values()]
+    .map((bar) => (bar.firm ? { ...bar.firm, min: CAMERA_MOVE_MIN } : bar.loose ? { ...bar.loose, min: CAMERA_LOOSE_MOVE_MIN } : null))
+    .filter((frame): frame is Reach & { min: number } => frame !== null)
+    .sort((p, q) => p.start - q.start);
   const moves: CameraMove[] = [];
   let first = 0;
   if (frames.length > 0) {
@@ -140,7 +164,7 @@ function cameraPath(notes: readonly NoteEvent[]): CameraPath {
     let held = first;
     for (const frame of frames.slice(1)) {
       const centre = (frame.low + frame.high) / 2;
-      if (Math.abs(centre - held) < CAMERA_MOVE_MIN) continue;
+      if (Math.abs(centre - held) < frame.min) continue;
       // A move that comes due while the last is still gliding sets off from wherever the camera has got to, so quick shifts never queue up.
       const start = frame.start - GLIDE_LEAD;
       moves.push({ start, from: centreAt(first, moves, start), to: centre });
@@ -172,21 +196,24 @@ interface SongRange {
 
 const ranges = new WeakMap<readonly NoteEvent[], SongRange | null>();
 
-/** The lowest and highest frets, and the first and last strings, the song uses. */
+/** The lowest and highest frets the camera frames, and the first and last strings, the song uses. Muted and open notes do not stretch the frets; they only count when nothing else is played. */
 function songRange(notes: readonly NoteEvent[]): SongRange | null {
   if (ranges.has(notes)) return ranges.get(notes) ?? null;
-  let range: SongRange | null = null;
-  for (const note of notes) {
+  const pulls = notes.map(cameraPull);
+  const best = pulls.includes('firm') ? 'firm' : pulls.includes('loose') ? 'loose' : null;
+  let lowX = Infinity;
+  let highX = -Infinity;
+  let lowString = Infinity;
+  let highString = -Infinity;
+  notes.forEach((note, i) => {
+    lowString = Math.min(lowString, note.string);
+    highString = Math.max(highString, note.string);
+    if (best !== null && pulls[i] !== best) return;
     const x = photoNoteX(note.fret);
-    range = range
-      ? {
-          lowX: Math.min(range.lowX, x),
-          highX: Math.max(range.highX, x),
-          lowString: Math.min(range.lowString, note.string),
-          highString: Math.max(range.highString, note.string),
-        }
-      : { lowX: x, highX: x, lowString: note.string, highString: note.string };
-  }
+    lowX = Math.min(lowX, x);
+    highX = Math.max(highX, x);
+  });
+  const range: SongRange | null = notes.length > 0 ? { lowX, highX, lowString, highString } : null;
   ranges.set(notes, range);
   return range;
 }
@@ -395,6 +422,32 @@ export function renderNeckView(
     }
   }
   if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, width, height, cues.poses), cues, theme);
+  drawOpenAndMuted(ctx, width, stringCount, steps.playing, steps.upcoming[0], t, theme);
+  ctx.restore();
+}
+
+/**
+ * Open strings (an O) and muted strings (an X) are shown as symbols in a row along the top of the screen, one slot per string,
+ * rather than by moving the camera to the nut or off to a muted fret. A note sounding now is bright; the next step's are faint.
+ */
+function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, playing: Step | null, next: Step | undefined, t: number, theme: HighwayTheme): void {
+  const slot = Math.min(width / (stringCount + 1), 72);
+  const size = Math.max(12, Math.round(slot * 0.5));
+  const left = width / 2 - (slot * (stringCount - 1)) / 2;
+  const top = size * 1.2;
+  const mark = (note: NoteEvent, strength: number) => {
+    const symbol = note.techniques.dead ? 'X' : note.fret <= 0 ? 'O' : null;
+    if (!symbol || strength <= 0) return;
+    ctx.globalAlpha = Math.min(1, strength);
+    ctx.fillStyle = stringColor(theme, note.string);
+    ctx.fillText(symbol, left + slot * (note.string - 1), top);
+  };
+  ctx.save();
+  ctx.font = `bold ${size}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const note of next?.notes ?? []) mark(note, 0.4);
+  for (const note of playing?.notes ?? []) mark(note, emphasisAt(note.startSeconds, note.endSeconds, t).sounding ? 1 : 0.55);
   ctx.restore();
 }
 
