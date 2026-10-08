@@ -81,22 +81,21 @@ export function photoPlacement(width: number, height: number, window?: NeckWindo
   };
 }
 
-/** How much of the neck the zoomed view shows along the screen at most while following, in photo pixels: roughly the first dozen frets. */
+/** How much of the neck the zoomed view shows along the screen while following, in photo pixels: roughly the first dozen frets. It never changes, so the zoom does not breathe. */
 export const ZOOM_SPAN = 480;
 /** Each look at the notes covers this long before a moment to this long after it. */
 const FOLLOW_BEHIND = 1;
 const FOLLOW_AHEAD = 3;
-/** The view is the average of looks spread over this long either side of the moment, so it drifts instead of jumping at each note. */
-const FOLLOW_SMOOTH_SECONDS = 3;
-const FOLLOW_STEPS = 12;
+/** The camera path is worked out once per song at this spacing, and read back by interpolation. */
+const PATH_STEP = 0.05;
+/** Looks are averaged bell-shaped over this many seconds either side, so notes entering and leaving never step the target. */
+const TARGET_SIGMA = 4;
+const TARGET_RADIUS = 12;
+/** The camera eases toward the target like a critically damped spring (no overshoot, so no rocking); this is its time constant in seconds. */
+const CAMERA_TAU = 1.2;
 
-interface FollowLook {
-  readonly centre: number;
-  readonly span: number;
-}
-
-/** The middle and width of the frets in the notes just played and coming up around time `t`, or null if there are none. */
-function lookAt(notes: readonly NoteEvent[], t: number): FollowLook | null {
+/** The middle of the frets in the notes just played and coming up around time `t`, or null if there are none. */
+function lookCentre(notes: readonly NoteEvent[], t: number): number | null {
   let low = Infinity;
   let high = -Infinity;
   for (const note of notes) {
@@ -105,27 +104,66 @@ function lookAt(notes: readonly NoteEvent[], t: number): FollowLook | null {
     if (x < low) low = x;
     if (x > high) high = x;
   }
-  return high < low ? null : { centre: (low + high) / 2, span: high - low };
+  return high < low ? null : (low + high) / 2;
 }
 
+const paths = new WeakMap<readonly NoteEvent[], Float64Array>();
+
 /**
- * Where the zoomed view sits at time `t` for a song too wide to show whole: the average of many looks around `t`.
- * A passage that uses most of the neck averages out wide, so the view pulls back to show it, and a passage in one
- * position settles close in; neither jumps at each note.
+ * The camera's centre over the whole song, sampled every PATH_STEP seconds: the smoothed middle of the notes, followed by a
+ * damped spring. The spring starts and ends each move gently and never overshoots, so alternating positions
+ * are glided across instead of rocked between. Built from the notes alone, so exported frames match the screen.
  */
-function followView(notes: readonly NoteEvent[], t: number, fallbackCentre: number): FollowLook {
-  let centre = 0;
-  let span = 0;
-  let count = 0;
-  for (let i = -FOLLOW_STEPS; i <= FOLLOW_STEPS; i++) {
-    const look = lookAt(notes, t + (i / FOLLOW_STEPS) * FOLLOW_SMOOTH_SECONDS);
-    if (!look) continue;
-    centre += look.centre;
-    span += look.span;
-    count += 1;
+function cameraPath(notes: readonly NoteEvent[]): Float64Array {
+  const cached = paths.get(notes);
+  if (cached) return cached;
+  let end = 0;
+  for (const note of notes) end = Math.max(end, note.startSeconds);
+  const count = Math.ceil((end + FOLLOW_AHEAD) / PATH_STEP) + 2;
+  const raw = new Float64Array(count);
+  let last = NaN;
+  for (let i = 0; i < count; i++) {
+    const c = lookCentre(notes, i * PATH_STEP);
+    if (c !== null) last = c;
+    raw[i] = c ?? last;
   }
-  if (count === 0) return { centre: fallbackCentre, span: 0 };
-  return { centre: centre / count, span: span / count };
+  const first = raw.find((v) => !Number.isNaN(v)) ?? 0;
+  for (let i = 0; i < count && Number.isNaN(raw[i]); i++) raw[i] = first;
+  const taps = Math.round(TARGET_RADIUS / PATH_STEP);
+  const weights = Array.from({ length: 2 * taps + 1 }, (_, k) => Math.exp(-0.5 * (((k - taps) * PATH_STEP) / TARGET_SIGMA) ** 2));
+  const path = new Float64Array(count);
+  let position = 0;
+  let velocity = 0;
+  const omega = 1 / CAMERA_TAU;
+  for (let i = 0; i < count; i++) {
+    let sum = 0;
+    let weight = 0;
+    for (let k = -taps; k <= taps; k++) {
+      const j = Math.min(count - 1, Math.max(0, i + k));
+      sum += raw[j] * weights[k + taps];
+      weight += weights[k + taps];
+    }
+    const target = sum / weight;
+    if (i === 0) position = target;
+    // Critically damped spring, stepped exactly for this spacing.
+    const x = position - target;
+    const e = Math.exp(-omega * PATH_STEP);
+    const nextX = (x + (velocity + omega * x) * PATH_STEP) * e;
+    velocity = (velocity - omega * (velocity + omega * x) * PATH_STEP) * e;
+    position = target + nextX;
+    path[i] = position;
+  }
+  paths.set(notes, path);
+  return path;
+}
+
+/** Where the following camera is centred at time `t`. */
+function followCentre(notes: readonly NoteEvent[], t: number): number {
+  const path = cameraPath(notes);
+  const at = Math.min(path.length - 1, Math.max(0, t / PATH_STEP));
+  const i = Math.floor(at);
+  const next = Math.min(path.length - 1, i + 1);
+  return path[i] + (path[next] - path[i]) * (at - i);
 }
 
 /** Room left around the lowest and highest frets used, in photo pixels (about a fret and a half low down the neck). */
@@ -179,9 +217,8 @@ export function zoomedPlacement(
   let centreX = (range.lowX + range.highX) / 2;
   let span = fitSpan;
   if (fitSpan > ZOOM_SPAN) {
-    const view = followView(notes, t, centreX);
-    centreX = view.centre;
-    span = Math.min(fitSpan, Math.max(ZOOM_SPAN, view.span + 2 * FIT_MARGIN));
+    centreX = followCentre(notes, t);
+    span = ZOOM_SPAN;
   }
   const centreY = (photoStringY(range.lowString, stringCount, centreX) + photoStringY(range.highString, stringCount, centreX)) / 2;
   return photoPlacement(width, height, { centreX, span, centreY });
