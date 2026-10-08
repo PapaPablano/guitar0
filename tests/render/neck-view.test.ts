@@ -11,6 +11,7 @@ import {
   photoToScreen,
   renderNeckFrame,
   renderNeckView,
+  CAMERA_LOOSE_MOVE_MIN,
   CAMERA_MOVE_MIN,
   zoomedPlacement,
   ZOOM_SPAN,
@@ -161,7 +162,7 @@ describe('the photo and the whole frame', () => {
 
 describe('the zoomed view', () => {
   const notes = makeTimeline([
-    { start: 0, end: 0.5, fret: 0 },
+    { start: 0, end: 0.5, fret: 1 },
     { start: 10, end: 10.5, fret: 17 },
   ]).notesForTrack(0);
 
@@ -189,7 +190,7 @@ describe('the zoomed view', () => {
     const centre = (ns: typeof notes, t: number) => zoomedPlacement(1920, 1080, ns, t).centreX;
     // Two-second bars; frets 0 and 17 widen the song past what one view shows.
     const song = makeTimeline([
-      { start: 0, end: 0.4, fret: 0 },
+      { start: 0, end: 0.4, fret: 1 },
       { start: 0.5, end: 0.9, fret: 2 },
       { start: 1, end: 1.4, fret: 3 },
       { start: 2, end: 2.4, fret: 3 },
@@ -244,6 +245,40 @@ describe('the zoomed view', () => {
       expect(Math.abs(centre(quick, 2.5) - photoNoteX(16))).toBeLessThan(jump * 0.6);
     });
 
+    it('ignores muted and open-string notes when framing', () => {
+      const base = [
+        { start: 0, end: 0.4, fret: 2 },
+        { start: 2, end: 2.4, fret: 15 },
+        { start: 4, end: 4.4, fret: 2 },
+      ];
+      const plain = makeTimeline(base).notesForTrack(0);
+      const extra = makeTimeline([
+        ...base,
+        { start: 0.5, end: 0.9, fret: 0 },
+        { start: 2.5, end: 2.9, fret: 22, techniques: { dead: true } },
+        { start: 4.5, end: 4.9, fret: 0 },
+      ]).notesForTrack(0);
+      for (const t of [0.7, 2.8, 3.5, 4.8, 6]) expect(centre(extra, t)).toBeCloseTo(centre(plain, t), 6);
+    });
+
+    it('does not move for harmonics or slides unless the shift is big', () => {
+      const frets = (a: number, b: number, techniques: Record<string, unknown>) =>
+        makeTimeline([
+          { start: 0, end: 0.4, fret: 2 },
+          { start: 2, end: 2.4, fret: a, techniques },
+          { start: 4, end: 4.4, fret: b, techniques },
+          { start: 6, end: 6.4, fret: 17 },
+        ]).notesForTrack(0);
+      expect(photoNoteX(5) - photoNoteX(2)).toBeGreaterThan(CAMERA_MOVE_MIN);
+      expect(photoNoteX(5) - photoNoteX(2)).toBeLessThan(CAMERA_LOOSE_MOVE_MIN);
+      for (const technique of [{ harmonic: true }, { slide: 'shift' }]) {
+        const small = frets(5, 5, technique);
+        expect(centre(small, 3.5)).toBeCloseTo(centre(small, 0.5), 6);
+        const big = frets(16, 16, technique);
+        expect(centre(big, 3.5)).toBeGreaterThan(centre(big, 0.5) + CAMERA_LOOSE_MOVE_MIN);
+      }
+    });
+
     it('frames a repeated section the same way both times', () => {
       const repeat = makeTimeline([
         { start: 0, end: 0.4, fret: 2 },
@@ -270,5 +305,32 @@ describe('the zoomed view', () => {
       expect(at.x).toBeLessThan(1920);
     }
     expect(a.scale).toBeGreaterThan(zoomedPlacement(1920, 1080, notes, 0).scale);
+  });
+});
+
+describe('open and muted strings', () => {
+  const symbols = (specs: NoteSpec[], t: number) =>
+    draw(specs, t, 1920, 1080)
+      .filter((c) => c.name === 'fillText' && (c.args[0] === 'O' || c.args[0] === 'X'))
+      .map((c) => ({ symbol: c.args[0], x: c.args[1] as number, y: c.args[2] as number }));
+
+  it('shows an O along the top for an open string and an X for a muted one, one slot per string', () => {
+    const marks = symbols(
+      [
+        { start: 0, end: 1, string: 2, fret: 0 },
+        { start: 0, end: 1, string: 5, fret: 3, techniques: { dead: true } },
+      ],
+      0.1,
+    );
+    expect(marks.map((m) => m.symbol).sort()).toEqual(['O', 'X']);
+    const o = marks.find((m) => m.symbol === 'O')!;
+    const x = marks.find((m) => m.symbol === 'X')!;
+    expect(x.x).toBeGreaterThan(o.x);
+    expect(o.y).toBeLessThan(100);
+    expect(o.y).toBe(x.y);
+  });
+
+  it('shows nothing for fretted notes', () => {
+    expect(symbols([{ start: 0, end: 1, string: 2, fret: 5 }], 0.1)).toEqual([]);
   });
 });
