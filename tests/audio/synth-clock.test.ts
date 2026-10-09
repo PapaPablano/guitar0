@@ -19,9 +19,11 @@ const TEMPO = [{ tick: 0, tempo: 120 }];
 function setup(latency = 0) {
   const position = emitter<{ currentTick: number }>();
   const state = emitter<{ state: number }>();
+  const ready = emitter<void>();
   const api = {
     playerPositionChanged: position,
     playerStateChanged: state,
+    playerReady: ready,
     play: vi.fn(),
     pause: vi.fn(),
     destroy: vi.fn(),
@@ -34,7 +36,7 @@ function setup(latency = 0) {
     exportAudio: vi.fn(async (_options: unknown) => ({ render: async () => null, destroy: vi.fn() })),
   };
   const clock = new SynthClock(api as unknown as alphaTab.AlphaTabApi, 60, TEMPO, latency);
-  return { api, clock, position, state };
+  return { api, clock, position, state, ready };
 }
 
 describe('SynthClock', () => {
@@ -145,6 +147,16 @@ describe('SynthClock', () => {
       clock.setSilentTrack(1);
       api.changeTrackMute.mockClear();
       state.emit({ state: alphaTab.synth.PlayerState.Playing });
+      expect(muted(api)).toEqual([[[1], true]]);
+    });
+
+    it('mutes it again when the synth reports ready, and not when no track is silent', () => {
+      const { clock, api, ready } = setup();
+      ready.emit();
+      expect(api.changeTrackMute).not.toHaveBeenCalled();
+      clock.setSilentTrack(1);
+      api.changeTrackMute.mockClear();
+      ready.emit();
       expect(muted(api)).toEqual([[[1], true]]);
     });
 
