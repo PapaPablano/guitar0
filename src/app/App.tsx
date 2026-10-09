@@ -59,6 +59,8 @@ import { SAMPLE_ALPHATEX } from './sample';
 import { PanelFullscreen } from './PanelFullscreen';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
+import { PlayAlongSwitch } from './PlayAlongSwitch';
+import { canPlayAlong, silentTrackFor } from './play-along';
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
@@ -91,6 +93,8 @@ interface Session {
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [trackIndex, setTrackIndex] = useState(0);
+  /** "Play along": the track on screen is silent so the band plays without it. Off whenever a song opens. */
+  const [playAlong, setPlayAlong] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tempoPercent, setTempoPercent] = useState(100);
@@ -275,7 +279,7 @@ export function App() {
       tabSeconds: current.timeline.durationSeconds,
       bars,
       barFacts: barFactsOf(current.timeline),
-      renderTab: (onProgress) => current.clock.exportAudio(onProgress),
+      renderTab: (onProgress) => current.clock.exportAudio(onProgress, { fullBand: true }),
       onProgress: (progress) => {
         if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress, again });
       },
@@ -496,6 +500,7 @@ export function App() {
     setUserAudioError(null);
     setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
     setTrackIndex(firstPlayableTrack(timeline));
+    setPlayAlong(false);
     setLookahead(initialViewState().lookahead);
     setLabelMode(initialViewState().labelMode);
     setTuningId(FILE_TUNING);
@@ -582,6 +587,12 @@ export function App() {
     const preset = presetById(tuningId);
     return sourceTimeline && preset ? retuneTimeline(sourceTimeline, trackIndex, preset.tuning) : sourceTimeline;
   }, [sourceTimeline, trackIndex, tuningId]);
+
+  // Keep the synth's silent track in step with the switch and the track on screen.
+  const sessionTracks = session?.timeline.tracks;
+  useEffect(() => {
+    session?.clock.setSilentTrack(sessionTracks ? silentTrackFor(playAlong, sessionTracks, trackIndex) : null);
+  }, [session, sessionTracks, playAlong, trackIndex]);
 
   // Apply the loop to the clock whenever the loop or its switch changes.
   useEffect(() => {
@@ -887,6 +898,9 @@ export function App() {
             setTuningId(FILE_TUNING);
           }}
         />
+        {!userClock && !stems && canPlayAlong(timeline.tracks, trackIndex) && (
+          <PlayAlongSwitch on={playAlong} onToggle={() => setPlayAlong((v) => !v)} />
+        )}
         <TuningChip
           track={track}
           sourceTrack={sourceTimeline?.tracks[trackIndex]}

@@ -39,6 +39,7 @@ export class SynthClock implements Clock {
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
   private readonly latency: number;
+  private silentTrack: number | null = null;
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -52,8 +53,11 @@ export class SynthClock implements Clock {
       // map; the reported time does (it runs in real time when the tempo is slowed).
       this.reported = { seconds: ticksToSeconds(this.tempoMap, e.currentTick), at: performance.now() / 1000 };
     });
+    // alphaTab drops a channel mute that arrives before its synth exists, so the silence is applied again once it is ready and at every play.
+    api.playerReady?.on(() => this.applySilence());
     api.playerStateChanged.on((e) => {
       this.isPlaying = e.state === alphaTab.synth.PlayerState.Playing;
+      if (this.isPlaying) this.applySilence();
       this.reported = { seconds: this.reported.seconds, at: performance.now() / 1000 };
     });
   }
@@ -115,16 +119,36 @@ export class SynthClock implements Clock {
     }
   }
 
+  private applySilence(): void {
+    if (this.silentTrack === null) return;
+    const track = this.api.score?.tracks[this.silentTrack];
+    if (track) this.api.changeTrackMute([track], true);
+  }
+
+  /** Silences one track, or none, so the rest of the band plays without it. The export follows, unless it asks for the full band. */
+  setSilentTrack(index: number | null): void {
+    if (index === this.silentTrack) return;
+    const tracks = this.api.score?.tracks ?? [];
+    const previous = this.silentTrack === null ? undefined : tracks[this.silentTrack];
+    const next = index === null ? undefined : tracks[index];
+    if (index !== null && !next) return;
+    if (previous) this.api.changeTrackMute([previous], false);
+    if (next) this.api.changeTrackMute([next], true);
+    this.silentTrack = index;
+  }
+
   /**
    * Renders the whole song's synth audio offline, at original tempo, for the video export.
-   * Calls `onProgress` with 0..1 as it goes.
+   * Calls `onProgress` with 0..1 as it goes. The silenced track is left out unless `fullBand` is set,
+   * which the alignment needs so it compares the recording with every part.
    */
-  async exportAudio(onProgress?: (fraction: number) => void): Promise<PcmAudio> {
+  async exportAudio(onProgress?: (fraction: number) => void, { fullBand = false } = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
     options.masterVolume = 1;
     options.metronomeVolume = 0;
+    if (!fullBand && this.silentTrack !== null) options.trackVolume.set(this.silentTrack, 0);
     const exporter = await this.api.exportAudio(options);
     const chunks: { left: Float32Array; right: Float32Array }[] = [];
     try {
