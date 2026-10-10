@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SoundFont comparison</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 16px; max-width: 760px; }
+      .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+      button { padding: 6px 12px; }
+      button.on { outline: 2px solid #2b5fd9; }
+      pre { background: #8881; padding: 8px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>SoundFont comparison</h1>
+    <p>Dev-only. Put fonts and a tab in <code>dev/local/</code>. Open <code>?tab=ozzy.gp&amp;fonts=sonivox.sf3,MuseScore_General.sf3,GeneralUser-GS.sf2</code>.</p>
+    <div class="row">
+      Start at second <input id="start" type="number" value="0" min="0" step="1" style="width: 5em" />
+      <button id="stop">Stop</button>
+    </div>
+    <div id="fonts"></div>
+    <pre id="out">waiting</pre>
+    <script type="module" src="./soundfont-compare.ts"></script>
+  </body>
+</html>

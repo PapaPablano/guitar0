@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Band Synth Ideas</title>
+<style>
+:root { --bg:#fff; --fg:#1b1b1f; --muted:#5b5b66; --line:#d9d9e0; --card:#f6f6f9; --accent:#2b5fd9; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#131316; --fg:#ececf1; --muted:#a0a0ad; --line:#2e2e36; --card:#1c1c21; --accent:#7ea2ff; } }
+:root[data-theme="dark"] { --bg:#131316; --fg:#ececf1; --muted:#a0a0ad; --line:#2e2e36; --card:#1c1c21; --accent:#7ea2ff; }
+body { background:var(--bg); color:var(--fg); font:16px/1.55 system-ui,sans-serif; margin:0; padding:24px 16px 64px; }
+main { max-width:760px; margin:0 auto; }
+h1 { font-size:1.6rem; margin:0 0 4px; } h2 { font-size:1.15rem; margin:32px 0 8px; }
+p.sub { color:var(--muted); margin:0 0 16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:12px 0; }
+.card h3 { margin:0 0 4px; font-size:1.02rem; } .card p { margin:6px 0; }
+.tag { color:var(--accent); font-weight:600; font-size:.85rem; }
+table { border-collapse:collapse; width:100%; font-size:.95rem; } td,th { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+</style>
+</head>
+<body>
+<main>
+<h1>Band Synth Ideas</h1>
+<p class="sub">Ideas around the Realistic Band Synth plan (<code>docs/plans/2026-10-09-0823-feat-realistic-band-synth-plan.md</code>), grounded in the current app. Dated 2026-10-09.</p>
+
+<h2>What the app has today</h2>
+<p>The tab plays through one alphaTab synth. The track picker only chooses which track to show. There is no per-track mute, solo or volume for the synth, although the recording and stems already have a mixer (<code>src/audio/mix-gains.ts</code>, <code>src/app/StemPanel.tsx</code>). The synth's audio is one mixed stream, which is why the plan's guitar-only drive is at risk.</p>
+
+<h2>Survivors, ranked</h2>
+
+<div class="card"><span class="tag">1</span><h3>Minus-one: mute the track you are playing</h3>
+<p>Play along with the band minus your own part. One toggle per track, defaulting to muting the track you are viewing. alphaTab already offers per-track mute and volume (<code>changeTrackMute</code>, <code>changeTrackVolume</code>), and nothing in the app uses them.</p>
+<p><b>Why it ranks first:</b> a better-sounding band only helps practice if your own part can be taken out. Low cost, high daily use.</p></div>
+
+<div class="card"><span class="tag">2</span><h3>Render the band as separate parts, then reuse the stem mixer</h3>
+<p>Instead of one mixed synth stream, render the guitars and the rest as separate parts offline (the export already renders offline) and play them through the existing stem mixer. That gives per-part volume, mute and solo, and it makes guitar-only drive and amp effects possible, which removes the plan's biggest risk in its effects unit.</p>
+<p><b>Trade-off:</b> larger change to how tab playback works, and tempo changes would need re-rendering or time-stretching. Worth a spike before the effects unit commits.</p></div>
+
+<div class="card"><span class="tag">3</span><h3>Remember tone choices per song</h3>
+<p>Save each track's Clean / Crunch / Distortion choice with the song, the way the app already remembers a recording's offset and mix (<code>src/audio/recording-profile.ts</code>). Without it the override is lost on every reopen.</p></div>
+
+<div class="card"><span class="tag">4</span><h3>Humanize the playback</h3>
+<p>Small random variation in timing and note strength on drums, bass and keys, so the band stops sounding machine-perfect. Samples alone cannot fix that robotic feel. It must be switchable off, and the same variation must apply to the export.</p></div>
+
+<div class="card"><span class="tag">5</span><h3>A side-by-side SoundFont listening page</h3>
+<p>A small developer page, like <code>dev/real-song-spike.html</code>, that loads each candidate font and plays the same bars of a sample tab so the choice in the plan's first unit is made by ear, not by name.</p></div>
+
+<div class="card"><span class="tag">6</span><h3>Export a backing track as audio</h3>
+<p>Offer an audio-only export of the band, with or without a chosen track (the minus-one from idea 1), for practising away from the app. Video export already renders the synth offline, so most of the work exists.</p></div>
+
+<h2>Rejected, and why</h2>
+<table>
+<tr><th>Idea</th><th>Reason</th></tr>
+<tr><td>Play instantly on the old small font, then swap to the big one</td><td>Reintroduces the small-font mode the plan deliberately deferred, and the sound would change mid-song.</td></tr>
+<tr><td>Auto-switch tone by song section</td><td>Needs section data on every tab and a way to correct wrong guesses; the manual per-track switch covers the need.</td></tr>
+<tr><td>Choice of drum kits</td><td>Depends on the chosen font having several kits; decide after the font is picked.</td></tr>
+<tr><td>Full amp and cabinet simulation</td><td>Already out of scope by decision.</td></tr>
+</table>
+
+<h2>Suggested next step</h2>
+<p>Take idea 1 (minus-one) into a brainstorm as its own small feature, and run the spike for idea 2 before the plan's effects unit starts, since it decides whether guitar-only drive is possible.</p>
+</main>
+</body>
+</html>
