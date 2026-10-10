@@ -61,6 +61,8 @@ import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { PlayAlongSwitch } from './PlayAlongSwitch';
 import { canPlayAlong, silentTrackFor } from './play-along';
+import { ToneSwitch } from './ToneSwitch';
+import { canSwitchTone, programOverrides, type GuitarTone } from '../audio/guitar-tone';
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
@@ -76,9 +78,11 @@ import { ShortcutLegend } from './ShortcutLegend';
 import { PracticeTools } from './PracticeTools';
 import { alignmentNeedsLook, availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
+import soundFontUrl from '../../assets/soundfont/MuseScore_General.sf3?url';
 import './app.css';
 
-const SOUND_FONT_URL = './soundfont/sonivox.sf3';
+// The band SoundFont is a tracked asset; Vite gives it a content-hashed name so a new font is never served from an old cache.
+const SOUND_FONT_URL = soundFontUrl;
 
 type AudioState = { status: 'loading'; progress: number } | { status: 'ready' } | { status: 'failed'; message: string };
 
@@ -95,6 +99,8 @@ export function App() {
   const [trackIndex, setTrackIndex] = useState(0);
   /** "Play along": the track on screen is silent so the band plays without it. Off whenever a song opens. */
   const [playAlong, setPlayAlong] = useState(false);
+  /** Guitar sounds the player chose, by track. A track not listed plays the sound its tab wrote. Cleared when a song opens. */
+  const [tones, setTones] = useState<Record<number, GuitarTone>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tempoPercent, setTempoPercent] = useState(100);
@@ -279,7 +285,7 @@ export function App() {
       tabSeconds: current.timeline.durationSeconds,
       bars,
       barFacts: barFactsOf(current.timeline),
-      renderTab: (onProgress) => current.clock.exportAudio(onProgress, { fullBand: true }),
+      renderTab: (onProgress) => current.clock.exportAudio(onProgress, { fullBand: true, effects: false }),
       onProgress: (progress) => {
         if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress, again });
       },
@@ -501,6 +507,7 @@ export function App() {
     setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
     setTrackIndex(firstPlayableTrack(timeline));
     setPlayAlong(false);
+    setTones({});
     setLookahead(initialViewState().lookahead);
     setLabelMode(initialViewState().labelMode);
     setTuningId(FILE_TUNING);
@@ -593,6 +600,10 @@ export function App() {
   useEffect(() => {
     session?.clock.setSilentTrack(sessionTracks ? silentTrackFor(playAlong, sessionTracks, trackIndex) : null);
   }, [session, sessionTracks, playAlong, trackIndex]);
+  // Keep the synth's guitar sounds in step with the chosen tones, including on a clock rebuilt for the same song.
+  useEffect(() => {
+    session?.clock.setTrackPrograms(programOverrides(tones));
+  }, [session, tones]);
 
   // Apply the loop to the clock whenever the loop or its switch changes.
   useEffect(() => {
@@ -900,6 +911,18 @@ export function App() {
         />
         {!userClock && !stems && canPlayAlong(timeline.tracks, trackIndex) && (
           <PlayAlongSwitch on={playAlong} onToggle={() => setPlayAlong((v) => !v)} />
+        )}
+        {canSwitchTone(track, !!userClock || !!stems) && (
+          <ToneSwitch
+            value={tones[trackIndex]}
+            written={track.program}
+            onChange={(tone) =>
+              setTones((all) => {
+                const { [trackIndex]: _dropped, ...rest } = all;
+                return tone ? { ...rest, [trackIndex]: tone } : rest;
+              })
+            }
+          />
         )}
         <TuningChip
           track={track}

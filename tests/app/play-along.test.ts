@@ -3,7 +3,7 @@ import { canPlayAlong, silentTrackFor } from '../../src/app/play-along';
 import type { TrackInfo } from '../../src/model/score';
 
 function track(index: number, isPercussion = false): TrackInfo {
-  return { index, name: `T${index}`, stringCount: 6, tuning: [], hasTabData: true, isPercussion };
+  return { index, name: `T${index}`, stringCount: 6, tuning: [], hasTabData: true, isPercussion, program: 30 };
 }
 
 const BAND = [track(0), track(1), track(2, true)];

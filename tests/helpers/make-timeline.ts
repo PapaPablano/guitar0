@@ -55,6 +55,7 @@ export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4, string
     tuning: [64, 59, 55, 50, 45, 40, 35, 30].slice(0, stringCount),
     hasTabData: true,
     isPercussion: false,
+    program: 30,
   };
   return {
     title: 'test',
