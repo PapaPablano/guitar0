@@ -6,6 +6,12 @@ import type { TempoPoint } from '../model/score';
 import { loadSoundFontBytes } from './soundfont-cache';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
+/** What a track played before a tone was chosen for it: its program and every instrument change written into its beats. */
+interface WrittenSound {
+  program: number;
+  automations: { automation: alphaTab.model.Automation; value: number }[];
+}
+
 export interface SynthOptions {
   /** URL of the SoundFont; relative URLs resolve against the page. It is downloaded once and kept in the browser's cache. */
   soundFontUrl: string;
@@ -40,6 +46,10 @@ export class SynthClock implements Clock {
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
   private readonly latency: number;
+  /** Tracks currently playing a chosen tone, with the sound the tab wrote for each so it can be put back. */
+  private readonly written = new Map<number, WrittenSound>();
+  private reloading = false;
+  private reloadAgain = false;
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -117,6 +127,69 @@ export class SynthClock implements Clock {
   }
 
   /**
+   * Plays the given tracks with the given General MIDI programs (track index -> program), and every other track with the
+   * sound the tab wrote. The change reaches the live synth and the export alike, because both build their audio from the score.
+   */
+  setTrackPrograms(overrides: ReadonlyMap<number, number>): void {
+    const tracks = this.api.score?.tracks ?? [];
+    let changed = false;
+    for (const index of new Set([...this.written.keys(), ...overrides.keys()])) {
+      const track = tracks[index];
+      if (!track) continue;
+      const wanted = overrides.get(index);
+      const before = this.written.get(index);
+      if (wanted === undefined) {
+        if (!before) continue;
+        applyProgram(track, before, null);
+        this.written.delete(index);
+        changed = true;
+        continue;
+      }
+      const written = before ?? writtenSound(track);
+      if (!before) this.written.set(index, written);
+      if (track.playbackInfo.program === wanted && written.automations.every((a) => a.automation.value === wanted)) continue;
+      applyProgram(track, written, wanted);
+      changed = true;
+    }
+    if (changed) this.reloadMidi();
+  }
+
+  /**
+   * Rebuilds the synth's audio from the score, then puts playback back where it was: the same position, loop, speed,
+   * and playing or paused. Changes that arrive while one rebuild is under way are folded into one more.
+   */
+  private reloadMidi(): void {
+    if (this.reloading) {
+      this.reloadAgain = true;
+      return;
+    }
+    this.reloading = true;
+    // alphaTab's own tick reading lags while playing, so the position comes from this clock's interpolated one.
+    const seconds = clamp(this.position(), 0, this.duration);
+    const tick = secondsToTicks(this.tempoMap, seconds);
+    const wasPlaying = this.isPlaying;
+    // alphaTab calls a ready handler at once when the synth is already ready, so only a call after the reload starts counts.
+    let started = false;
+    const off = this.api.playerReady.on(() => {
+      if (!started) return;
+      off();
+      this.reloading = false;
+      this.api.tickPosition = tick;
+      this.reported = { seconds, at: performance.now() / 1000 };
+      this.api.playbackSpeed = this.currentRate;
+      this.setLoop(this.loopRange);
+      if (this.reloadAgain) {
+        this.reloadAgain = false;
+        this.reloadMidi();
+      } else if (wasPlaying) {
+        this.api.play();
+      }
+    });
+    started = true;
+    this.api.loadMidiForScore();
+  }
+
+  /**
    * Renders the whole song's synth audio offline, at original tempo, for the video export.
    * Calls `onProgress` with 0..1 as it goes.
    */
@@ -144,6 +217,27 @@ export class SynthClock implements Clock {
   dispose(): void {
     this.api.destroy();
   }
+}
+
+function writtenSound(track: alphaTab.model.Track): WrittenSound {
+  return { program: track.playbackInfo.program, automations: instrumentAutomations(track).map((automation) => ({ automation, value: automation.value })) };
+}
+
+/** Every instrument change written into a track's beats; the first beat carries the track's opening sound. */
+function instrumentAutomations(track: alphaTab.model.Track): alphaTab.model.Automation[] {
+  const found: alphaTab.model.Automation[] = [];
+  for (const staff of track.staves)
+    for (const bar of staff.bars)
+      for (const voice of bar.voices)
+        for (const beat of voice.beats)
+          for (const automation of beat.automations) if (automation.type === alphaTab.model.AutomationType.Instrument) found.push(automation);
+  return found;
+}
+
+/** Sets a track's program and every instrument change in it to `program`, or puts back what the tab wrote when it is null. */
+function applyProgram(track: alphaTab.model.Track, written: WrittenSound, program: number | null): void {
+  track.playbackInfo.program = program ?? written.program;
+  for (const entry of written.automations) entry.automation.value = program ?? entry.value;
 }
 
 export interface SynthSession {

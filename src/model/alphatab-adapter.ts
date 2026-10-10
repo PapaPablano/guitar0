@@ -98,6 +98,7 @@ function trackInfo(track: alphaTab.model.Track, hasTabData: boolean): TrackInfo 
     tuning: Object.freeze(tuning),
     hasTabData,
     isPercussion: track.isPercussion,
+    program: track.playbackInfo.program,
   });
 }
 
