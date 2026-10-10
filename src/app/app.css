@@ -536,6 +536,10 @@ a.link-button:hover {
   white-space: nowrap;
 }
 
+.play-along {
+  white-space: nowrap;
+}
+
 button.primary {
   background: var(--accent-warm);
   border-color: var(--accent-warm);
