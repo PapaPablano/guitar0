@@ -281,7 +281,7 @@ export function App() {
       tabSeconds: current.timeline.durationSeconds,
       bars,
       barFacts: barFactsOf(current.timeline),
-      renderTab: (onProgress) => current.clock.exportAudio(onProgress),
+      renderTab: (onProgress) => current.clock.exportAudio(onProgress, { effects: false }),
       onProgress: (progress) => {
         if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress, again });
       },

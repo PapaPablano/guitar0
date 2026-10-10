@@ -4,6 +4,7 @@ import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import { loadSoundFontBytes } from './soundfont-cache';
+import { installLiveEffects, renderWithEffects } from './synth-effects';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
 /** What a track played before a tone was chosen for it: its program and every instrument change written into its beats. */
@@ -191,9 +192,10 @@ export class SynthClock implements Clock {
 
   /**
    * Renders the whole song's synth audio offline, at original tempo, for the video export.
-   * Calls `onProgress` with 0..1 as it goes.
+   * Calls `onProgress` with 0..1 as it goes. The light effects heard live are applied too, unless `effects` is false: the
+   * alignment compares the tab with a recording and needs the plain sound.
    */
-  async exportAudio(onProgress?: (fraction: number) => void): Promise<PcmAudio> {
+  async exportAudio(onProgress?: (fraction: number) => void, { effects = true } = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
@@ -211,7 +213,8 @@ export class SynthClock implements Clock {
     } finally {
       exporter.destroy();
     }
-    return concatPcm(chunks, AUDIO_SAMPLE_RATE);
+    const plain = concatPcm(chunks, AUDIO_SAMPLE_RATE);
+    return effects ? renderWithEffects(plain) : plain;
   }
 
   dispose(): void {
@@ -271,6 +274,8 @@ export function createSynthSession(
   const api = new alphaTab.AlphaTabApi(host, settings);
   const clock = new SynthClock(api, durationSeconds, tempoMap);
   let disposed = false;
+  // The same effects the export applies, so the video sounds like what was practised to.
+  const removeEffects = installLiveEffects(api);
 
   const ready = new Promise<void>((resolve, reject) => {
     api.playerReady.on(() => resolve());
@@ -287,6 +292,7 @@ export function createSynthSession(
   const originalDispose = clock.dispose.bind(clock);
   clock.dispose = () => {
     disposed = true;
+    removeEffects();
     originalDispose();
     host.remove();
   };
