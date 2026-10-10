@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as alphaTab from '@coderline/alphatab';
 import { SynthClock } from '../../src/audio/synth-bridge';
+import { AUDIO_SAMPLE_RATE } from '../../src/export/presets';
 
 type Handler<T> = (e: T) => void;
 
@@ -37,6 +38,7 @@ function setup() {
   const ready = emitter<void>(true);
   const state = emitter<{ state: number }>();
   const tracks = [trackWith(30, 0), trackWith(33, 1), trackWith(27, 2)];
+  const exported: { programs: number[]; firstBeat: number[]; sampleRate: number }[] = [];
   const api = {
     playerPositionChanged: emitter<{ currentTick: number }>(),
     playerStateChanged: state,
@@ -50,9 +52,16 @@ function setup() {
     isLooping: false,
     score: { tracks },
     loadMidiForScore: vi.fn(),
+    // Records what the score says at the moment the export is requested, as alphaTab builds its audio from it then.
+    exportAudio: vi.fn(async (options: { sampleRate: number }) => {
+      const seen = { programs: tracks.map((t) => t.playbackInfo.program), firstBeat: tracks.map((t) => t.opening.value), sampleRate: options.sampleRate };
+      exported.push(seen);
+      const chunks = [{ samples: new Float32Array(8), currentTime: 1, endTime: 2 }, { samples: new Float32Array(8), currentTime: 2, endTime: 2 }];
+      return { render: async () => chunks.shift() ?? null, destroy: vi.fn() };
+    }),
   };
   const clock = new SynthClock(api as unknown as alphaTab.AlphaTabApi, 60, TEMPO, 0);
-  return { api, clock, ready, state, tracks };
+  return { api, clock, ready, state, tracks, exported };
 }
 
 describe('SynthClock guitar tones', () => {
@@ -172,5 +181,32 @@ describe('SynthClock guitar tones', () => {
     const { clock, api } = setup();
     clock.setTrackPrograms(new Map([[9, 30]]));
     expect(api.loadMidiForScore).not.toHaveBeenCalled();
+  });
+
+  describe('export', () => {
+    it('is built from the chosen tone, even before the live synth has finished rebuilding', async () => {
+      const { clock, exported } = setup();
+      clock.setTrackPrograms(new Map([[2, 30]]));
+      await clock.exportAudio();
+      expect(exported[0].programs).toEqual([30, 33, 30]);
+      expect(exported[0].firstBeat[2]).toBe(30);
+    });
+
+    it('goes back to the written sound once the tone is cleared', async () => {
+      const { clock, exported } = setup();
+      clock.setTrackPrograms(new Map([[2, 30]]));
+      clock.setTrackPrograms(new Map());
+      await clock.exportAudio();
+      expect(exported[0].programs).toEqual([30, 33, 27]);
+      expect(exported[0].firstBeat[2]).toBe(27);
+    });
+
+    it('keeps the sample rate, and the length is the length rendered', async () => {
+      const { clock, exported } = setup();
+      const pcm = await clock.exportAudio();
+      expect(exported[0].sampleRate).toBe(AUDIO_SAMPLE_RATE);
+      expect(pcm.sampleRate).toBe(AUDIO_SAMPLE_RATE);
+      expect(pcm.left.length).toBe(8);
+    });
   });
 });
