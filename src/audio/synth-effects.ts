@@ -129,7 +129,10 @@ interface OutputHolder {
 export function installLiveEffects(api: object, enabled = true): () => void {
   try {
     const context = (api as OutputHolder)._player?._instance?._output?.context;
-    if (!context) return () => {};
+    if (!context) {
+      console.warn('Live effects are off: alphaTab no longer exposes its audio output where they expect it.');
+      return () => {};
+    }
     const realDestination = context.destination;
     const chain = buildEffects(context, enabled);
     chain.output.connect(realDestination);
@@ -150,16 +153,21 @@ export function installLiveEffects(api: object, enabled = true): () => void {
 /** Runs rendered audio through the same effects, offline, keeping its length. Returns it unchanged where offline audio is missing. */
 export async function renderWithEffects(pcm: PcmAudio, settings: EffectsSettings = DEFAULT_EFFECTS): Promise<PcmAudio> {
   if (typeof OfflineAudioContext === 'undefined' || pcm.left.length === 0) return pcm;
-  const ctx = new OfflineAudioContext(2, pcm.left.length, pcm.sampleRate);
-  const source = ctx.createBufferSource();
-  const buffer = ctx.createBuffer(2, pcm.left.length, pcm.sampleRate);
-  buffer.copyToChannel(pcm.left as Float32Array<ArrayBuffer>, 0);
-  buffer.copyToChannel(pcm.right as Float32Array<ArrayBuffer>, 1);
-  source.buffer = buffer;
-  const chain = buildEffects(ctx, true, settings);
-  source.connect(chain.input);
-  chain.output.connect(ctx.destination);
-  source.start(0);
-  const rendered = await ctx.startRendering();
-  return { left: rendered.getChannelData(0).slice(), right: rendered.getChannelData(1).slice(), sampleRate: pcm.sampleRate };
+  try {
+    const ctx = new OfflineAudioContext(2, pcm.left.length, pcm.sampleRate);
+    const source = ctx.createBufferSource();
+    const buffer = ctx.createBuffer(2, pcm.left.length, pcm.sampleRate);
+    buffer.copyToChannel(pcm.left as Float32Array<ArrayBuffer>, 0);
+    buffer.copyToChannel(pcm.right as Float32Array<ArrayBuffer>, 1);
+    source.buffer = buffer;
+    const chain = buildEffects(ctx, true, settings);
+    source.connect(chain.input);
+    chain.output.connect(ctx.destination);
+    source.start(0);
+    const rendered = await ctx.startRendering();
+    return { left: rendered.getChannelData(0).slice(), right: rendered.getChannelData(1).slice(), sampleRate: pcm.sampleRate };
+  } catch {
+    // A song too long for the browser to render with effects still exports, with the plain sound.
+    return pcm;
+  }
 }

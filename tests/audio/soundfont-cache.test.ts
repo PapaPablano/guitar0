@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isWholeSoundFont, loadSoundFontBytes, type SoundFontEnv } from '../../src/audio/soundfont-cache';
+import { isWholeSoundFont, loadSoundFontBytes, SOUNDFONT_STALL_MS, type SoundFontEnv } from '../../src/audio/soundfont-cache';
 
 const URL_A = 'https://example.test/assets/font-aaa.sf3';
 const URL_B = 'https://example.test/assets/font-bbb.sf3';
@@ -131,5 +131,26 @@ describe('loadSoundFontBytes', () => {
     const { caches, store } = fakeCaches({ [URL_B]: font(90) });
     await loadSoundFontBytes(URL_A, undefined, env({ caches }));
     expect([...store.keys()]).toEqual([URL_A]);
+  });
+
+  it('gives up on a download that stops delivering, so a retry can be offered', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi.fn(async (_url: string, signal?: AbortSignal) => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(font(64).slice(0, 10));
+            signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')));
+          },
+        });
+        return new Response(stream, { headers: { 'content-length': '64' } });
+      });
+      const result = loadSoundFontBytes(URL_A, undefined, { fetch: fetchFn, caches: null });
+      const failure = expect(result).rejects.toThrow('stalled');
+      await vi.advanceTimersByTimeAsync(SOUNDFONT_STALL_MS + 1000);
+      await failure;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

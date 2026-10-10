@@ -1,9 +1,12 @@
 /** Name of the browser cache that holds the downloaded SoundFont. */
 export const SOUNDFONT_CACHE = 'tab-highway-soundfont';
 
+/** A download that delivers nothing for this long is given up on, so the page shows its retry instead of loading forever. */
+export const SOUNDFONT_STALL_MS = 30_000;
+
 /** The slices of the browser's fetch and Cache Storage this module uses, so tests pass fakes. */
 export interface SoundFontEnv {
-  fetch: (url: string) => Promise<Response>;
+  fetch: (url: string, signal?: AbortSignal) => Promise<Response>;
   caches: CacheStorage | null;
 }
 
@@ -15,7 +18,7 @@ export function defaultSoundFontEnv(): SoundFontEnv {
   } catch {
     caches = null;
   }
-  return { fetch: (url) => fetch(url), caches };
+  return { fetch: (url, signal) => fetch(url, { signal }), caches };
 }
 
 /**
@@ -67,34 +70,49 @@ async function writeCached(env: SoundFontEnv, url: string, bytes: Uint8Array): P
 }
 
 async function download(env: SoundFontEnv, url: string, onProgress?: (fraction: number) => void): Promise<Uint8Array> {
-  const response = await env.fetch(url);
-  if (!response.ok) throw new Error(`The sound could not be downloaded (${response.status}).`);
-  const total = Number(response.headers.get('content-length')) || 0;
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  const reader = response.body?.getReader();
-  if (reader) {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      if (total > 0) onProgress?.(Math.min(1, received / total));
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const watch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), SOUNDFONT_STALL_MS);
+  };
+  watch();
+  try {
+    const response = await env.fetch(url, controller.signal);
+    if (!response.ok) throw new Error(`The sound could not be downloaded (${response.status}).`);
+    const total = Number(response.headers.get('content-length')) || 0;
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    const reader = response.body?.getReader();
+    if (reader) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        watch();
+        chunks.push(value);
+        received += value.length;
+        if (total > 0) onProgress?.(Math.min(1, received / total));
+      }
+    } else {
+      const whole = new Uint8Array(await response.arrayBuffer());
+      chunks.push(whole);
+      received = whole.length;
     }
-  } else {
-    const whole = new Uint8Array(await response.arrayBuffer());
-    chunks.push(whole);
-    received = whole.length;
+    const bytes = new Uint8Array(received);
+    let at = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, at);
+      at += chunk.length;
+    }
+    if (!isWholeSoundFont(bytes)) throw new Error('The sound download was incomplete.');
+    onProgress?.(1);
+    return bytes;
+  } catch (e) {
+    if (controller.signal.aborted) throw new Error('The sound download stalled.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  const bytes = new Uint8Array(received);
-  let at = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, at);
-    at += chunk.length;
-  }
-  if (!isWholeSoundFont(bytes)) throw new Error('The sound download was incomplete.');
-  onProgress?.(1);
-  return bytes;
 }
 
 /**

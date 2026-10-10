@@ -60,7 +60,7 @@ import { PanelFullscreen } from './PanelFullscreen';
 import { Stage } from './Stage';
 import { TrackPicker } from './TrackPicker';
 import { ToneSwitch } from './ToneSwitch';
-import { isGuitarProgram, programOverrides, type GuitarTone } from '../audio/guitar-tone';
+import { canSwitchTone, programOverrides, type GuitarTone } from '../audio/guitar-tone';
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
@@ -899,7 +899,7 @@ export function App() {
             setTuningId(FILE_TUNING);
           }}
         />
-        {!userClock && !stems && track && !track.isPercussion && isGuitarProgram(track.program) && (
+        {canSwitchTone(track, !!userClock || !!stems) && (
           <ToneSwitch
             value={tones[trackIndex]}
             written={track.program}

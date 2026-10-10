@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildEffects,
   DEFAULT_EFFECTS,
@@ -147,6 +147,23 @@ describe('renderWithEffects', () => {
   it('hands back the audio unchanged where offline audio is not available', async () => {
     const pcm = { left: new Float32Array([0.1, 0.2]), right: new Float32Array([0.3, 0.4]), sampleRate: 48000 };
     expect(await renderWithEffects(pcm)).toBe(pcm);
+  });
+
+  it('hands back the plain audio when the browser cannot render with effects', async () => {
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        constructor() {
+          throw new Error('out of memory');
+        }
+      },
+    );
+    try {
+      const pcm = { left: new Float32Array([0.1, 0.2]), right: new Float32Array([0.3, 0.4]), sampleRate: 48000 };
+      expect(await renderWithEffects(pcm)).toBe(pcm);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('hands back empty audio as it is', async () => {

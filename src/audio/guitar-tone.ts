@@ -32,3 +32,8 @@ export function programOverrides(tones: Readonly<Record<number, GuitarTone>>): M
   for (const [track, tone] of Object.entries(tones)) overrides.set(Number(track), programForTone(tone));
   return overrides;
 }
+
+/** True when the tone switch belongs on screen: a guitar track, with the synth being heard (not a loaded recording or stems). */
+export function canSwitchTone(track: { isPercussion: boolean; program: number } | undefined, recordingLoaded: boolean): boolean {
+  return !recordingLoaded && track !== undefined && !track.isPercussion && isGuitarProgram(track.program);
+}

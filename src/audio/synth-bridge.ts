@@ -13,6 +13,14 @@ interface WrittenSound {
   automations: { automation: alphaTab.model.Automation; value: number }[];
 }
 
+export interface ExportAudioOptions {
+  /** Apply the light effects heard live. Off for the alignment, which needs the plain sound. */
+  effects?: boolean;
+}
+
+/** How long a rebuild of the synth's audio may take before it is given up on. */
+const RELOAD_TIMEOUT_MS = 20_000;
+
 export interface SynthOptions {
   /** URL of the SoundFont; relative URLs resolve against the page. It is downloaded once and kept in the browser's cache. */
   soundFontUrl: string;
@@ -47,10 +55,14 @@ export class SynthClock implements Clock {
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
   private readonly latency: number;
-  /** Tracks currently playing a chosen tone, with the sound the tab wrote for each so it can be put back. */
-  private readonly written = new Map<number, WrittenSound>();
   private reloading = false;
   private reloadAgain = false;
+  /** Where playback goes back to, and whether it plays again, once the rebuilt audio is ready. Seeking, playing and pausing during a rebuild change these. */
+  private resumeAfterReload = false;
+  private pendingSeconds = 0;
+  private stopListening: (() => void) | null = null;
+  private reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -94,15 +106,28 @@ export class SynthClock implements Clock {
   }
 
   play(): void {
+    if (this.reloading) {
+      this.resumeAfterReload = true;
+      return;
+    }
     this.api.play();
   }
 
   pause(): void {
+    if (this.reloading) {
+      this.resumeAfterReload = false;
+      return;
+    }
     this.api.pause();
   }
 
   seek(seconds: number): void {
     const clamped = clamp(seconds, 0, this.duration);
+    if (this.reloading) {
+      this.pendingSeconds = clamped;
+      this.reported = { seconds: clamped, at: performance.now() / 1000 };
+      return;
+    }
     this.api.tickPosition = secondsToTicks(this.tempoMap, clamped);
     this.reported = { seconds: clamped, at: performance.now() / 1000 };
   }
@@ -134,60 +159,85 @@ export class SynthClock implements Clock {
   setTrackPrograms(overrides: ReadonlyMap<number, number>): void {
     const tracks = this.api.score?.tracks ?? [];
     let changed = false;
-    for (const index of new Set([...this.written.keys(), ...overrides.keys()])) {
-      const track = tracks[index];
-      if (!track) continue;
+    tracks.forEach((track, index) => {
       const wanted = overrides.get(index);
-      const before = this.written.get(index);
       if (wanted === undefined) {
-        if (!before) continue;
-        applyProgram(track, before, null);
-        this.written.delete(index);
+        // A track nobody chose a tone for goes back to what the tab wrote, whichever clock changed it.
+        const written = writtenSounds.get(track);
+        if (!written || playsAsWritten(track, written)) return;
+        applyProgram(track, written, null);
         changed = true;
-        continue;
+        return;
       }
-      const written = before ?? writtenSound(track);
-      if (!before) this.written.set(index, written);
-      if (track.playbackInfo.program === wanted && written.automations.every((a) => a.automation.value === wanted)) continue;
+      const written = soundAsWritten(track);
+      if (track.playbackInfo.program === wanted && written.automations.every((a) => a.automation.value === wanted)) return;
       applyProgram(track, written, wanted);
       changed = true;
-    }
+    });
     if (changed) this.reloadMidi();
   }
 
   /**
    * Rebuilds the synth's audio from the score, then puts playback back where it was: the same position, loop, speed,
-   * and playing or paused. Changes that arrive while one rebuild is under way are folded into one more.
+   * and playing or paused. Changes that arrive while one rebuild is under way are folded into one more, and a rebuild
+   * that never finishes is given up on so later changes still get through.
    */
   private reloadMidi(): void {
+    if (this.disposed) return;
     if (this.reloading) {
       this.reloadAgain = true;
       return;
     }
     this.reloading = true;
     // alphaTab's own tick reading lags while playing, so the position comes from this clock's interpolated one.
-    const seconds = clamp(this.position(), 0, this.duration);
-    const tick = secondsToTicks(this.tempoMap, seconds);
-    const wasPlaying = this.isPlaying;
+    this.pendingSeconds = clamp(this.position(), 0, this.duration);
+    this.resumeAfterReload = this.isPlaying;
+    this.startReload();
+  }
+
+  private startReload(): void {
     // alphaTab calls a ready handler at once when the synth is already ready, so only a call after the reload starts counts.
     let started = false;
-    const off = this.api.playerReady.on(() => {
+    this.stopListening = this.api.playerReady.on(() => {
       if (!started) return;
-      off();
-      this.reloading = false;
-      this.api.tickPosition = tick;
-      this.reported = { seconds, at: performance.now() / 1000 };
-      this.api.playbackSpeed = this.currentRate;
-      this.setLoop(this.loopRange);
+      this.stopWaiting();
       if (this.reloadAgain) {
         this.reloadAgain = false;
-        this.reloadMidi();
-      } else if (wasPlaying) {
-        this.api.play();
+        this.startReload();
+        return;
       }
+      this.finishReload();
     });
+    this.reloadTimer = setTimeout(() => this.abandonReload(), RELOAD_TIMEOUT_MS);
     started = true;
-    this.api.loadMidiForScore();
+    try {
+      this.api.loadMidiForScore();
+    } catch {
+      this.abandonReload();
+    }
+  }
+
+  private stopWaiting(): void {
+    this.stopListening?.();
+    this.stopListening = null;
+    if (this.reloadTimer !== null) clearTimeout(this.reloadTimer);
+    this.reloadTimer = null;
+  }
+
+  private abandonReload(): void {
+    this.stopWaiting();
+    this.reloading = false;
+    this.reloadAgain = false;
+  }
+
+  private finishReload(): void {
+    this.reloading = false;
+    const seconds = this.pendingSeconds;
+    this.api.tickPosition = secondsToTicks(this.tempoMap, seconds);
+    this.reported = { seconds, at: performance.now() / 1000 };
+    this.api.playbackSpeed = this.currentRate;
+    this.setLoop(this.loopRange);
+    if (this.resumeAfterReload) this.api.play();
   }
 
   /**
@@ -195,7 +245,7 @@ export class SynthClock implements Clock {
    * Calls `onProgress` with 0..1 as it goes. The light effects heard live are applied too, unless `effects` is false: the
    * alignment compares the tab with a recording and needs the plain sound.
    */
-  async exportAudio(onProgress?: (fraction: number) => void, { effects = true } = {}): Promise<PcmAudio> {
+  async exportAudio(onProgress?: (fraction: number) => void, { effects = true }: ExportAudioOptions = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
@@ -218,8 +268,29 @@ export class SynthClock implements Clock {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.stopWaiting();
     this.api.destroy();
   }
+}
+
+/**
+ * What each track played as the tab wrote it. It is kept with the track, not the clock: a clock rebuilt for the same score
+ * (after a tuning change or a retry) finds the score already changed and must still be able to put the tab's sound back.
+ */
+const writtenSounds = new WeakMap<alphaTab.model.Track, WrittenSound>();
+
+function soundAsWritten(track: alphaTab.model.Track): WrittenSound {
+  let written = writtenSounds.get(track);
+  if (!written) {
+    written = writtenSound(track);
+    writtenSounds.set(track, written);
+  }
+  return written;
+}
+
+function playsAsWritten(track: alphaTab.model.Track, written: WrittenSound): boolean {
+  return track.playbackInfo.program === written.program && written.automations.every((a) => a.automation.value === a.value);
 }
 
 function writtenSound(track: alphaTab.model.Track): WrittenSound {
@@ -282,11 +353,12 @@ export function createSynthSession(
     api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
     api.renderScore(score);
     // The SoundFont is fetched here, not by alphaTab, so it can be cached, show progress and be retried.
-    loadSoundFontBytes(options.soundFontUrl, options.onProgress).then((bytes) => {
-      if (disposed) return;
-      // alphaTab hands the buffer to its worker, so it gets a copy and the cached bytes stay whole.
-      if (!api.loadSoundFont(bytes.slice(), false)) reject(new Error('The sound player could not start.'));
-    }, reject);
+    loadSoundFontBytes(options.soundFontUrl, options.onProgress)
+      .then((bytes) => {
+        if (disposed) return;
+        if (!api.loadSoundFont(bytes, false)) reject(new Error('The sound player could not start.'));
+      })
+      .catch(reject);
   });
 
   const originalDispose = clock.dispose.bind(clock);

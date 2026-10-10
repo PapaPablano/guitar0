@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GUITAR_TONES, isGuitarProgram, programForTone, programOverrides, toneOfProgram } from '../../src/audio/guitar-tone';
+import { canSwitchTone, GUITAR_TONES, isGuitarProgram, programForTone, programOverrides, toneOfProgram } from '../../src/audio/guitar-tone';
 
 describe('guitar tones', () => {
   it('maps the three tones to General MIDI clean, overdrive and distortion guitar', () => {
@@ -27,5 +27,15 @@ describe('guitar tones', () => {
       [2, 30],
     ]);
     expect(programOverrides({}).size).toBe(0);
+  });
+
+  it('shows the tone switch for a guitar track while the synth is heard, and for nothing else', () => {
+    const guitar = { isPercussion: false, program: 30 };
+    expect(canSwitchTone(guitar, false)).toBe(true);
+    expect(canSwitchTone({ isPercussion: false, program: 25 }, false)).toBe(true);
+    expect(canSwitchTone(guitar, true)).toBe(false);
+    expect(canSwitchTone({ isPercussion: true, program: 30 }, false)).toBe(false);
+    expect(canSwitchTone({ isPercussion: false, program: 33 }, false)).toBe(false);
+    expect(canSwitchTone(undefined, false)).toBe(false);
   });
 });
