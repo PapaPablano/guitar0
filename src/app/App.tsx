@@ -54,6 +54,7 @@ import { hashFile } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
 import { isDesktop } from './desktop';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
+import { BackingTrack } from './BackingTrack';
 import { StemPanel, type ActiveStems } from './StemPanel';
 import { SAMPLE_ALPHATEX } from './sample';
 import { PanelFullscreen } from './PanelFullscreen';
@@ -825,37 +826,43 @@ export function App() {
         }}
       />
     ),
-    recording: (
-      <OffsetSlider
-        offsetSeconds={userClock || stems ? offset : null}
-        offsetControl={stateControls.showOffset}
-        fileName={userClock?.file?.name ?? stems?.title ?? null}
-        error={userAudioError}
-        onLoad={onLoadRecording}
-        onOffsetChange={(raw) => {
-          const seconds = clampOffset(raw);
-          offsetMoved.current = true;
-          offsetMovedSinceRun.current = true;
-          applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
-        }}
-        onRemove={onRemoveRecording}
-      />
-    ),
-    stems: (
-      <StemPanel
-        recording={userClock?.file ?? null}
-        durationSeconds={timeline.durationSeconds}
-        active={stems}
-        mix={mix}
-        onMixChange={(next) => {
-          setMix(next);
-          mixMoved.current = true;
-          if (isDesktop()) {
-            profileMix.current = next;
-            scheduleProfileSave(live.current.offset);
-          }
-        }}
-        onActivate={activateStems}
+    backing: (
+      <BackingTrack
+        recording={
+          <OffsetSlider
+            offsetSeconds={userClock || stems ? offset : null}
+            offsetControl={stateControls.showOffset}
+            fileName={userClock?.file?.name ?? stems?.title ?? null}
+            error={userAudioError}
+            onLoad={onLoadRecording}
+            onOffsetChange={(raw) => {
+              const seconds = clampOffset(raw);
+              offsetMoved.current = true;
+              offsetMovedSinceRun.current = true;
+              applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
+            }}
+            onRemove={onRemoveRecording}
+          />
+        }
+        stems={({ status, method }) => (
+          <StemPanel
+            status={status}
+            method={method}
+            recording={userClock?.file ?? null}
+            durationSeconds={timeline.durationSeconds}
+            active={stems}
+            mix={mix}
+            onMixChange={(next) => {
+              setMix(next);
+              mixMoved.current = true;
+              if (isDesktop()) {
+                profileMix.current = next;
+                scheduleProfileSave(live.current.offset);
+              }
+            }}
+            onActivate={activateStems}
+          />
+        )}
       />
     ),
     alignment: (
@@ -895,7 +902,7 @@ export function App() {
       return { startSeconds, endSeconds: scoreBarStartSeconds(strip, loop.endBar + 1) ?? timeline.durationSeconds };
     })(),
   };
-  const toolIds = availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0, desktop: isDesktop() });
+  const toolIds = availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0 });
 
   return (
     <main className="app">

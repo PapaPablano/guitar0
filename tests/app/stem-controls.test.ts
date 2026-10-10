@@ -33,6 +33,27 @@ describe('separateControl', () => {
     expect(c.note).toContain('No network');
   });
 
+  it('covers F2: with a file loaded and setup never run, the control is enabled and asking starts setup', () => {
+    const c = separateControl({ engine: describeEngine({ phase: 'setup-needed' }), hasRecording: true, hasSaved: false, busy: false });
+    expect(c).toMatchObject({ visible: true, disabled: false, startsSetup: true });
+    expect(c.note).toMatch(/download/i);
+  });
+
+  it('with no file loaded and setup never run, asks for a file first and starts nothing', () => {
+    const c = separateControl({ engine: describeEngine({ phase: 'setup-needed' }), hasRecording: false, hasSaved: false, busy: false });
+    expect(c).toMatchObject({ disabled: true, startsSetup: false });
+  });
+
+  it('stays disabled while setup runs, with the progress in its note, and does not start it again', () => {
+    const c = separateControl({ engine: describeEngine({ phase: 'setting-up', progress: 0.25 }), hasRecording: true, hasSaved: false, busy: false });
+    expect(c).toMatchObject({ disabled: true, startsSetup: false });
+    expect(c.note).toContain('25%');
+  });
+
+  it('never starts setup once the engine is ready', () => {
+    expect(separateControl({ engine: ready, hasRecording: true, hasSaved: false, busy: false }).startsSetup).toBe(false);
+  });
+
   it('is disabled while a separation runs', () => {
     expect(separateControl({ engine: ready, hasRecording: true, hasSaved: false, busy: true }).disabled).toBe(true);
   });

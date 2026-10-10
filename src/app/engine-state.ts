@@ -34,7 +34,7 @@ export function describeEngine(status: ShellEngineStatus | null): EngineView {
     case 'ready':
       return { kind: 'ready', stemsEnabled: true, canRetry: false, busy: false, needsSetup: false, message, progress: null };
     case 'setup-needed':
-      return { kind: 'setup', stemsEnabled: false, canRetry: true, busy: false, needsSetup: true, message: message || 'Stem separation needs a one-time setup.', progress: null };
+      return { kind: 'setup', stemsEnabled: false, canRetry: true, busy: false, needsSetup: true, message: message || 'Stem separation needs a one-time download of FFmpeg and the separation models.', progress: null };
     case 'setting-up':
       return { kind: 'setup', stemsEnabled: false, canRetry: false, busy: true, needsSetup: false, message: message || 'Setting up stem separation…', progress };
     case 'setup-failed':

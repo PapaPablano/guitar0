@@ -1,4 +1,4 @@
-import type { EngineView } from './engine-state';
+import { engineStateLine, type EngineView } from './engine-state';
 import { MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
 import { fadeStep, FADE_OUT_STEPS, type PassSchedule } from '../audio/pass-schedule';
 import type { SearchItem, StemName } from '../stems/engine-client';
@@ -7,6 +7,8 @@ export interface SeparateControl {
   readonly visible: boolean;
   readonly label: 'Separate' | 'Use saved stems';
   readonly disabled: boolean;
+  /** True when asking should start first-time setup instead of separating (setup has never run). */
+  readonly startsSetup: boolean;
   /** Why the control is disabled, or setup progress; empty when there is nothing to say. */
   readonly note: string;
 }
@@ -15,10 +17,14 @@ export interface SeparateControl {
 export function separateControl(args: { engine: EngineView; hasRecording: boolean; hasSaved: boolean; busy: boolean }): SeparateControl {
   const { engine, hasRecording, hasSaved, busy } = args;
   const label = hasSaved ? 'Use saved stems' : 'Separate';
-  if (engine.kind === 'web') return { visible: false, label, disabled: true, note: '' };
-  if (!engine.stemsEnabled) return { visible: true, label, disabled: true, note: engine.message };
-  if (!hasRecording) return { visible: true, label, disabled: true, note: 'Load your recording to split it into stems.' };
-  return { visible: true, label, disabled: busy, note: '' };
+  if (engine.kind === 'web') return { visible: false, label, disabled: true, startsSetup: false, note: '' };
+  if (engine.needsSetup) {
+    if (!hasRecording) return { visible: true, label, disabled: true, startsSetup: false, note: 'Load your recording to split it into stems.' };
+    return { visible: true, label, disabled: false, startsSetup: true, note: engineStateLine(engine) };
+  }
+  if (!engine.stemsEnabled) return { visible: true, label, disabled: true, startsSetup: false, note: engineStateLine(engine) };
+  if (!hasRecording) return { visible: true, label, disabled: true, startsSetup: false, note: 'Load your recording to split it into stems.' };
+  return { visible: true, label, disabled: busy, startsSetup: false, note: '' };
 }
 
 const clone = (mix: MixState): MixState => JSON.parse(JSON.stringify(mix)) as MixState;

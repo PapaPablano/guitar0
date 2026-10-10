@@ -1,21 +1,19 @@
 import type { AlignStatus } from './auto-align';
 
-export type ToolId = 'loop' | 'sections' | 'recording' | 'stems' | 'alignment';
+export type ToolId = 'loop' | 'sections' | 'backing' | 'alignment';
 
 export const TOOL_NAMES: Record<ToolId, string> = {
   loop: 'Loop',
   sections: 'Sections',
-  recording: 'Recording',
-  stems: 'Stems',
+  backing: 'Backing track',
   alignment: 'Alignment',
 };
 
-/** Which practice tools have something to show: stems need the desktop app, sections and alignment need a recording or stems, and sections need some found. */
-export function availableTools(flags: { hasAudioSource: boolean; hasSections: boolean; desktop: boolean }): ToolId[] {
+/** Which practice tools have something to show: the backing track is always there, sections and alignment need a recording or stems, and sections need some found. */
+export function availableTools(flags: { hasAudioSource: boolean; hasSections: boolean }): ToolId[] {
   const tools: ToolId[] = ['loop'];
   if (flags.hasAudioSource && flags.hasSections) tools.push('sections');
-  tools.push('recording');
-  if (flags.desktop) tools.push('stems');
+  tools.push('backing');
   if (flags.hasAudioSource) tools.push('alignment');
   return tools;
 }
