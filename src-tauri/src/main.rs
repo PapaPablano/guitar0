@@ -60,7 +60,7 @@ fn bootstrap(state: State, run_setup: bool) {
         }
         if !setup::is_complete(&layout.data) {
             if !run_setup {
-                set(&state, "setup-needed", None, Some("Stem separation needs a one-time download of FFmpeg and the separation models.".to_string()));
+                set(&state, "setup-needed", None, Some("Stem separation needs a one-time download of about 330 MB: FFmpeg (about 190 MB) and the separation models (about 140 MB).".to_string()));
                 return Ok(());
             }
             set(&state, "setting-up", Some(0.0), Some("Setting up stem separation".to_string()));

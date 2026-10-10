@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { describeEngine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
+import { describeEngine, engineStateLine, readEngineStatus, shouldStartSetup, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
 
 const status = (s: Partial<ShellEngineStatus> & { phase: ShellEngineStatus['phase'] }): ShellEngineStatus => s as ShellEngineStatus;
 
 describe('describeEngine', () => {
   it('shows nothing stem-related on the web', () => {
-    expect(describeEngine(null)).toEqual({ kind: 'web', stemsEnabled: false, canRetry: false, busy: false, message: '', progress: null });
+    expect(describeEngine(null)).toEqual({ kind: 'web', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: '', progress: null });
   });
 
   it('covers AE1: setup unfinished disables stems with an explanation and a retry', () => {
@@ -102,5 +102,40 @@ describe('R25: setup never blocks practice', () => {
     expect(read).toBeInstanceOf(Promise);
     expect(start).toBeInstanceOf(Promise);
     await Promise.allSettled([read, start]); // no shell in Node: both reject, neither throws synchronously
+  });
+});
+
+describe('shouldStartSetup (KTD4)', () => {
+  it('covers AE1: is true only when setup has never run', () => {
+    expect(shouldStartSetup(describeEngine(status({ phase: 'setup-needed' })))).toBe(true);
+  });
+
+  it('is false in every other state, so setup is never started twice or retried by itself', () => {
+    for (const phase of ['setting-up', 'starting', 'ready', 'restarting', 'engine-error', 'setup-failed'] as const) {
+      expect(shouldStartSetup(describeEngine(status({ phase, url: 'u', secret: 's' })))).toBe(false);
+    }
+    expect(shouldStartSetup(describeEngine(null))).toBe(false);
+  });
+});
+
+describe('engineStateLine (R7)', () => {
+  it('says nothing on the web', () => {
+    expect(engineStateLine(describeEngine(null))).toBe('');
+  });
+
+  it('gives a plain sentence for every state', () => {
+    for (const phase of ['setup-needed', 'setting-up', 'setup-failed', 'starting', 'restarting', 'ready', 'engine-error'] as const) {
+      expect(engineStateLine(describeEngine(status({ phase, url: 'u', secret: 's' }))).length).toBeGreaterThan(5);
+    }
+  });
+
+  it('includes the progress while setting up when it is known', () => {
+    expect(engineStateLine(describeEngine(status({ phase: 'setting-up', progress: 0.4 })))).toContain('40%');
+    expect(engineStateLine(describeEngine(status({ phase: 'setting-up', progress: null as unknown as undefined })))).not.toContain('%');
+  });
+
+  it('keeps the shell message for a failure or a stop so the reason is visible', () => {
+    expect(engineStateLine(describeEngine(status({ phase: 'setup-failed', message: 'No network' })))).toContain('No network');
+    expect(engineStateLine(describeEngine(status({ phase: 'engine-error', message: 'exited' })))).toContain('exited');
   });
 });
