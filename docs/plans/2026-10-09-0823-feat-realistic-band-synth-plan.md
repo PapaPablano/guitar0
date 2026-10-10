@@ -245,3 +245,13 @@ flowchart TB
 - **Not chosen:** GeneralUser GS 2.0.3 (31 MB, `.sf2`). Free to use and redistribute, but its author says he cannot be certain of every sample's origin, so it carries a weaker licence story. It was never compared by ear, because the comparison page kept sending a cut-off font name from the user's browser. FluidR3 was not a separate candidate: MuseScore General is built from it.
 - **Load time:** one measurement in a slower browser showed about 19 s to become ready against about 5 s for the current font, but the user's own run showed 2.1 s against 1.1 s. U2 measures it again with the file served from the build and from Cache Storage.
 - **Listening page:** `dev/soundfont-compare.html` (dev-only, fonts in the git-ignored `dev/local/`).
+
+### U5 gate result (2026-10-09)
+
+Spike run in the browser against alphaTab 1.8.4 and the new SoundFont. Question: can effects reach live playback and the export alike, and can drive reach guitar tracks only?
+
+- **Live playback: possible.** alphaTab's output (the AudioWorklet output on secure pages, the ScriptProcessor output otherwise) connects its node to `audioContext.destination`. Redefining `destination` on that context to an effects chain put a high-shelf EQ and a convolution reverb in the path: the analyser at the chain's end carried the signal (RMS about 0.023), changing the EQ and reverb mix changed the level, and the tail died out after pause. The hook needs the output's context, which alphaTab keeps in a private field (`api._player._instance._output.context`), so it depends on the pinned alphaTab version.
+- **Export: possible, with the same graph.** The export returns PCM chunks, so the same effects graph, built by one function against an `OfflineAudioContext`, can process them. That meets KTD4's intent (one routine builds the chain for both). The reverb's impulse response must be seeded, not random, so the two renders match.
+- **Guitar-only drive: not possible on one mixed output.** Both paths see the whole mix. Drive would also distort drums, bass and keys. The two-part render (guitars and the rest as separate parts, played through the stem mixer) is the only route, and it is a larger change that also needs a re-render when tempo changes.
+- **What R5 can cover without that:** a global gentle EQ and reverb, with the amp-style drive left to the SoundFont's own Crunch and Distortion sounds.
+- **Not measured:** how any of it sounds. That needs the user's ears.
