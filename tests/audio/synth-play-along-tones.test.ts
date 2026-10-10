@@ -72,6 +72,8 @@ describe('Play along together with the guitar tone switch', () => {
     clock.setSilentTrack(1);
     clock.setTrackPrograms(new Map([[0, 29]]));
     await clock.exportAudio(undefined, { fullBand: true, effects: false });
-    expect(seen[0].size).toBe(0);
+    // The silenced track is not zeroed; only the level for the chosen tone is set.
+    expect(seen[0].get(1)).toBeUndefined();
+    expect([...seen[0].values()].every((v) => v > 0)).toBe(true);
   });
 });

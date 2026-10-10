@@ -31,7 +31,7 @@ function setup(latency = 0) {
     playbackSpeed: 1,
     playbackRange: null as unknown,
     isLooping: false,
-    score: { tracks: [{ index: 0 }, { index: 1 }, { index: 2 }] },
+    score: { tracks: [0, 1, 2].map((index) => ({ index, playbackInfo: { program: 33 } })) },
     changeTrackMute: vi.fn(),
     exportAudio: vi.fn(async (_options: unknown) => ({ render: async () => null, destroy: vi.fn() })),
   };
