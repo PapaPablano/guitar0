@@ -74,9 +74,11 @@ import { ShortcutLegend } from './ShortcutLegend';
 import { PracticeTools } from './PracticeTools';
 import { alignmentNeedsLook, availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
+import soundFontUrl from '../../assets/soundfont/MuseScore_General.sf3?url';
 import './app.css';
 
-const SOUND_FONT_URL = './soundfont/sonivox.sf3';
+// The band SoundFont is a tracked asset; Vite gives it a content-hashed name so a new font is never served from an old cache.
+const SOUND_FONT_URL = soundFontUrl;
 
 type AudioState = { status: 'loading'; progress: number } | { status: 'ready' } | { status: 'failed'; message: string };
 

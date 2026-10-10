@@ -3,10 +3,11 @@ import { secondsToTicks, ticksToSeconds } from '../model/alphatab-adapter';
 import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
+import { loadSoundFontBytes } from './soundfont-cache';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
 export interface SynthOptions {
-  /** URL of the SoundFont; relative URLs resolve against the page. */
+  /** URL of the SoundFont; relative URLs resolve against the page. It is downloaded once and kept in the browser's cache. */
   soundFontUrl: string;
   /** Called with 0..1 while the SoundFont loads. */
   onProgress?: (fraction: number) => void;
@@ -167,7 +168,6 @@ export function createSynthSession(
 
   const settings = new alphaTab.Settings();
   settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
-  settings.player.soundFont = options.soundFontUrl;
   settings.player.enableCursor = false;
   settings.player.enableAnimatedBeatCursor = false;
   settings.player.enableElementHighlighting = false;
@@ -176,16 +176,23 @@ export function createSynthSession(
 
   const api = new alphaTab.AlphaTabApi(host, settings);
   const clock = new SynthClock(api, durationSeconds, tempoMap);
+  let disposed = false;
 
   const ready = new Promise<void>((resolve, reject) => {
-    api.soundFontLoad.on((e) => options.onProgress?.(e.total > 0 ? e.loaded / e.total : 0));
     api.playerReady.on(() => resolve());
     api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
     api.renderScore(score);
+    // The SoundFont is fetched here, not by alphaTab, so it can be cached, show progress and be retried.
+    loadSoundFontBytes(options.soundFontUrl, options.onProgress).then((bytes) => {
+      if (disposed) return;
+      // alphaTab hands the buffer to its worker, so it gets a copy and the cached bytes stay whole.
+      if (!api.loadSoundFont(bytes.slice(), false)) reject(new Error('The sound player could not start.'));
+    }, reject);
   });
 
   const originalDispose = clock.dispose.bind(clock);
   clock.dispose = () => {
+    disposed = true;
     originalDispose();
     host.remove();
   };
