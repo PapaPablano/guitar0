@@ -18,6 +18,9 @@ export interface SaveEnv {
   stamp(): string;
 }
 
+/** What a save came to: where it went, or that the caller cancelled it first (nothing was saved or downloaded). */
+export type SaveOutcome = SaveResult | { where: 'cancelled' };
+
 export type SaveResult =
   | { where: 'folder'; fileName: string; folder: string }
   | { where: 'download'; filename: string; /** Why the folder save was skipped: null on the website, the error on desktop. */ reason: string | null };
@@ -38,7 +41,7 @@ function desktopShell(): SaveShell | null {
   };
 }
 
-function browserDownload(blob: Blob, filename: string): void {
+export function browserDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -55,9 +58,12 @@ export function defaultSaveEnv(): SaveEnv {
 /**
  * Saves a finished export. On desktop it goes to the Tab Highway folder under Videos through the shell, in slices; on the
  * website, or if the shell save fails, it is the browser's download. A failure partway removes the partial file first.
+ * `isCancelled` is asked before each slice and before the fallback download: once it says yes, a save in progress is removed
+ * and nothing more is written or downloaded.
  */
-export async function saveExport(blob: Blob, filename: string, env: SaveEnv = defaultSaveEnv()): Promise<SaveResult> {
-  const fallback = (reason: string | null): SaveResult => {
+export async function saveExport(blob: Blob, filename: string, env: SaveEnv = defaultSaveEnv(), isCancelled: () => boolean = () => false): Promise<SaveOutcome> {
+  const fallback = (reason: string | null): SaveOutcome => {
+    if (isCancelled()) return { where: 'cancelled' };
     env.download(blob, filename);
     return { where: 'download', filename, reason };
   };
@@ -73,8 +79,16 @@ export async function saveExport(blob: Blob, filename: string, env: SaveEnv = de
   }
   try {
     for (let start = 0; start < blob.size; start += SLICE_BYTES) {
+      if (isCancelled()) {
+        await shell.cancel(id).catch(() => undefined);
+        return { where: 'cancelled' };
+      }
       const slice = new Uint8Array(await blob.slice(start, start + SLICE_BYTES).arrayBuffer());
       await shell.append(id, slice);
+    }
+    if (isCancelled()) {
+      await shell.cancel(id).catch(() => undefined);
+      return { where: 'cancelled' };
     }
     const saved = await shell.finish(id);
     return { where: 'folder', fileName: saved.file_name, folder: saved.folder };

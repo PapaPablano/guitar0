@@ -135,7 +135,13 @@ pub fn export_append(request: tauri::ipc::Request<'_>, state: tauri::State<Expor
 #[tauri::command]
 pub fn export_finish(state: tauri::State<Exports>, id: u64) -> Result<Saved, String> {
     let entry = state.open.lock().unwrap().remove(&id).ok_or_else(|| "unknown save handle".to_string())?;
-    entry.file.sync_all().map_err(|e| format!("could not finish the file: {e}"))?;
+    if let Err(e) = entry.file.sync_all() {
+        // The handle is already gone, so the page's cancel cannot clean up: remove the partial file here.
+        let Open { file, path } = entry;
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return Err(format!("could not finish the file: {e}"));
+    }
     let name = entry.path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
     let folder = entry.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(Saved { file_name: name, folder })

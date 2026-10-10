@@ -208,6 +208,11 @@ describe('rankByLength', () => {
     expect(input.map((r) => r.url)).toEqual(['b', 'a']);
   });
 
+  it('treats a missing length like an unknown one instead of mis-sorting', () => {
+    const odd = { url: 'odd', title: 'odd', uploader: null, too_long: false } as unknown as ReturnType<typeof item>;
+    expect(rankByLength([odd, item('near', 420)], 420).map((r) => r.url)).toEqual(['near', 'odd']);
+  });
+
   it('keeps the order when the tab length is unknown', () => {
     expect(rankByLength([item('b', 100), item('a', 420)], 0).map((r) => r.url)).toEqual(['b', 'a']);
   });

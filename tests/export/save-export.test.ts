@@ -68,10 +68,54 @@ describe('saveExport', () => {
     expect(result).toMatchObject({ where: 'download', reason: expect.stringContaining('disk full') });
   });
 
-  it('saves a file name with no extension as it is through the browser path', async () => {
+  it('falls back to the browser download, without calling the shell, for a file name with no type', async () => {
+    for (const name of ['noext', '.mp4']) {
+      const { shell } = fakeShell();
+      const download = vi.fn();
+      const result = await saveExport(blobOf(1), name, { shell, download, stamp });
+      expect(shell.begin).not.toHaveBeenCalled();
+      expect(download).toHaveBeenCalledWith(expect.any(Blob), name);
+      expect(result).toMatchObject({ where: 'download', reason: expect.stringMatching(/no type/) });
+    }
+  });
+
+  it('cancels the partial file and falls back when finishing fails', async () => {
+    const { shell } = fakeShell({ finish: vi.fn(async () => Promise.reject(new Error('sync failed'))) });
     const download = vi.fn();
-    await saveExport(blobOf(1), 'noext', { shell: null, download, stamp });
-    expect(download).toHaveBeenCalledWith(expect.any(Blob), 'noext');
+    const result = await saveExport(blobOf(10), 'x.mp4', { shell, download, stamp });
+    expect(shell.cancel).toHaveBeenCalledWith(7);
+    expect(download).toHaveBeenCalled();
+    expect(result).toMatchObject({ where: 'download', reason: expect.stringContaining('sync failed') });
+  });
+
+  it('stops without writing or downloading when cancelled between slices, and removes the partial file', async () => {
+    const { shell, sent } = fakeShell();
+    const download = vi.fn();
+    let calls = 0;
+    const result = await saveExport(blobOf(SLICE_BYTES * 3), 'x.mp4', { shell, download, stamp }, () => ++calls > 1);
+    expect(result).toEqual({ where: 'cancelled' });
+    expect(sent).toEqual([SLICE_BYTES]);
+    expect(shell.cancel).toHaveBeenCalledWith(7);
+    expect(shell.finish).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('removes the file instead of finishing it when cancelled after the last slice', async () => {
+    const { shell } = fakeShell();
+    let after = false;
+    const shellWithFlag: SaveShell = { ...shell, append: vi.fn(async () => { after = true; }) };
+    const result = await saveExport(blobOf(10), 'x.mp4', { shell: shellWithFlag, download: vi.fn(), stamp }, () => after);
+    expect(result).toEqual({ where: 'cancelled' });
+    expect(shell.cancel).toHaveBeenCalledWith(7);
+    expect(shell.finish).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to a download when cancelled while the shell save was failing', async () => {
+    const { shell } = fakeShell({ begin: vi.fn(async () => Promise.reject(new Error('no Videos folder'))) });
+    const download = vi.fn();
+    const result = await saveExport(blobOf(10), 'x.mp4', { shell, download, stamp }, () => true);
+    expect(result).toEqual({ where: 'cancelled' });
+    expect(download).not.toHaveBeenCalled();
   });
 });
 

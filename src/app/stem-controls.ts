@@ -112,7 +112,7 @@ export function searchRow(item: SearchItem): SearchRow {
  */
 export function rankByLength(items: readonly SearchItem[], tabSeconds: number): SearchItem[] {
   if (!(tabSeconds > 0)) return [...items];
-  const distance = (item: SearchItem) => (item.duration === null ? Infinity : Math.abs(item.duration - tabSeconds));
+  const distance = (item: SearchItem) => (typeof item.duration === 'number' && Number.isFinite(item.duration) ? Math.abs(item.duration - tabSeconds) : Infinity);
   return items
     .map((item, index) => ({ item, index, distance: distance(item) }))
     .sort((a, b) => (a.distance === b.distance ? a.index - b.index : a.distance - b.distance))
