@@ -4,6 +4,7 @@
 
 mod alignments;
 mod engine;
+mod exports;
 mod model_progress;
 mod profiles;
 mod recovery;
@@ -263,7 +264,8 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write])
+        .manage(exports::Exports::default())
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder])
         .setup({
             let state = state.clone();
             move |_app| {
