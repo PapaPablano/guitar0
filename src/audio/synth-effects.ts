@@ -6,7 +6,7 @@ import type { PcmAudio } from '../export/audio';
  * drive from the SoundFont's own Crunch and Distortion sounds.
  */
 export interface EffectsSettings {
-  /** Gain after the room, because the SoundFont renders quieter than the one it replaced. */
+  /** Gain after the room. The EQ and the room add level, and the guitars are now brought up to the bass and drums, so a full mix needs trimming to stay clear of the ceiling. */
   readonly makeupDb: number;
   /** Cuts rumble below this frequency. */
   readonly highPassHz: number;
@@ -18,7 +18,7 @@ export interface EffectsSettings {
 }
 
 export const DEFAULT_EFFECTS: EffectsSettings = {
-  makeupDb: 4,
+  makeupDb: -3,
   highPassHz: 35,
   lowShelf: { hz: 120, db: 1.5 },
   highShelf: { hz: 6000, db: 2 },

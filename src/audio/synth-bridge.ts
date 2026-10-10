@@ -4,6 +4,8 @@ import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import { loadSoundFontBytes } from './soundfont-cache';
+import { substituteUnplayablePrograms } from './font-substitutes';
+import { programGain } from './track-balance';
 import { installLiveEffects, renderWithEffects } from './synth-effects';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
@@ -58,6 +60,8 @@ export class SynthClock implements Clock {
   private loopRange: LoopRange | null = null;
   private readonly latency: number;
   private silentTrack: number | null = null;
+  /** Tracks whose level has been set away from the default, so one that goes back to 1 is set back. */
+  private readonly levelled = new Set<number>();
   private reloading = false;
   private reloadAgain = false;
   /** Where playback goes back to, and whether it plays again, once the rebuilt audio is ready. Seeking, playing and pausing during a rebuild change these. */
@@ -81,6 +85,7 @@ export class SynthClock implements Clock {
     });
     // alphaTab drops a channel mute that arrives before its synth exists, so the silence is applied again once it is ready and at every play.
     api.playerReady?.on(() => this.applySilence());
+    api.playerReady?.on(() => this.applyBalance());
     api.playerStateChanged.on((e) => {
       this.isPlaying = e.state === alphaTab.synth.PlayerState.Playing;
       if (this.isPlaying) this.applySilence();
@@ -156,6 +161,17 @@ export class SynthClock implements Clock {
       this.api.playbackRange = null;
       this.api.isLooping = false;
     }
+  }
+
+  /** Sets each guitar track to the common level for its sound. alphaTab drops a level set before its synth exists, so this runs on every ready. */
+  private applyBalance(): void {
+    const tracks = this.api.score?.tracks ?? [];
+    tracks.forEach((track, index) => {
+      const gain = programGain(track.playbackInfo.program);
+      if (gain === 1 && !this.levelled.has(index)) return;
+      this.levelled.add(index);
+      this.api.changeTrackVolume?.([track], gain);
+    });
   }
 
   private applySilence(): void {
@@ -276,6 +292,10 @@ export class SynthClock implements Clock {
     options.useSyncPoints = false;
     options.masterVolume = 1;
     options.metronomeVolume = 0;
+    (this.api.score?.tracks ?? []).forEach((track, index) => {
+      const gain = programGain(track.playbackInfo.program);
+      if (gain !== 1) options.trackVolume.set(index, gain);
+    });
     if (!fullBand && this.silentTrack !== null) options.trackVolume.set(this.silentTrack, 0);
     const exporter = await this.api.exportAudio(options);
     const chunks: { left: Float32Array; right: Float32Array }[] = [];
@@ -368,6 +388,8 @@ export function createSynthSession(
   settings.player.scrollMode = alphaTab.ScrollMode.Off;
   settings.core.fontDirectory = './font/';
 
+  // Sounds the font has but alphaTab cannot play are swapped for ones it can, before the audio is built from the score.
+  substituteUnplayablePrograms(score);
   const api = new alphaTab.AlphaTabApi(host, settings);
   const clock = new SynthClock(api, durationSeconds, tempoMap);
   let disposed = false;
