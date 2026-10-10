@@ -99,6 +99,20 @@ export function searchRow(item: SearchItem): SearchRow {
   };
 }
 
+/**
+ * Orders search results by how close their length is to the tab's, so the likeliest backing track comes first. Every result
+ * stays in the list: one over the import limit is still shown (disabled), and one with no length goes last. Equal distances
+ * keep the engine's own order. An unknown tab length (0 or less) leaves the order alone.
+ */
+export function rankByLength(items: readonly SearchItem[], tabSeconds: number): SearchItem[] {
+  if (!(tabSeconds > 0)) return [...items];
+  const distance = (item: SearchItem) => (item.duration === null ? Infinity : Math.abs(item.duration - tabSeconds));
+  return items
+    .map((item, index) => ({ item, index, distance: distance(item) }))
+    .sort((a, b) => (a.distance === b.distance ? a.index - b.index : a.distance - b.distance))
+    .map((entry) => entry.item);
+}
+
 export type ScheduleChoice = PassSchedule['kind'];
 
 export const SCHEDULE_CHOICES: readonly { readonly value: ScheduleChoice; readonly label: string }[] = [

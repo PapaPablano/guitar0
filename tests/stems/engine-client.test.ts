@@ -110,7 +110,7 @@ describe('EngineClient search and URL import', () => {
     const { client, calls } = setup(() => json({ items, max_duration_sec: 600 }));
     await expect(client.search('some song')).resolves.toEqual(items);
     expect(calls[0].url).toBe('http://127.0.0.1:5000/api/search');
-    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({ query: 'some song', source: 'youtube', kind: 'track' });
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({ query: 'some song', source: 'youtube', kind: 'track', limit: 15 });
     expect(new Headers(calls[0].init?.headers).get('X-TabHighway-Secret')).toBe('sekrit');
   });
 
