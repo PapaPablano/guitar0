@@ -3,10 +3,26 @@ import { secondsToTicks, ticksToSeconds } from '../model/alphatab-adapter';
 import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
+import { loadSoundFontBytes } from './soundfont-cache';
+import { installLiveEffects, renderWithEffects } from './synth-effects';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
+/** What a track played before a tone was chosen for it: its program and every instrument change written into its beats. */
+interface WrittenSound {
+  program: number;
+  automations: { automation: alphaTab.model.Automation; value: number }[];
+}
+
+export interface ExportAudioOptions {
+  /** Apply the light effects heard live. Off for the alignment, which needs the plain sound. */
+  effects?: boolean;
+}
+
+/** How long a rebuild of the synth's audio may take before it is given up on. */
+const RELOAD_TIMEOUT_MS = 20_000;
+
 export interface SynthOptions {
-  /** URL of the SoundFont; relative URLs resolve against the page. */
+  /** URL of the SoundFont; relative URLs resolve against the page. It is downloaded once and kept in the browser's cache. */
   soundFontUrl: string;
   /** Called with 0..1 while the SoundFont loads. */
   onProgress?: (fraction: number) => void;
@@ -39,6 +55,14 @@ export class SynthClock implements Clock {
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
   private readonly latency: number;
+  private reloading = false;
+  private reloadAgain = false;
+  /** Where playback goes back to, and whether it plays again, once the rebuilt audio is ready. Seeking, playing and pausing during a rebuild change these. */
+  private resumeAfterReload = false;
+  private pendingSeconds = 0;
+  private stopListening: (() => void) | null = null;
+  private reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -82,15 +106,28 @@ export class SynthClock implements Clock {
   }
 
   play(): void {
+    if (this.reloading) {
+      this.resumeAfterReload = true;
+      return;
+    }
     this.api.play();
   }
 
   pause(): void {
+    if (this.reloading) {
+      this.resumeAfterReload = false;
+      return;
+    }
     this.api.pause();
   }
 
   seek(seconds: number): void {
     const clamped = clamp(seconds, 0, this.duration);
+    if (this.reloading) {
+      this.pendingSeconds = clamped;
+      this.reported = { seconds: clamped, at: performance.now() / 1000 };
+      return;
+    }
     this.api.tickPosition = secondsToTicks(this.tempoMap, clamped);
     this.reported = { seconds: clamped, at: performance.now() / 1000 };
   }
@@ -116,10 +153,99 @@ export class SynthClock implements Clock {
   }
 
   /**
-   * Renders the whole song's synth audio offline, at original tempo, for the video export.
-   * Calls `onProgress` with 0..1 as it goes.
+   * Plays the given tracks with the given General MIDI programs (track index -> program), and every other track with the
+   * sound the tab wrote. The change reaches the live synth and the export alike, because both build their audio from the score.
    */
-  async exportAudio(onProgress?: (fraction: number) => void): Promise<PcmAudio> {
+  setTrackPrograms(overrides: ReadonlyMap<number, number>): void {
+    const tracks = this.api.score?.tracks ?? [];
+    let changed = false;
+    tracks.forEach((track, index) => {
+      const wanted = overrides.get(index);
+      if (wanted === undefined) {
+        // A track nobody chose a tone for goes back to what the tab wrote, whichever clock changed it.
+        const written = writtenSounds.get(track);
+        if (!written || playsAsWritten(track, written)) return;
+        applyProgram(track, written, null);
+        changed = true;
+        return;
+      }
+      const written = soundAsWritten(track);
+      if (track.playbackInfo.program === wanted && written.automations.every((a) => a.automation.value === wanted)) return;
+      applyProgram(track, written, wanted);
+      changed = true;
+    });
+    if (changed) this.reloadMidi();
+  }
+
+  /**
+   * Rebuilds the synth's audio from the score, then puts playback back where it was: the same position, loop, speed,
+   * and playing or paused. Changes that arrive while one rebuild is under way are folded into one more, and a rebuild
+   * that never finishes is given up on so later changes still get through.
+   */
+  private reloadMidi(): void {
+    if (this.disposed) return;
+    if (this.reloading) {
+      this.reloadAgain = true;
+      return;
+    }
+    this.reloading = true;
+    // alphaTab's own tick reading lags while playing, so the position comes from this clock's interpolated one.
+    this.pendingSeconds = clamp(this.position(), 0, this.duration);
+    this.resumeAfterReload = this.isPlaying;
+    this.startReload();
+  }
+
+  private startReload(): void {
+    // alphaTab calls a ready handler at once when the synth is already ready, so only a call after the reload starts counts.
+    let started = false;
+    this.stopListening = this.api.playerReady.on(() => {
+      if (!started) return;
+      this.stopWaiting();
+      if (this.reloadAgain) {
+        this.reloadAgain = false;
+        this.startReload();
+        return;
+      }
+      this.finishReload();
+    });
+    this.reloadTimer = setTimeout(() => this.abandonReload(), RELOAD_TIMEOUT_MS);
+    started = true;
+    try {
+      this.api.loadMidiForScore();
+    } catch {
+      this.abandonReload();
+    }
+  }
+
+  private stopWaiting(): void {
+    this.stopListening?.();
+    this.stopListening = null;
+    if (this.reloadTimer !== null) clearTimeout(this.reloadTimer);
+    this.reloadTimer = null;
+  }
+
+  private abandonReload(): void {
+    this.stopWaiting();
+    this.reloading = false;
+    this.reloadAgain = false;
+  }
+
+  private finishReload(): void {
+    this.reloading = false;
+    const seconds = this.pendingSeconds;
+    this.api.tickPosition = secondsToTicks(this.tempoMap, seconds);
+    this.reported = { seconds, at: performance.now() / 1000 };
+    this.api.playbackSpeed = this.currentRate;
+    this.setLoop(this.loopRange);
+    if (this.resumeAfterReload) this.api.play();
+  }
+
+  /**
+   * Renders the whole song's synth audio offline, at original tempo, for the video export.
+   * Calls `onProgress` with 0..1 as it goes. The light effects heard live are applied too, unless `effects` is false: the
+   * alignment compares the tab with a recording and needs the plain sound.
+   */
+  async exportAudio(onProgress?: (fraction: number) => void, { effects = true }: ExportAudioOptions = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
@@ -137,12 +263,55 @@ export class SynthClock implements Clock {
     } finally {
       exporter.destroy();
     }
-    return concatPcm(chunks, AUDIO_SAMPLE_RATE);
+    const plain = concatPcm(chunks, AUDIO_SAMPLE_RATE);
+    return effects ? renderWithEffects(plain) : plain;
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.stopWaiting();
     this.api.destroy();
   }
+}
+
+/**
+ * What each track played as the tab wrote it. It is kept with the track, not the clock: a clock rebuilt for the same score
+ * (after a tuning change or a retry) finds the score already changed and must still be able to put the tab's sound back.
+ */
+const writtenSounds = new WeakMap<alphaTab.model.Track, WrittenSound>();
+
+function soundAsWritten(track: alphaTab.model.Track): WrittenSound {
+  let written = writtenSounds.get(track);
+  if (!written) {
+    written = writtenSound(track);
+    writtenSounds.set(track, written);
+  }
+  return written;
+}
+
+function playsAsWritten(track: alphaTab.model.Track, written: WrittenSound): boolean {
+  return track.playbackInfo.program === written.program && written.automations.every((a) => a.automation.value === a.value);
+}
+
+function writtenSound(track: alphaTab.model.Track): WrittenSound {
+  return { program: track.playbackInfo.program, automations: instrumentAutomations(track).map((automation) => ({ automation, value: automation.value })) };
+}
+
+/** Every instrument change written into a track's beats; the first beat carries the track's opening sound. */
+function instrumentAutomations(track: alphaTab.model.Track): alphaTab.model.Automation[] {
+  const found: alphaTab.model.Automation[] = [];
+  for (const staff of track.staves)
+    for (const bar of staff.bars)
+      for (const voice of bar.voices)
+        for (const beat of voice.beats)
+          for (const automation of beat.automations) if (automation.type === alphaTab.model.AutomationType.Instrument) found.push(automation);
+  return found;
+}
+
+/** Sets a track's program and every instrument change in it to `program`, or puts back what the tab wrote when it is null. */
+function applyProgram(track: alphaTab.model.Track, written: WrittenSound, program: number | null): void {
+  track.playbackInfo.program = program ?? written.program;
+  for (const entry of written.automations) entry.automation.value = program ?? entry.value;
 }
 
 export interface SynthSession {
@@ -167,7 +336,6 @@ export function createSynthSession(
 
   const settings = new alphaTab.Settings();
   settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
-  settings.player.soundFont = options.soundFontUrl;
   settings.player.enableCursor = false;
   settings.player.enableAnimatedBeatCursor = false;
   settings.player.enableElementHighlighting = false;
@@ -176,16 +344,27 @@ export function createSynthSession(
 
   const api = new alphaTab.AlphaTabApi(host, settings);
   const clock = new SynthClock(api, durationSeconds, tempoMap);
+  let disposed = false;
+  // The same effects the export applies, so the video sounds like what was practised to.
+  const removeEffects = installLiveEffects(api);
 
   const ready = new Promise<void>((resolve, reject) => {
-    api.soundFontLoad.on((e) => options.onProgress?.(e.total > 0 ? e.loaded / e.total : 0));
     api.playerReady.on(() => resolve());
     api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
     api.renderScore(score);
+    // The SoundFont is fetched here, not by alphaTab, so it can be cached, show progress and be retried.
+    loadSoundFontBytes(options.soundFontUrl, options.onProgress)
+      .then((bytes) => {
+        if (disposed) return;
+        if (!api.loadSoundFont(bytes, false)) reject(new Error('The sound player could not start.'));
+      })
+      .catch(reject);
   });
 
   const originalDispose = clock.dispose.bind(clock);
   clock.dispose = () => {
+    disposed = true;
+    removeEffects();
     originalDispose();
     host.remove();
   };

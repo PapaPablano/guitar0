@@ -59,6 +59,8 @@ export interface TrackInfo {
   /** False when the track carries pitches only; frets were then assigned by the parser. */
   readonly hasTabData: boolean;
   readonly isPercussion: boolean;
+  /** The General MIDI program the file gives the track, so the sound it was written for can be told and restored. */
+  readonly program: number;
 }
 
 export interface TempoPoint {

@@ -30,11 +30,18 @@ Tab Highway bundles the packages and assets below. Each keeps its own licence.
 
 ## Assets shipped in the page
 
-### Sonivox SoundFont (sonivox.sf3)
+### Sonivox SoundFont (sonivox.sf3) -- still in the build, no longer played
 
+- alphaTab's build plugin still copies this file into the page, but the app no longer loads it; the band plays through MuseScore General.
 - Supplied with alphaTab in `@coderline/alphatab/dist/soundfont/`.
 - Its licence file states Apache License 2.0, Copyright (c) 2004-2006 Sonic Network Inc.
 - Its README describes it as based on the Sonivox EAS synthesizer from the Android Open Source Project. The file's chain of custody is not fully documented, so check its provenance before wide distribution.
+
+### MuseScore General SoundFont (MuseScore_General.sf3)
+
+- The sound the tab plays through. Kept in `assets/soundfont/` and shipped in the build as `assets/MuseScore_General-<hash>.sf3` (38 MB).
+- Licence: MIT. Copyright (c) 2000-2002, 2008 Frank Wen (FluidR3); (c) 2014-17 Michael Cowgill (FluidR3Mono); (c) 2018-19 S. Christian Collins (MuseScore General); samples by Ethan Winer (c) 2002 and Michael Schorsch (c) 2016.
+- Source: https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/ (version 0.2). Its licence file asks that the acknowledgements and copyright notices be included in any derivative work, so `MuseScore_General_License.md`, kept beside the font in `assets/soundfont/`, carries the full licence and credits.
 
 ### Bravura music font
 
