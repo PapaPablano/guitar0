@@ -17,11 +17,13 @@ export interface EngineView {
   readonly canRetry: boolean;
   /** True while setup is actively running (as opposed to needed, failed or starting). */
   readonly busy: boolean;
+  /** True only before setup has ever run; the one state a player's action may start setup from. */
+  readonly needsSetup: boolean;
   readonly message: string;
   readonly progress: number | null;
 }
 
-const WEB: EngineView = { kind: 'web', stemsEnabled: false, canRetry: false, busy: false, message: '', progress: null };
+const WEB: EngineView = { kind: 'web', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: '', progress: null };
 
 /** Turns the shell's status into what the page shows. `null` means the web build. */
 export function describeEngine(status: ShellEngineStatus | null): EngineView {
@@ -30,19 +32,41 @@ export function describeEngine(status: ShellEngineStatus | null): EngineView {
   const progress = typeof status.progress === 'number' ? Math.min(1, Math.max(0, status.progress)) : null;
   switch (status.phase) {
     case 'ready':
-      return { kind: 'ready', stemsEnabled: true, canRetry: false, busy: false, message, progress: null };
+      return { kind: 'ready', stemsEnabled: true, canRetry: false, busy: false, needsSetup: false, message, progress: null };
     case 'setup-needed':
-      return { kind: 'setup', stemsEnabled: false, canRetry: true, busy: false, message: message || 'Stem separation needs a one-time setup.', progress: null };
+      return { kind: 'setup', stemsEnabled: false, canRetry: true, busy: false, needsSetup: true, message: message || 'Stem separation needs a one-time download of FFmpeg and the separation models.', progress: null };
     case 'setting-up':
-      return { kind: 'setup', stemsEnabled: false, canRetry: false, busy: true, message: message || 'Setting up stem separation…', progress };
+      return { kind: 'setup', stemsEnabled: false, canRetry: false, busy: true, needsSetup: false, message: message || 'Setting up stem separation…', progress };
     case 'setup-failed':
-      return { kind: 'setup', stemsEnabled: false, canRetry: true, busy: false, message: `Setup did not finish. ${message}`.trim(), progress: null };
+      return { kind: 'setup', stemsEnabled: false, canRetry: true, busy: false, needsSetup: false, message: `Setup did not finish. ${message}`.trim(), progress: null };
     case 'starting':
-      return { kind: 'setup', stemsEnabled: false, canRetry: false, busy: false, message: message || 'Starting the stem engine…', progress: null };
+      return { kind: 'setup', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: message || 'Starting the stem engine…', progress: null };
     case 'restarting':
-      return { kind: 'restarting', stemsEnabled: false, canRetry: false, busy: false, message: message || 'The stem engine stopped; restarting it…', progress: null };
+      return { kind: 'restarting', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: message || 'The stem engine stopped; restarting it…', progress: null };
     case 'engine-error':
-      return { kind: 'blocked', stemsEnabled: false, canRetry: true, busy: false, message: `The stem engine stopped. ${message}`.trim(), progress: null };
+      return { kind: 'blocked', stemsEnabled: false, canRetry: true, busy: false, needsSetup: false, message: `The stem engine stopped. ${message}`.trim(), progress: null };
+  }
+}
+
+/** Whether a player's action (choosing YouTube, asking to split a recording) should start first-time setup now. */
+export function shouldStartSetup(view: EngineView): boolean {
+  return view.needsSetup;
+}
+
+/** One plain sentence saying what the stem engine is doing, for the Backing track section; empty on the web. */
+export function engineStateLine(view: EngineView): string {
+  switch (view.kind) {
+    case 'web':
+      return '';
+    case 'ready':
+      return 'The stem engine is ready.';
+    case 'restarting':
+      return view.message;
+    case 'blocked':
+      return view.message;
+    case 'setup':
+      if (view.busy) return view.progress === null ? view.message : `${view.message} (${Math.round(view.progress * 100)}%)`;
+      return view.message;
   }
 }
 

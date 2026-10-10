@@ -32,6 +32,15 @@ describe('renderStemMix', () => {
     expect(decode.mock.calls.map(([b]) => b)).toHaveLength(5);
   });
 
+  it('covers U6: the export length is the same whatever the mix', async () => {
+    const plain = await renderStemMix(sources(), initialMix(), 0, D, fakeDecode());
+    const muted = initialMix();
+    muted.guitar.muted = true;
+    const withoutGuitar = await renderStemMix(sources(), muted, 0, D, fakeDecode());
+    expect(withoutGuitar.left.length).toBe(plain.left.length);
+    expect(withoutGuitar.sampleRate).toBe(plain.sampleRate);
+  });
+
   it('renders only a soloed stem', async () => {
     const mix = initialMix();
     mix.bass.solo = true;

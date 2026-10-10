@@ -4,6 +4,7 @@
 
 mod alignments;
 mod engine;
+mod exports;
 mod model_progress;
 mod profiles;
 mod recovery;
@@ -60,7 +61,7 @@ fn bootstrap(state: State, run_setup: bool) {
         }
         if !setup::is_complete(&layout.data) {
             if !run_setup {
-                set(&state, "setup-needed", None, Some("Stem separation needs a one-time download of FFmpeg and the separation models.".to_string()));
+                set(&state, "setup-needed", None, Some("Stem separation needs a one-time download of about 330 MB: FFmpeg (about 190 MB) and the separation models (about 140 MB).".to_string()));
                 return Ok(());
             }
             set(&state, "setting-up", Some(0.0), Some("Setting up stem separation".to_string()));
@@ -263,7 +264,8 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write])
+        .manage(exports::Exports::default())
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder])
         .setup({
             let state = state.clone();
             move |_app| {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DesktopUnavailable, getShell, invokeShell, isDesktop } from '../../src/app/desktop';
+import { DesktopUnavailable, getShell, invokeShell, invokeShellRaw, isDesktop } from '../../src/app/desktop';
 
 describe('desktop bridge', () => {
   it('reports web when no shell global is present', () => {
@@ -22,5 +22,14 @@ describe('desktop bridge', () => {
 
   it('rejects a command with DesktopUnavailable on the web', async () => {
     await expect(invokeShell('engine_status', undefined, {})).rejects.toBeInstanceOf(DesktopUnavailable);
+  });
+
+  it('sends raw bytes with headers to a command, and rejects on the web', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const host = { __TAURI__: { core: { invoke } } };
+    const bytes = new Uint8Array([1, 2, 3]);
+    await invokeShellRaw('export_append', bytes, { 'x-save-id': '7' }, host);
+    expect(invoke).toHaveBeenCalledWith('export_append', bytes, { headers: { 'x-save-id': '7' } });
+    await expect(invokeShellRaw('export_append', bytes, {}, {})).rejects.toBeInstanceOf(DesktopUnavailable);
   });
 });

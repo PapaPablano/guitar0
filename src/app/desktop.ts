@@ -4,7 +4,7 @@
  */
 
 interface ShellGlobal {
-  core: { invoke(command: string, args?: Record<string, unknown>): Promise<unknown> };
+  core: { invoke(command: string, args?: Record<string, unknown> | Uint8Array, options?: { headers?: Record<string, string> }): Promise<unknown> };
 }
 
 export class DesktopUnavailable extends Error {
@@ -28,4 +28,11 @@ export async function invokeShell<T>(command: string, args?: Record<string, unkn
   const shell = getShell(host);
   if (!shell) throw new DesktopUnavailable();
   return (await shell.core.invoke(command, args)) as T;
+}
+
+/** Calls a shell command with raw bytes as its body (no JSON), for large data sent in slices; rejects on the web. */
+export async function invokeShellRaw(command: string, bytes: Uint8Array, headers: Record<string, string>, host: object = globalThis): Promise<void> {
+  const shell = getShell(host);
+  if (!shell) throw new DesktopUnavailable();
+  await shell.core.invoke(command, bytes, { headers });
 }

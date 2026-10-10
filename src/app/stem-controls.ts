@@ -1,4 +1,4 @@
-import type { EngineView } from './engine-state';
+import { engineStateLine, type EngineView } from './engine-state';
 import { MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
 import { fadeStep, FADE_OUT_STEPS, type PassSchedule } from '../audio/pass-schedule';
 import type { SearchItem, StemName } from '../stems/engine-client';
@@ -7,6 +7,8 @@ export interface SeparateControl {
   readonly visible: boolean;
   readonly label: 'Separate' | 'Use saved stems';
   readonly disabled: boolean;
+  /** True when asking should start first-time setup instead of separating (setup has never run). */
+  readonly startsSetup: boolean;
   /** Why the control is disabled, or setup progress; empty when there is nothing to say. */
   readonly note: string;
 }
@@ -15,10 +17,14 @@ export interface SeparateControl {
 export function separateControl(args: { engine: EngineView; hasRecording: boolean; hasSaved: boolean; busy: boolean }): SeparateControl {
   const { engine, hasRecording, hasSaved, busy } = args;
   const label = hasSaved ? 'Use saved stems' : 'Separate';
-  if (engine.kind === 'web') return { visible: false, label, disabled: true, note: '' };
-  if (!engine.stemsEnabled) return { visible: true, label, disabled: true, note: engine.message };
-  if (!hasRecording) return { visible: true, label, disabled: true, note: 'Load your recording to split it into stems.' };
-  return { visible: true, label, disabled: busy, note: '' };
+  if (engine.kind === 'web') return { visible: false, label, disabled: true, startsSetup: false, note: '' };
+  if (engine.needsSetup) {
+    if (!hasRecording) return { visible: true, label, disabled: true, startsSetup: false, note: 'Load your recording to split it into stems.' };
+    return { visible: true, label, disabled: false, startsSetup: true, note: engineStateLine(engine) };
+  }
+  if (!engine.stemsEnabled) return { visible: true, label, disabled: true, startsSetup: false, note: engineStateLine(engine) };
+  if (!hasRecording) return { visible: true, label, disabled: true, startsSetup: false, note: 'Load your recording to split it into stems.' };
+  return { visible: true, label, disabled: busy, startsSetup: false, note: '' };
 }
 
 const clone = (mix: MixState): MixState => JSON.parse(JSON.stringify(mix)) as MixState;
@@ -97,6 +103,20 @@ export function searchRow(item: SearchItem): SearchRow {
     disabled: item.too_long,
     note: item.too_long ? 'Too long to import' : '',
   };
+}
+
+/**
+ * Orders search results by how close their length is to the tab's, so the likeliest backing track comes first. Every result
+ * stays in the list: one over the import limit is still shown (disabled), and one with no length goes last. Equal distances
+ * keep the engine's own order. An unknown tab length (0 or less) leaves the order alone.
+ */
+export function rankByLength(items: readonly SearchItem[], tabSeconds: number): SearchItem[] {
+  if (!(tabSeconds > 0)) return [...items];
+  const distance = (item: SearchItem) => (typeof item.duration === 'number' && Number.isFinite(item.duration) ? Math.abs(item.duration - tabSeconds) : Infinity);
+  return items
+    .map((item, index) => ({ item, index, distance: distance(item) }))
+    .sort((a, b) => (a.distance === b.distance ? a.index - b.index : a.distance - b.distance))
+    .map((entry) => entry.item);
 }
 
 export type ScheduleChoice = PassSchedule['kind'];

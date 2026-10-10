@@ -7,10 +7,11 @@ import { hashFile } from '../stems/file-hash';
 import { audioContext, loadStems } from '../stems/load-stems';
 import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
+import type { BackingMethod } from './backing-track';
 import { isDesktop } from './desktop';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
-import { describeEngine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
-import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
+import { describeEngine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
+import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, rankByLength, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
   readonly clock: StemMixClock;
@@ -20,6 +21,10 @@ export interface ActiveStems {
 }
 
 interface StemPanelProps {
+  /** The desktop shell's report on setup and the engine, from the Backing track section. */
+  status: ShellEngineStatus | null;
+  /** The way the player chose to get a backing track; the YouTube search shows only for 'youtube'. */
+  method: BackingMethod;
   recording: File | null;
   durationSeconds: number;
   active: ActiveStems | null;
@@ -28,7 +33,6 @@ interface StemPanelProps {
   onActivate: (stems: ActiveStems | null) => void;
 }
 
-const STATUS_POLL_MS = 1000;
 const savedStems = new SavedStems(shellStemIndex);
 
 /** Where a separation's stems come from, and how to produce them when they are not saved yet. */
@@ -40,9 +44,8 @@ interface Source {
 }
 
 /** Search, separate and mix controls. Renders nothing outside the desktop app. */
-export function StemPanel({ recording, durationSeconds, active, mix, onMixChange, onActivate }: StemPanelProps) {
+export function StemPanel({ status, method, recording, durationSeconds, active, mix, onMixChange, onActivate }: StemPanelProps) {
   const desktop = isDesktop();
-  const [status, setStatus] = useState<ShellEngineStatus | null>(null);
   const [savedJob, setSavedJob] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
@@ -72,23 +75,6 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
       clock.setSchedule({ kind: 'off' });
     };
   }, [active, scheduleChoice]);
-
-  useEffect(() => {
-    if (!desktop) return;
-    let stopped = false;
-    const tick = () => {
-      readEngineStatus().then(
-        (s) => !stopped && setStatus(s),
-        () => undefined,
-      );
-    };
-    tick();
-    const id = setInterval(tick, STATUS_POLL_MS);
-    return () => {
-      stopped = true;
-      clearInterval(id);
-    };
-  }, [desktop]);
 
   const client = useMemo(
     () => (status?.phase === 'ready' && status.url && status.secret ? new EngineClient({ baseUrl: status.url, secret: status.secret }) : null),
@@ -174,6 +160,10 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
 
   function separateRecording() {
     if (!recording) return;
+    if (control.startsSetup) {
+      startEngineSetup().catch((e: unknown) => setError(String(e)));
+      return;
+    }
     void start({
       key: async () => hashRef.current ?? (hashRef.current = await hashFile(recording)),
       title: recording.name,
@@ -237,7 +227,7 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
           )}
         </div>
       )}
-      {!active && youtube.search && (
+      {!active && method === 'youtube' && youtube.search && (
         <form className="stems-row" onSubmit={(e) => void search(e)} role="search">
           <input
             type="search"
@@ -252,10 +242,10 @@ export function StemPanel({ recording, durationSeconds, active, mix, onMixChange
           <span className="muted">Imports the audio and splits it into stems. Use only audio you have the right to use.</span>
         </form>
       )}
-      {!active && youtube.results && results !== null && (
+      {!active && method === 'youtube' && youtube.results && results !== null && (
         <ul className="search-results" aria-label="Search results">
           {results.length === 0 && <li className="muted">No results.</li>}
-          {results.map((item) => {
+          {rankByLength(results, durationSeconds).map((item) => {
             const row = searchRow(item);
             return (
               <li key={item.url}>

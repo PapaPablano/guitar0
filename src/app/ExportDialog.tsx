@@ -5,6 +5,7 @@ import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../ex
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
+import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
 import { panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
@@ -14,7 +15,7 @@ type Phase =
   | { name: 'idle' }
   | { name: 'preparing'; fraction: number }
   | { name: 'exporting'; fraction: number }
-  | { name: 'done'; url: string; filename: string }
+  | { name: 'done'; blob: Blob; filename: string; saved: SaveResult }
   | { name: 'failed'; reason: string };
 
 interface ExportDialogProps {
@@ -79,20 +80,6 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
     };
   }, []);
 
-  // Free a finished file's URL when the dialog closes.
-  useEffect(() => {
-    return () => {
-      if (phase.name === 'done') URL.revokeObjectURL(phase.url);
-    };
-  }, [phase]);
-
-  function download(url: string, filename: string) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-  }
-
   async function saveAudio() {
     lastKind.current = 'audio';
     runId.current += 1;
@@ -111,10 +98,11 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
         useLoop ? { startSeconds: plan.startSeconds, durationSeconds: plan.durationSeconds } : undefined,
       );
       if (!current()) return;
-      const url = URL.createObjectURL(new Blob([encodeWav(audio)], { type: 'audio/wav' }));
+      const wav = new Blob([encodeWav(audio)], { type: 'audio/wav' });
       const filename = audioFilename(timeline.title, useLoop);
-      setPhase({ name: 'done', url, filename });
-      download(url, filename);
+      const saved = await saveExport(wav, filename, undefined, () => !current());
+      if (saved.where === 'cancelled' || !current()) return;
+      setPhase({ name: 'done', blob: wav, filename, saved });
     } catch (e) {
       if (!current()) return;
       setPhase({ name: 'failed', reason: e instanceof Error && e.message ? e.message : 'The export failed.' });
@@ -150,10 +138,10 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
       job.current = running;
       const blob = await running.result;
       if (!current()) return;
-      const url = URL.createObjectURL(blob);
       const filename = safeFilename(timeline.title);
-      setPhase({ name: 'done', url, filename });
-      download(url, filename);
+      const saved = await saveExport(blob, filename, undefined, () => !current());
+      if (saved.where === 'cancelled' || !current()) return;
+      setPhase({ name: 'done', blob, filename, saved });
     } catch (e) {
       if (!current()) return;
       if (e instanceof ExportCancelled) {
@@ -235,8 +223,20 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
         )}
         {phase.name === 'done' && (
           <p role="status">
-            Done. Your download should have started.{' '}
-            <button type="button" onClick={() => download(phase.url, phase.filename)}>
+            {phase.saved.where === 'folder' ? (
+              <>
+                Saved {phase.saved.fileName} in your Videos folder, under Tab Highway.{' '}
+                <button type="button" onClick={() => void openExportFolder().catch(() => undefined)}>
+                  Open folder
+                </button>
+              </>
+            ) : (
+              <>
+                Done. Your download should have started.
+                {phase.saved.reason ? ` It could not be saved to the Tab Highway folder: ${phase.saved.reason}` : ''}{' '}
+              </>
+            )}
+            <button type="button" onClick={() => browserDownload(phase.blob, phase.filename)}>
               Save again
             </button>
           </p>

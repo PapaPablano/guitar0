@@ -16,7 +16,15 @@ The shell starts the engine as `uvicorn tabhighway_engine:app` on a free loopbac
 
 ## First launch
 
-The package carries the Python runtime. On first launch the app offers a one-time setup that downloads FFmpeg (checked against the checksum its host publishes) and runs StemDeck's model warm-up, which fetches the Demucs model and StemDeck's other models into `data/`. After that, separation works offline.
+The package carries the Python runtime. The one-time setup starts the first time the player chooses YouTube, or asks to split a loaded recording, in the Backing track section; it is not started by opening the app. It downloads FFmpeg (about 190 MB, checked against the checksum its host publishes) and runs StemDeck's model warm-up, which fetches the Demucs model and StemDeck's other models (about 140 MB) into `data/`. The tab and manual recording loading keep working while it runs. After that, separation works offline.
+
+## Exports
+
+On desktop every export (video or audio) is saved by the shell into a `Tab Highway` folder under the player's Videos folder, named by song and local date and time, and never over an existing file. The export dialog then shows the saved name and an Open folder button. On the website, or if the shell cannot save, the browser's normal download is used instead.
+
+## YouTube search
+
+The YouTube search is built but hidden unless the page is built with `VITE_ENABLE_YOUTUBE=true` (`scripts/package-windows.ps1` does not set it, so set it in the shell before running the script). The public web site is built without it.
 
 ## Build
 

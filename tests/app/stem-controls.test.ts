@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { describeEngine } from '../../src/app/engine-state';
-import { passNote, scheduleChoice, scheduleForChoice, SCHEDULE_CHOICES, formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
+import { passNote, scheduleChoice, scheduleForChoice, SCHEDULE_CHOICES, formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, rankByLength, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
 import { initialMix, stemGains } from '../../src/audio/mix-gains';
 
 const ready = describeEngine({ phase: 'ready', url: 'http://127.0.0.1:1', secret: 's' });
@@ -31,6 +31,27 @@ describe('separateControl', () => {
     expect(c.visible).toBe(true);
     expect(c.disabled).toBe(true);
     expect(c.note).toContain('No network');
+  });
+
+  it('covers F2: with a file loaded and setup never run, the control is enabled and asking starts setup', () => {
+    const c = separateControl({ engine: describeEngine({ phase: 'setup-needed' }), hasRecording: true, hasSaved: false, busy: false });
+    expect(c).toMatchObject({ visible: true, disabled: false, startsSetup: true });
+    expect(c.note).toMatch(/download/i);
+  });
+
+  it('with no file loaded and setup never run, asks for a file first and starts nothing', () => {
+    const c = separateControl({ engine: describeEngine({ phase: 'setup-needed' }), hasRecording: false, hasSaved: false, busy: false });
+    expect(c).toMatchObject({ disabled: true, startsSetup: false });
+  });
+
+  it('stays disabled while setup runs, with the progress in its note, and does not start it again', () => {
+    const c = separateControl({ engine: describeEngine({ phase: 'setting-up', progress: 0.25 }), hasRecording: true, hasSaved: false, busy: false });
+    expect(c).toMatchObject({ disabled: true, startsSetup: false });
+    expect(c.note).toContain('25%');
+  });
+
+  it('never starts setup once the engine is ready', () => {
+    expect(separateControl({ engine: ready, hasRecording: true, hasSaved: false, busy: false }).startsSetup).toBe(false);
   });
 
   it('is disabled while a separation runs', () => {
@@ -153,5 +174,46 @@ describe('pass schedule choice', () => {
     expect(passNote(scheduleForChoice('fade-out'), 6)).toBe('Pass 6: guitar None');
     expect(passNote(scheduleForChoice('listen-then-play'), 1)).toBe('Pass 1: listen to the guitar');
     expect(passNote(scheduleForChoice('listen-then-play'), 2)).toBe('Pass 2: you play the guitar part');
+  });
+});
+
+describe('rankByLength', () => {
+  const item = (url: string, duration: number | null, too_long = false) => ({ url, title: url, duration, uploader: null, too_long });
+
+  it('covers AE2: lists the closest length first and keeps every result', () => {
+    const ranked = rankByLength([item('four', 240), item('twelve', 720), item('seven', 420)], 420);
+    expect(ranked.map((r) => r.url)).toEqual(['seven', 'four', 'twelve']);
+  });
+
+  it('keeps the engine order for results the same distance away', () => {
+    const ranked = rankByLength([item('a', 400), item('b', 440), item('c', 400)], 420);
+    expect(ranked.map((r) => r.url)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('lists a result with no length after every result that has one', () => {
+    const ranked = rankByLength([item('none', null), item('far', 1000), item('near', 420)], 420);
+    expect(ranked.map((r) => r.url)).toEqual(['near', 'far', 'none']);
+  });
+
+  it('keeps a result over the import limit in the list', () => {
+    const ranked = rankByLength([item('long', 9000, true), item('near', 400)], 420);
+    expect(ranked.map((r) => r.url)).toEqual(['near', 'long']);
+    expect(ranked[1].too_long).toBe(true);
+  });
+
+  it('returns an empty list for no results and does not change its input', () => {
+    expect(rankByLength([], 420)).toEqual([]);
+    const input = [item('b', 100), item('a', 420)];
+    rankByLength(input, 420);
+    expect(input.map((r) => r.url)).toEqual(['b', 'a']);
+  });
+
+  it('treats a missing length like an unknown one instead of mis-sorting', () => {
+    const odd = { url: 'odd', title: 'odd', uploader: null, too_long: false } as unknown as ReturnType<typeof item>;
+    expect(rankByLength([odd, item('near', 420)], 420).map((r) => r.url)).toEqual(['near', 'odd']);
+  });
+
+  it('keeps the order when the tab length is unknown', () => {
+    expect(rankByLength([item('b', 100), item('a', 420)], 0).map((r) => r.url)).toEqual(['b', 'a']);
   });
 });

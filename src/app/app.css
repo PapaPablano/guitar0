@@ -384,6 +384,17 @@ a.link-button:hover {
   gap: 8px 12px;
 }
 
+.backing-track {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.backing-methods button[aria-pressed='true'] {
+  background: var(--accent);
+  color: #0b1220;
+}
+
 .stem-name {
   width: 5.5rem;
   text-transform: capitalize;

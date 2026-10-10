@@ -48,7 +48,8 @@ export interface SearchItem {
 }
 
 const MIN_QUERY_LENGTH = 2;
-const SEARCH_LIMIT = 8;
+/** The most results the engine returns for one search. Ranking by length needs a wide field to find a close match. */
+const SEARCH_LIMIT = 15;
 
 const SECRET_HEADER = 'X-TabHighway-Secret';
 
