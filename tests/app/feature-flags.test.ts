@@ -10,13 +10,13 @@ describe('youtube flag', () => {
   });
 
   it('off: no search input, results or import control, even with results and a ready engine', () => {
-    expect(youtubeControls({ enabled: false, stemsEnabled: true, hasResults: true })).toEqual({ search: false, results: false });
+    expect(youtubeControls({ enabled: false, stemsEnabled: true, hasResults: true })).toEqual({ search: false, searchUsable: false, results: false });
   });
 
-  it('on: shows the search input when stems are enabled, and results when there are some', () => {
-    expect(youtubeControls({ enabled: true, stemsEnabled: true, hasResults: false })).toEqual({ search: true, results: false });
-    expect(youtubeControls({ enabled: true, stemsEnabled: true, hasResults: true })).toEqual({ search: true, results: true });
-    expect(youtubeControls({ enabled: true, stemsEnabled: false, hasResults: false }).search).toBe(false);
+  it('on: shows the search input always (usable once stems are enabled), and results when there are some', () => {
+    expect(youtubeControls({ enabled: true, stemsEnabled: true, hasResults: false })).toEqual({ search: true, searchUsable: true, results: false });
+    expect(youtubeControls({ enabled: true, stemsEnabled: true, hasResults: true })).toEqual({ search: true, searchUsable: true, results: true });
+    expect(youtubeControls({ enabled: true, stemsEnabled: false, hasResults: false })).toEqual({ search: true, searchUsable: false, results: false });
   });
 
   it('a saved entry keyed by a link surfaces no control when off (the view state takes no saved-entry input)', () => {
