@@ -10,7 +10,7 @@ import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import type { BackingMethod } from './backing-track';
 import { isDesktop } from './desktop';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
-import { describeEngine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
+import { describeEngine, engineStateLine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, rankByLength, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
@@ -234,12 +234,15 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
             value={query}
             placeholder="Search YouTube for a song"
             aria-label="Search YouTube for a song"
+            disabled={!youtube.searchUsable}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <button type="submit" disabled={busy || searching || query.trim().length < 2}>
+          <button type="submit" disabled={!youtube.searchUsable || busy || searching || query.trim().length < 2}>
             {searching ? 'Searching…' : 'Search'}
           </button>
-          <span className="muted">Imports the audio and splits it into stems. Use only audio you have the right to use.</span>
+          <span className="muted">
+            {youtube.searchUsable ? 'Imports the audio and splits it into stems. Use only audio you have the right to use.' : engineStateLine(engine)}
+          </span>
         </form>
       )}
       {!active && method === 'youtube' && youtube.results && results !== null && (
