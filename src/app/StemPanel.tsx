@@ -9,6 +9,7 @@ import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import type { BackingMethod } from './backing-track';
 import { isDesktop } from './desktop';
+import { stepAfterJudge, stepAfterPrecheck, TAKE_CHECKING_LABEL, type TakeJudged, type TakePrecheck } from './take-align';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
 import { describeEngine, engineStateLine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, rankByLength, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
@@ -18,6 +19,20 @@ export interface ActiveStems {
   readonly sources: StemSources;
   /** What the stems came from: the recording's file name or the video's title. */
   readonly title: string;
+  /** Set only for a take imported from YouTube: the video's link, so the take, not the loaded recording, owns its alignment. */
+  readonly videoUrl?: string;
+  /** For a take: the offset it was judged to line up by (or remembered as), in seconds. */
+  readonly takeOffset?: number;
+}
+
+/** What the app lends the panel to judge a YouTube take against the tab before it is switched on. */
+export interface TakeChecks {
+  /** Before any download: what is remembered for this video and the tab as it is now. */
+  precheck(videoUrl: string): Promise<TakePrecheck>;
+  /** After the stems load: compares them with the tab. `takeSeconds` is the stems' own length. */
+  judge(sources: StemSources, videoUrl: string, takeSeconds: number, onProgress: (fraction: number) => void, signal: AbortSignal): Promise<TakeJudged>;
+  /** Forgets a remembered no-match so the next import checks again. */
+  forget(videoUrl: string): Promise<void>;
 }
 
 interface StemPanelProps {
@@ -31,6 +46,8 @@ interface StemPanelProps {
   mix: MixState;
   onMixChange: (mix: MixState) => void;
   onActivate: (stems: ActiveStems | null) => void;
+  /** Judges a YouTube take before it plays; without it a take is switched on as it is. */
+  takes?: TakeChecks;
 }
 
 const savedStems = new SavedStems(shellStemIndex);
@@ -40,17 +57,23 @@ interface Source {
   /** Key in the saved-stems index. */
   key: () => Promise<string>;
   title: string;
+  /** Set for a YouTube take, which is judged against the tab before it is switched on. */
+  videoUrl?: string;
+  /** The search result a take came from, to check it again. */
+  item?: SearchItem;
   separate: (client: EngineClient, onProgress: (p: number) => void, signal: AbortSignal) => Promise<{ jobId: string; title?: string }>;
 }
 
 /** Search, separate and mix controls. Renders nothing outside the desktop app. */
-export function StemPanel({ status, method, recording, durationSeconds, active, mix, onMixChange, onActivate }: StemPanelProps) {
+export function StemPanel({ status, method, recording, durationSeconds, active, mix, onMixChange, onActivate, takes }: StemPanelProps) {
   const desktop = isDesktop();
   const [savedJob, setSavedJob] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /** Why the latest take was not switched on, with the result to check again when that is possible. */
+  const [takeNote, setTakeNote] = useState<{ text: string; again: SearchItem | null } | null>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchItem[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -119,6 +142,7 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
   async function start(source: Source) {
     if (!client) return;
     setError(null);
+    setTakeNote(null);
     setBusy(true);
     setBusyLabel(source.title);
     setProgress(0);
@@ -127,6 +151,17 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
     const run = runs.current.begin();
     const stale = () => !runs.current.isCurrent(run) || controller.signal.aborted;
     try {
+      let takeOffset: number | null = null;
+      if (source.videoUrl && takes) {
+        // A remembered no-match is shown without downloading anything; a remembered offset skips only the check.
+        const first = stepAfterPrecheck(await takes.precheck(source.videoUrl));
+        if (stale()) return;
+        if (first.step === 'show') {
+          setTakeNote({ text: first.text, again: first.canRecheck ? source.item ?? null : null });
+          return;
+        }
+        if (first.step === 'load') takeOffset = first.offset;
+      }
       const key = await source.key();
       let jobId = await savedStems.find(key, (id) => client.jobExists(id));
       let title = source.title;
@@ -144,6 +179,24 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
       const loaded = await loadStems(client, jobId, durationSeconds, context);
       if (stale()) {
         loaded.clock.dispose();
+        return;
+      }
+      if (source.videoUrl && takes) {
+        // The take is judged before it is switched on, so a take that does not line up never plays (KD1).
+        let offset = takeOffset;
+        if (offset === null) {
+          setBusyLabel(TAKE_CHECKING_LABEL);
+          setProgress(0);
+          const next = stepAfterJudge(await takes.judge(loaded.sources, source.videoUrl, loaded.clock.mediaSeconds, setProgress, controller.signal));
+          if (stale() || next.step !== 'activate') {
+            loaded.clock.dispose();
+            if (!stale() && next.step === 'show') setTakeNote({ text: next.text, again: next.canRecheck ? source.item ?? null : null });
+            if (!stale() && next.step === 'error') setError(next.text);
+            return;
+          }
+          offset = next.offset;
+        }
+        onActivate({ ...loaded, title, videoUrl: source.videoUrl, takeOffset: offset });
         return;
       }
       onActivate({ ...loaded, title });
@@ -175,14 +228,23 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
     void start({
       key: async () => `url:${item.url}`,
       title: item.title,
+      videoUrl: item.url,
+      item,
       separate: (c, onProgress, signal) => c.separateUrl(item.url, { onProgress, signal }),
     });
+  }
+
+  /** Forgets a remembered no-match, then imports the result again so the take is judged afresh. */
+  async function checkAgain(item: SearchItem) {
+    await takes?.forget(item.url).catch(() => undefined);
+    importResult(item);
   }
 
   async function search(e: FormEvent) {
     e.preventDefault();
     if (!client) return;
     setError(null);
+    setTakeNote(null);
     setSearching(true);
     try {
       setResults(await client.search(query));
@@ -261,6 +323,16 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
             );
           })}
         </ul>
+      )}
+      {!active && takeNote && (
+        <p role="status" className="notice">
+          {takeNote.text}{' '}
+          {takeNote.again && (
+            <button type="button" disabled={busy} onClick={() => void checkAgain(takeNote.again as SearchItem)}>
+              Check again
+            </button>
+          )}
+        </p>
       )}
       {error && (
         <p role="alert" className="error">

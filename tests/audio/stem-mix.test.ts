@@ -41,6 +41,14 @@ function channels() {
 }
 
 describe('StemMixClock', () => {
+  it('reports the length of the stems own audio, which can differ from the tab length', () => {
+    const { list, el } = channels();
+    el('vocals').duration = 245.5;
+    const clock = new StemMixClock(list, 60);
+    expect(clock.mediaSeconds).toBe(list[0].element.duration);
+    expect(clock.mediaSeconds).not.toBe(60);
+  });
+
   it('covers AE4: every stem gets the same rate with pitch preserved', () => {
     const { list } = channels();
     const clock = new StemMixClock(list, 60);

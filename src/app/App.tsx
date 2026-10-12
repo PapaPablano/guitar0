@@ -19,7 +19,7 @@ import { DropZone } from './DropZone';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording, exportLength, outputWindow } from '../export/audio';
 import { slicePcm } from '../export/audio-file';
-import { decodeRecordingWindow, renderStemMix, renderStemMixRange } from '../export/stem-audio';
+import { decodeRecordingWindow, renderStemMix, renderStemMixRange, stemAnalysisFeed, type StemSources } from '../export/stem-audio';
 import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
@@ -50,12 +50,13 @@ import type { LandingReport } from '../audio/user-audio';
 import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
-import { hashFile } from '../stems/file-hash';
+import { hashFile, hashVideoLink } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
 import { isDesktop } from './desktop';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { BackingTrack } from './BackingTrack';
-import { StemPanel, type ActiveStems } from './StemPanel';
+import { StemPanel, type ActiveStems, type TakeChecks } from './StemPanel';
+import { decideTakeOnOpen, recordForTake, takeVerdict, withNudge, type TakeJudged } from './take-align';
 import { SAMPLE_ALPHATEX } from './sample';
 import { PanelFullscreen } from './PanelFullscreen';
 import { Stage } from './Stage';
@@ -125,6 +126,8 @@ export function App() {
   /** A recording waiting for the tab's sound before it is lined up with the tab. */
   const [alignRequest, setAlignRequest] = useState<{ file: File; clock: UserAudioClock } | null>(null);
   const [stems, setStems] = useState<ActiveStems | null>(null);
+  /** While a YouTube take is on, how it sits against the tab. The take owns this; the loaded recording's alignment above is left as it was (KTD7). */
+  const [takeMap, setTakeMap] = useState<AlignmentMap | null>(null);
   const [mix, setMix] = useState<MixState>(() => initialMix());
   const [userAudioError, setUserAudioError] = useState<string | null>(null);
   /** Whether the loaded recording seeks exactly: a compressed file only does once its exact copy is in use. */
@@ -218,6 +221,20 @@ export function App() {
   const [alignChange, setAlignChange] = useState<string | null>(null);
   /** True once the owner moved the offset after the latest detection began; only then is its result dropped. */
   const offsetMovedSinceRun = useRef(false);
+  /** Names the check of a YouTube take against the tab; kept apart from the loaded recording's analysis so one never cancels the other (KTD9). */
+  const takeRuns = useRef(createRunGuard());
+  const takeJob = useRef<AnalysisJob | null>(null);
+  /** Callers waiting for the tab's sound to be ready or to fail, woken whenever its state changes or a check is cancelled. */
+  const tabWaiters = useRef(new Set<() => void>());
+  const audioStatus = useRef<AudioState['status']>('loading');
+  /** What is remembered for each take opened this session, so a nudge builds on it. */
+  const takeRecords = useRef(new Map<string, AlignmentRecord>());
+  const takeSaver = useRef<ReturnType<typeof createDebouncer<{ url: string; record: AlignmentRecord }>> | null>(null);
+  if (!takeSaver.current) {
+    takeSaver.current = createDebouncer(DEBOUNCE_MS, ({ url, record }) => {
+      void hashVideoLink(url).then((key) => alignmentStore.save(key, record));
+    });
+  }
   const profileSaver = useRef<ReturnType<
     typeof createDebouncer<{ hash: string; offset: number; mix?: MixState; alignment?: AlignmentRecord }>
   > | null>(null);
@@ -239,6 +256,88 @@ export function App() {
     if (hash) profileSaver.current?.push({ hash, offset: offsetSeconds, mix: profileMix.current, alignment: alignmentRecord });
   }
 
+  audioStatus.current = audio.status;
+  useEffect(() => {
+    tabWaiters.current.forEach((wake) => wake());
+  }, [audio.status]);
+
+  /** Stops the check of a take still being judged, and wakes anything waiting on the tab's sound so it can see it is stale. */
+  function cancelTake() {
+    takeRuns.current.invalidate();
+    takeJob.current?.cancel();
+    takeJob.current = null;
+    tabWaiters.current.forEach((wake) => wake());
+  }
+
+  /** Resolves when the tab's sound is ready or has failed; 'stale' when the check was cancelled first. */
+  function waitForTabSound(isStale: () => boolean): Promise<'ready' | 'failed' | 'stale'> {
+    return new Promise((resolve) => {
+      const settle = (): boolean => {
+        const status = audioStatus.current;
+        const outcome = isStale() ? 'stale' : status === 'ready' ? 'ready' : status === 'failed' ? 'failed' : null;
+        if (!outcome) return false;
+        tabWaiters.current.delete(settle);
+        resolve(outcome);
+        return true;
+      };
+      if (!settle()) tabWaiters.current.add(settle);
+    });
+  }
+
+  /** Saves a take's outcome under its video, after a short pause so a run of nudges is one save. */
+  function rememberTake(url: string, record: AlignmentRecord) {
+    takeRecords.current.set(url, record);
+    takeSaver.current?.push({ url, record });
+  }
+
+  /** What the stem panel lends to judge a YouTube take against the tab before it plays. */
+  const takes: TakeChecks = {
+    async precheck(videoUrl) {
+      const current = live.current.session;
+      if (!current) return { action: 'proceed' };
+      const record = await alignmentStore.load(await hashVideoLink(videoUrl));
+      if (record) takeRecords.current.set(videoUrl, record);
+      const decision = decideTakeOnOpen(record, barSpansOf(current.timeline));
+      return decision.action === 'detect' ? { action: 'proceed' } : decision;
+    },
+    async judge(sources: StemSources, videoUrl, takeSeconds, onProgress, signal): Promise<TakeJudged> {
+      const current = live.current.session;
+      if (!current || signal.aborted) return { kind: 'cancelled' };
+      takeJob.current?.cancel();
+      const run = takeRuns.current.begin();
+      // The panel's Cancel stops the check too, not just the import.
+      signal.addEventListener('abort', () => takeRuns.current.isCurrent(run) && cancelTake(), { once: true });
+      const token = sessionToken.current;
+      const stale = () => !takeRuns.current.isCurrent(run) || token !== sessionToken.current;
+      const waited = await waitForTabSound(stale);
+      if (waited === 'stale') return { kind: 'cancelled' };
+      if (waited === 'failed') return { kind: 'failed', reason: 'no-sound' };
+      const bars = barSpansOf(current.timeline);
+      const job = startAnalysis({
+        samples: () => stemAnalysisFeed(sources, initialMix()),
+        durationSeconds: takeSeconds,
+        tabSeconds: current.timeline.durationSeconds,
+        bars,
+        barFacts: barFactsOf(current.timeline),
+        renderTab: (progress) => current.clock.exportAudio(progress, { fullBand: true, effects: false }),
+        onProgress,
+      });
+      takeJob.current = job;
+      const result = await job.result;
+      if (takeJob.current === job) takeJob.current = null;
+      if (stale()) return { kind: 'cancelled' };
+      const judged = takeVerdict(result, bars);
+      // Judged takes are remembered; a check that could not run is not, so the next try is a fresh one.
+      if (judged.kind === 'offset' || judged.kind === 'no-match') rememberTake(videoUrl, recordForTake(judged, bars));
+      return judged;
+    },
+    async forget(videoUrl) {
+      takeRecords.current.delete(videoUrl);
+      takeSaver.current?.flush();
+      await alignmentStore.save(await hashVideoLink(videoUrl), { source: 'auto', holds: [] });
+    },
+  };
+
   /** Stops any analysis of the loaded recording and forgets one that was waiting to start. */
   function cancelAlignment() {
     alignRuns.current.invalidate();
@@ -258,7 +357,8 @@ export function App() {
       setSections(live.current.sections);
     }
     userClockRef.current?.setAlignment(map);
-    stemsRef.current?.clock.setAlignment(map);
+    // A take on screen keeps its own offset: a recording's late result must not move it.
+    if (!stemsRef.current?.videoUrl) stemsRef.current?.clock.setAlignment(map);
     setAlignment(map);
     setOffset(map.base);
     live.current.alignment = map;
@@ -356,7 +456,10 @@ export function App() {
 
   // Do not lose the last change when the page closes.
   useEffect(() => {
-    const flush = () => profileSaver.current?.flush();
+    const flush = () => {
+      profileSaver.current?.flush();
+      takeSaver.current?.flush();
+    };
     window.addEventListener('pagehide', flush);
     return () => {
       window.removeEventListener('pagehide', flush);
@@ -467,6 +570,7 @@ export function App() {
     const isCurrent = () => token === sessionToken.current;
     // The tab's sound is being rebuilt, so a comparison with the old render no longer counts.
     cancelAlignment();
+    cancelTake();
     setAudio({ status: 'loading', progress: 0 });
     const synth = createSynthSession(score, timelineToPlay.durationSeconds, timelineToPlay.tempoMap, {
       soundFontUrl: SOUND_FONT_URL,
@@ -486,6 +590,8 @@ export function App() {
   /** Replaces the recording clock, disposing the previous one. */
   function replaceUserClock(next: UserAudioClock | null) {
     cancelAlignment();
+    cancelTake();
+    setTakeMap(null);
     stopExactCopy.current?.();
     stopExactCopy.current = null;
     setCopyState(null);
@@ -562,18 +668,25 @@ export function App() {
   function activateStems(next: ActiveStems | null) {
     const { alignment, tempoPercent, mix, userClock, session } = live.current;
     const current = stemsRef.current;
-    const position = current?.clock.time() ?? userClock?.time() ?? session?.clock.time() ?? 0;
+    const playingClock = current?.clock ?? userClock ?? session?.clock;
+    const position = playingClock?.time() ?? 0;
+    const wasPlaying = playingClock?.playing ?? false;
     current?.clock.dispose();
     stemsRef.current = next;
     setStems(next);
+    // A take sits against the tab by its own offset; stems made from a recording keep the recording's alignment.
+    const own = next?.videoUrl !== undefined ? AlignmentMap.fromOffset(next.takeOffset ?? 0) : null;
+    setTakeMap(own);
     if (next) {
       userClock?.pause();
       session?.clock.pause();
       next.clock.setRate(tempoPercent / 100);
-      next.clock.setAlignment(alignment);
+      next.clock.setAlignment(own ?? alignment);
       next.clock.setLandingListener(recordLanding);
       next.clock.setMix(mix);
       next.clock.seek(position);
+      // A take joins in step from where the tab was, playing if the tab was playing.
+      if (own && wasPlaying) next.clock.play();
     } else {
       (userClock ?? session?.clock)?.seek(position);
     }
@@ -627,7 +740,7 @@ export function App() {
   }, [clock, timeline, trackIndex, loop, loopOn]);
 
   /** The alignment the export follows: only a loaded recording (or its stems) has one. */
-  const exportAlignment = userClock || stems ? alignment : null;
+  const exportAlignment = takeMap ?? (userClock || stems ? alignment : null);
   const exportLoopRange = useMemo(() => {
     if (!timeline || !loop) return null;
     const layout = getStripLayout(timeline, trackIndex, 1, 1);
@@ -639,7 +752,9 @@ export function App() {
 
   const audioReady = audio.status === 'ready' || userClock !== null || stems !== null;
   /** What each control does in the current state, derived once so the offset control, playback and export agree. */
-  const stateControls = controlsFor(alignStatus, { hasTimeline: alignment.hasAnchors, hasRecordingFile: userClock?.file != null });
+  const stateControls = takeMap
+    ? controlsFor({ phase: 'idle' }, { hasTimeline: false, hasRecordingFile: false })
+    : controlsFor(alignStatus, { hasTimeline: alignment.hasAnchors, hasRecordingFile: userClock?.file != null });
   useEffect(() => {
     if (audioReady) clock?.setRate(tempoPercent / 100);
   }, [clock, tempoPercent, audioReady]);
@@ -830,13 +945,24 @@ export function App() {
       <BackingTrack
         recording={
           <OffsetSlider
-            offsetSeconds={userClock || stems ? offset : null}
+            offsetSeconds={takeMap ? takeMap.base : userClock || stems ? offset : null}
             offsetControl={stateControls.showOffset}
+            autoPlaced={takeMap !== null}
             fileName={userClock?.file?.name ?? stems?.title ?? null}
             error={userAudioError}
             onLoad={onLoadRecording}
             onOffsetChange={(raw) => {
               const seconds = clampOffset(raw);
+              const url = stemsRef.current?.videoUrl;
+              if (takeMap && url && stemsRef.current) {
+                // A nudge on a take belongs to the take: it is remembered for that video and never touches the recording.
+                const next = takeMap.withBase(seconds);
+                stemsRef.current.clock.setAlignment(next);
+                setTakeMap(next);
+                const bars = live.current.session ? barSpansOf(live.current.session.timeline) : [];
+                rememberTake(url, withNudge(takeRecords.current.get(url), next.base, bars));
+                return;
+              }
               offsetMoved.current = true;
               offsetMovedSinceRun.current = true;
               applyAlignment(live.current.alignment.withBase(seconds), alignSource.current, true);
@@ -855,12 +981,14 @@ export function App() {
             onMixChange={(next) => {
               setMix(next);
               mixMoved.current = true;
-              if (isDesktop()) {
+              // A take's mix is not the recording's: it is never written into the recording's saved profile (KTD7).
+              if (isDesktop() && !stemsRef.current?.videoUrl) {
                 profileMix.current = next;
                 scheduleProfileSave(live.current.offset);
               }
             }}
             onActivate={activateStems}
+            takes={takes}
           />
         )}
       />

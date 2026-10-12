@@ -5,6 +5,8 @@ import { tabFingerprint } from '../../src/audio/tab-fingerprint';
 import {
   decideTakeOnOpen,
   recordForTake,
+  stepAfterJudge,
+  stepAfterPrecheck,
   takeFailedText,
   takeNoMatchText,
   takeVerdict,
@@ -193,5 +195,38 @@ describe('what the player is told', () => {
       expect(text).toMatch(/could not be checked/i);
       expect(text).not.toBe(LEAD);
     }
+  });
+});
+
+describe('stepAfterJudge', () => {
+  it('activates a take that lined up, with its offset', () => {
+    expect(stepAfterJudge({ kind: 'offset', offset: 12 })).toEqual({ step: 'activate', offset: 12 });
+  });
+
+  it('covers AE2: shows the no-match message for a take that does not line up, with no way to activate it', () => {
+    const step = stepAfterJudge({ kind: 'no-match', reason: 'inconsistent' });
+    expect(step).toEqual({ step: 'show', text: takeNoMatchText('inconsistent'), canRecheck: false });
+  });
+
+  it('says a check that could not run was not a no-match, and does not activate the take', () => {
+    expect(stepAfterJudge({ kind: 'failed', reason: 'worker' })).toEqual({ step: 'error', text: takeFailedText('worker') });
+  });
+
+  it('drops a cancelled check with no message', () => {
+    expect(stepAfterJudge({ kind: 'cancelled' })).toEqual({ step: 'drop' });
+  });
+});
+
+describe('stepAfterPrecheck', () => {
+  it('goes on to load the stems and judge them when nothing is remembered', () => {
+    expect(stepAfterPrecheck({ action: 'proceed' })).toEqual({ step: 'load', offset: null });
+  });
+
+  it('covers AE4: loads the stems and uses a remembered offset without judging', () => {
+    expect(stepAfterPrecheck({ action: 'reuse', offset: 12.2 })).toEqual({ step: 'load', offset: 12.2 });
+  });
+
+  it('shows a remembered no-match with its reason and offers to check again, without downloading', () => {
+    expect(stepAfterPrecheck({ action: 'stay', reason: 'out-of-range' })).toEqual({ step: 'show', text: takeNoMatchText('out-of-range'), canRecheck: true });
   });
 });

@@ -132,3 +132,46 @@ export function takeFailedText(reason: 'decode' | 'render' | 'worker' | 'no-soun
     : 'the comparison stopped unexpectedly';
   return `The take could not be checked against the tab because ${why}. It was not played. Try again.`;
 }
+
+/** What the app tells the stem panel before it downloads anything, from what is remembered for the video. */
+export type TakePrecheck =
+  | { readonly action: 'proceed' }
+  | { readonly action: 'reuse'; readonly offset: number }
+  | { readonly action: 'stay'; readonly reason: TakeNoMatchReason };
+
+/** What the stem panel does next with a take: show a message, give the check's error, drop it, load the stems, or switch the take on. */
+export type TakeStep =
+  | { readonly step: 'load'; readonly offset: number | null }
+  | { readonly step: 'activate'; readonly offset: number }
+  | { readonly step: 'show'; readonly text: string; readonly canRecheck: boolean }
+  | { readonly step: 'error'; readonly text: string }
+  | { readonly step: 'drop' };
+
+/** Before any download: a remembered no-match is shown as it is; a remembered offset skips only the check; otherwise the take is loaded and judged (KTD8). */
+export function stepAfterPrecheck(pre: TakePrecheck): TakeStep {
+  switch (pre.action) {
+    case 'stay':
+      return { step: 'show', text: takeNoMatchText(pre.reason), canRecheck: true };
+    case 'reuse':
+      return { step: 'load', offset: pre.offset };
+    case 'proceed':
+      return { step: 'load', offset: null };
+  }
+}
+
+/** After the check: a take that lined up is switched on; one that did not is never switched on (KD1). */
+export function stepAfterJudge(judged: TakeJudged): TakeStep {
+  switch (judged.kind) {
+    case 'offset':
+      return { step: 'activate', offset: judged.offset };
+    case 'no-match':
+      return { step: 'show', text: takeNoMatchText(judged.reason), canRecheck: false };
+    case 'failed':
+      return { step: 'error', text: takeFailedText(judged.reason) };
+    case 'cancelled':
+      return { step: 'drop' };
+  }
+}
+
+/** What the busy line says while a loaded take is being compared with the tab. */
+export const TAKE_CHECKING_LABEL = 'Lining the take up with the tab…';
