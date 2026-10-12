@@ -3,7 +3,7 @@ import type { PcmAudio } from '../export/audio';
 import type { Timeline } from '../model/score';
 import type { WorkerMessage, WorkerReply } from './alignment.worker';
 import { readSharedPcm } from '../audio/shared-pcm';
-import { downsampleMono, FEATURE_RATE } from './features';
+import { downsampleMonoInSlices, FEATURE_RATE } from './features';
 import { mapOfResult, type MatchJob, type MatchJobResult } from './job';
 import type { BarFacts } from './match';
 import type { Section } from './sections';
@@ -136,7 +136,7 @@ export async function decodeRecording(file: Blob, deps: Pick<AnalysisDeps, 'deco
   if (kept) return kept;
   // The audio is decoded once for the page: when the shared store has this recording, its samples are brought to the feature rate.
   const shared = await readSharedPcm(file);
-  const decoded = shared ? downsampleMono(shared, FEATURE_RATE) : await deps.decode(file);
+  const decoded = shared ? await downsampleMonoInSlices(shared, FEATURE_RATE) : await deps.decode(file);
   decodedRecordings.set(file, decoded);
   return decoded;
 }

@@ -5,8 +5,8 @@ import { alphaTab } from '@coderline/alphatab-vite';
 // Relative base keeps the bundle working under a GitHub Pages project path.
 export default defineConfig({
   base: './',
-  // YouTube search and import is built but hidden; build with VITE_ENABLE_YOUTUBE=true to show it.
-  define: { __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE === 'true') },
+  // YouTube search and import is shown by default; build with VITE_ENABLE_YOUTUBE=false to hide it.
+  define: { __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE !== 'false') },
   plugins: [react(), alphaTab()],
   test: {
     environment: 'node',

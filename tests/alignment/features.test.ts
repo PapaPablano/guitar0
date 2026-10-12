@@ -6,6 +6,7 @@ import {
   ONSET_RATE,
   chromaFrames,
   downsampleMono,
+  downsampleMonoInSlices,
   onsetEnvelope,
 } from '../../src/alignment/features';
 import { concat, midiToHz, silence, tone } from '../helpers/synthetic-audio';
@@ -103,6 +104,16 @@ describe('onsetEnvelope', () => {
 
   it('is flat for silence', () => {
     for (const v of onsetEnvelope(silence(1, R), R)) expect(v).toBe(0);
+  });
+});
+
+describe('downsampleMonoInSlices', () => {
+  it('gives the same samples as downsampleMono, over more than one slice', async () => {
+    const left = new Float32Array(48000 * 2).map((_, i) => Math.sin(i / 37));
+    const pcm = { left, right: left, sampleRate: 48000 };
+    const whole = downsampleMono(pcm, R);
+    expect(whole.length).toBeGreaterThan(5000);
+    expect(await downsampleMonoInSlices(pcm, R, 4000)).toEqual(whole);
   });
 });
 
