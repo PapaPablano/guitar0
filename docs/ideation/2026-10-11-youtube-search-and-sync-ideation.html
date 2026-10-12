@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Search and Sync Ideas</title>
+<style>
+:root { --bg:#fff; --fg:#1b1b1f; --muted:#5b5b66; --line:#d9d9e0; --card:#f6f6f9; --accent:#2b5fd9; --chip:#e8eefc; --chipfg:#1d3f9a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#131316; --fg:#ececf1; --muted:#a0a0ad; --line:#2e2e36; --card:#1c1c21; --accent:#7ea2ff; --chip:#222b44; --chipfg:#b9ccff; } }
+:root[data-theme="dark"] { --bg:#131316; --fg:#ececf1; --muted:#a0a0ad; --line:#2e2e36; --card:#1c1c21; --accent:#7ea2ff; --chip:#222b44; --chipfg:#b9ccff; }
+body { background:var(--bg); color:var(--fg); font:16px/1.55 system-ui,sans-serif; margin:0; padding:24px 16px 64px; }
+main { max-width:820px; margin:0 auto; }
+h1 { font-size:1.6rem; margin:0 0 4px; } h2 { font-size:1.2rem; margin:36px 0 8px; } h3 { margin:0 0 6px; font-size:1.05rem; }
+p, li { max-width:72ch; } p.sub { color:var(--muted); margin:0 0 16px; }
+code { font-size:.88em; word-break:break-word; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:14px 0; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 10px; }
+.chip { background:var(--chip); color:var(--chipfg); border-radius:999px; padding:2px 10px; font-size:.82rem; font-weight:600; }
+dl { margin:8px 0 0; } dt { font-weight:700; margin-top:8px; } dd { margin:2px 0 0; max-width:72ch; }
+table { border-collapse:collapse; width:100%; font-size:.93rem; } td,th { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+footer { margin-top:40px; color:var(--muted); font-size:.85rem; }
+@media (max-width:560px) { table, tbody, tr, td, th { display:block; } th { display:none; } tr { border-bottom:1px solid var(--line); padding:6px 0; } td { border:0; padding:2px 0; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+<p class="sub">Ideation · <time datetime="2026-10-11">2026-10-11</time> · topic: youtube-search-and-sync · mode: repo-grounded</p>
+<h1>Ideation: YouTube search and track sync</h1>
+<p class="sub">Focus: "the search function and the track sync with YouTube improvements". 14 merged candidates from about 44 raw ideas across six lenses; 7 survive.</p>
+</header>
+
+<section id="grounding-context">
+<h2>Grounding Context</h2>
+<p><strong>Search today.</strong> <code>engine-client.ts:79-88</code> posts <code>/api/search</code> with <code>limit: 15</code>. The query box starts empty (<code>StemPanel.tsx:54</code>) although the tab's title and artist are already in hand (<code>App.tsx:776</code>, used only for the Songsterr link). Search runs only on form submit, with no stale-response guard (<code>StemPanel.tsx:188</code>). Results are ranked by <code>|duration - tab length|</code> alone (<code>stem-controls.ts:113-120</code>); title and uploader are never used.</p>
+<p><strong>Engine facts the verifier added.</strong> The pinned engine's <code>MAX_LIMIT</code> is 15, so widening the field takes several queries, not a bigger limit. It already caches results for 60 seconds. Items already carry <code>thumbnail</code>, and <code>uploader</code> falls back to the channel name, so "Artist - Topic" channels are visible. Extraction is flat, so there is no description, upload date or view count. An audition route, <code>GET /api/search/preview</code>, already exists.</p>
+<p><strong>Sync today.</strong> Stems imported from YouTube skip alignment: detect and reuse run only for the user-recording clock (<code>App.tsx:446,454</code>). The alignment code takes any decodable <code>Blob</code> (<code>alignment/analyze.ts:56-70</code>) and <code>stems.clock.setAlignment</code> already exists (<code>stem-mix.ts:144</code>), so the blocker is plumbing typed to <code>UserAudioClock</code>. Per-song memory is keyed by file hash (<code>recording-profile.ts</code>); a YouTube import has only a <code>url:</code> key in the saved-stems index. The plan defers per-song mixer memory and multi-point anchors.</p>
+<p><strong>Boundaries.</strong> Results are ranked, never filtered. The rights notice stays beside search. No change to how stems are separated or what the YouTube option may import. YouTube is desktop-only.</p>
+<p><strong>External.</strong> Soundslice auto-aligns then lets the user fix a few syncpoints; chroma plus DTW (librosa, FMP) aligns two recordings of one piece; spotDL and somedl pick YouTube results by scoring and prefer official audio. Research value was moderate; Soundslice and spotDL details were not confirmed at source.</p>
+</section>
+
+<section id="topic-axes">
+<h2>Topic Axes</h2>
+<ul>
+<li>Candidate retrieval: what is queried and how many results come back</li>
+<li>Picking the right recording: ranking, trust signals, what a row shows</li>
+<li>Import hand-off: from a chosen result to loaded stems</li>
+<li>Timing sync: stems against the tab, offset, drift, alignment</li>
+<li>Reliability and per-song memory: the build flag, errors, yt-dlp fragility, remembering a song</li>
+</ul>
+</section>
+
+<section id="ranked-ideas">
+<h2>Ranked Ideas</h2>
+<nav aria-label="Ranked ideas">
+<ol>
+<li><a href="#i1">Auto-align YouTube stems to the tab</a></li>
+<li><a href="#i2">Score results on trust signals, and show why</a></li>
+<li><a href="#i3">Search starts from the tab, with query variants</a></li>
+<li><a href="#i4">One song record: remembered pick, offset, mix, and past imports</a></li>
+<li><a href="#i5">"Doesn't match the tab, try the next one"</a></li>
+<li><a href="#i6">Search health check and plain errors</a></li>
+<li><a href="#i7">Tap-to-sync points as the manual fallback</a></li>
+</ol>
+</nav>
+
+<article class="card" id="i1">
+<h3>1. Auto-align YouTube stems to the tab</h3>
+<div class="chips"><span class="chip">Axis: Timing sync</span><span class="chip">Confidence 80%</span><span class="chip">Complexity Medium</span></div>
+<dl>
+<dt>Description</dt>
+<dd>After a YouTube import, run the existing bar-level alignment on the separated stems, as is done for a user's own recording. The likely input is the summed non-guitar mix, since the tab's rendered guitar is what the "other" and "guitar" stems contain and drums or bass alone are thinner evidence. The result sets the offset and bar timeline, so a live-album take with a long intro lands on the beat with no slider. A per-bar map also gives a tempo ratio, which covers the "set tab tempo to match the recording" idea without a separate feature.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>App.tsx:446</code> and <code>:454</code> gate detect and reuse on <code>userClockRef.current === clockForLoad</code>; <code>OffsetSlider.tsx:27</code> says offset controls follow "the recording alone: not the desktop bridge, not stems". The verifier read <code>alignment/analyze.ts:56-70</code> (takes a <code>file: Blob</code>) and confirmed <code>stems.clock.setAlignment</code> exists. <code>external:</code> Soundslice auto-align then fix; chroma plus DTW with open-end DTW for long intros (librosa, FMP).</dd>
+<dt>Rationale</dt>
+<dd>YouTube audio is the source most likely to differ from the tab in intro, outro and sections, and today the player fixes that by hand or not at all. This is the gap the research named: nobody pairs right-recording search with automatic alignment. Ideas 4 and 5 both build on its result.</dd>
+<dt>Downsides</dt>
+<dd>Alignment on a different recording than the tab's reference (live, different arrangement) is the open risk, so it needs a feasibility spike on real takes first. <code>startAlignment</code>, <code>alignRequest</code> and <code>stillCurrent</code> are typed to the recording clock (<code>App.tsx:126,299,340-355</code>) and persistence is hash-keyed, so a <code>url:</code> path is new work. Stem audio export also ignores the alignment map today (<code>App.tsx:1075-1082</code>), so an aligned YouTube mix would play differently from how it exports; that needs a warp-aware render.</dd>
+</dl>
+</article>
+
+<article class="card" id="i2">
+<h3>2. Score results on trust signals, and show why</h3>
+<div class="chips"><span class="chip">Axis: Picking the right recording</span><span class="chip">Confidence 85%</span><span class="chip">Complexity Low</span></div>
+<dl>
+<dt>Description</dt>
+<dd>Replace <code>rankByLength</code> with a pure <code>scoreResult(item, tabMeta)</code>. Length gap stays the main term. Add a boost for "- Topic" uploaders and for an uploader or title that matches the tab's artist and title, and a penalty for live, cover, lyric, karaoke, tutorial and remix in the title. Each row shows its length gap against the tab ("+0:12"), one reason badge, and the thumbnail the engine already sends. Everything stays listed; only the order changes. Memoize the sort instead of redoing it every render. Record real engine responses as test fixtures so weights can be tuned against them.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>stem-controls.ts:113-120</code> ranks on <code>Math.abs(duration - tabSeconds)</code> only; <code>searchRow</code> (<code>:97-106</code>) shows only uploader and duration; <code>SearchItem</code> (<code>engine-client.ts:41-48</code>) has no <code>thumbnail</code> though the test fixture sends one (<code>engine-client.test.ts:110</code>). The verifier confirmed the engine returns <code>thumbnail</code> and a channel-name <code>uploader</code>. <code>external:</code> spotDL scored selection; somedl prefers official audio.</dd>
+<dt>Rationale</dt>
+<dd>A live or lyric upload 3 seconds from the tab's length currently outranks the studio cut 8 seconds away, and a wrong pick costs a download and a separation. It needs no engine change and stays inside "ranked, not filtered".</dd>
+<dt>Downsides</dt>
+<dd>The weights are a product judgment and will need tuning. "Provided to YouTube by" cannot be used: the engine's flat extraction returns no description. Title heuristics fail on songs that legitimately have "Live" or "Remix" in the name, which is why they should be penalties and not filters.</dd>
+</dl>
+</article>
+
+<article class="card" id="i3">
+<h3>3. Search starts from the tab, with query variants</h3>
+<div class="chips"><span class="chip">Axis: Candidate retrieval</span><span class="chip">Confidence 85%</span><span class="chip">Complexity Low</span></div>
+<dl>
+<dt>Description</dt>
+<dd>When YouTube is chosen on a loaded tab, fill the box with the tab's title and artist and search at once. Run two to four variants in parallel (plain, plus "official audio", "- Topic", "instrumental") and merge by URL, so the field is wider than the engine's hard 15. The box stays as an editable override. Add a request id so a slow older response cannot overwrite a newer one, and an abort signal.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>StemPanel.tsx:54</code> <code>useState('')</code>; <code>App.tsx:776</code> builds the Songsterr link from <code>timeline.title</code> and <code>timeline.artist</code>; <code>StemPanel.tsx:188</code> <code>setResults(await client.search(query))</code> has no guard; <code>engine-client.ts:51</code> says "Ranking by length needs a wide field to find a close match". The verifier confirmed <code>MAX_LIMIT</code> is 15.</dd>
+<dt>Rationale</dt>
+<dd>The first step today is retyping a song the app already knows. Merged variants feed idea 2 a better field, which is the same reasoning the plan used to pick 15 over 8.</dd>
+<dt>Downsides</dt>
+<dd>Closer to an obvious fix than a big bet. Skip a client-side result cache and a timeout: the engine already caches for 60 seconds. Several parallel searches may hit the engine's 3-wide limit and rate limits, so cap the variants. A tab with a poor title gives a poor seed, which is why the override matters.</dd>
+</dl>
+</article>
+
+<article class="card" id="i4">
+<h3>4. One song record: remembered pick, offset, mix, and past imports</h3>
+<div class="chips"><span class="chip">Axis: Reliability and per-song memory (with Import hand-off)</span><span class="chip">Confidence 70%</span><span class="chip">Complexity Medium</span></div>
+<dl>
+<dt>Description</dt>
+<dd>Keep a record per song holding the chosen URL, the stem job, the offset or alignment from idea 1, the mixer state and the URLs the player rejected. Reopening the tab offers "Used last time" first, with the mix and timing restored and no search. Store title, uploader and duration with each saved-stems entry too, so "Already made" matches show above results before any network call and work offline.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>recording-profile.ts:66-69</code> holds <code>offset</code> and <code>mix</code> but is keyed by file content hash; <code>StemPanel.tsx:176</code> keys a YouTube import as <code>url:${item.url}</code> only; <code>saved-stems.ts:14</code> maps a hash to a job with no metadata; the backing-track plan lists "Remembering mixer settings per song" as deferred (<code>:100</code>).</dd>
+<dt>Rationale</dt>
+<dd>Players come back to the same few songs, and the whole search, import and nudge routine repeats every session. The best search is the one that never runs, and it also shields the player from yt-dlp breakage.</dd>
+<dt>Downsides</dt>
+<dd>The key is the real decision: tab title, URL or hash. Titles get edited and tabs get re-saved, so tab identity is fragile. Decide it once and persist idea 1's alignment under the same key. The portable sidecar-file variant is optional and widens scope.</dd>
+</dl>
+</article>
+
+<article class="card" id="i5">
+<h3>5. "Doesn't match the tab, try the next one"</h3>
+<div class="chips"><span class="chip">Axis: Picking the right recording (with Timing sync)</span><span class="chip">Confidence 65%</span><span class="chip">Complexity Medium</span></div>
+<dl>
+<dt>Description</dt>
+<dd>Once idea 1 exists, a poor alignment result (<code>not-found</code> or <code>inconsistent</code>) becomes a plain verdict on the panel: "This doesn't line up with the tab. Try the next result." One click imports the next-ranked candidate. Rejected URLs are remembered in the song record from idea 4 and sink in later rankings.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>auto-align.ts:89</code> returns <code>{ phase: 'not-found', reason: 'inconsistent' }</code> with <code>remember: true</code>; <code>alignment-controls.ts:38-40</code> already has graded verdict text. <code>external:</code> cover-song identification compares chroma to tell an original from a cover.</dd>
+<dt>Rationale</dt>
+<dd>Length and title are weak proxies for "right recording"; alignment against the player's own tab is a direct test. It turns the wrong-version trap into a one-click retry.</dd>
+<dt>Downsides</dt>
+<dd>The verdict only arrives after a download and a separation, which costs minutes. A fully automatic "Find it for me" loop that imports candidate after candidate was cut for that reason; keep the retry manual. Depends on idea 1. The fix for a failed verdict should never silently discard a take the player likes.</dd>
+</dl>
+</article>
+
+<article class="card" id="i6">
+<h3>6. Search health check and plain errors</h3>
+<div class="chips"><span class="chip">Axis: Reliability and per-song memory</span><span class="chip">Confidence 80%</span><span class="chip">Complexity Low</span></div>
+<dl>
+<dt>Description</dt>
+<dd>When the engine is ready, run one known-good search (<code>ytsearch1:</code>) and show the result in the engine state line. If it fails, say "YouTube search isn't working in this engine build" and keep the box disabled with that reason, instead of letting the first real query end in "No results" or a raw engine string. Map engine errors to named states (search broken, rate-limited, offline) with a Retry, and add a timeout and cancel to the search request.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>ytdlp_fix.py:15-17</code> is <code>except ImportError: return</code>, silent; <code>engine-client.ts:163-171</code> returns <code>body.detail</code> to the UI verbatim; <code>engine/tests/test_ytdlp_fix.py:8</code> is <code>pytest.importorskip("yt_dlp")</code>, so the tests skip silently; <code>engine-client.ts:139-149</code> passes no signal on the search path.</dd>
+<dt>Rationale</dt>
+<dd>The feature depends on a private-globals patch to yt-dlp, which breaks on its own schedule. The player should hear "search is down, not your query" before typing.</dd>
+<dt>Downsides</dt>
+<dd>Reads as a backlog fix more than a direction, but it is cheap and protects every other idea here. A probe adds a request at startup, and it can pass while real queries still fail.</dd>
+</dl>
+</article>
+
+<article class="card" id="i7">
+<h3>7. Tap-to-sync points as the manual fallback</h3>
+<div class="chips"><span class="chip">Axis: Timing sync</span><span class="chip">Confidence 55%</span><span class="chip">Complexity High</span></div>
+<dl>
+<dt>Description</dt>
+<dd>When automatic alignment is low-confidence, let the player tap two or three bars while the track plays and bend time between them (a ground-control-point fix, as in Soundslice's syncpoints), with detected beats shown and snapped to. It covers a studio intro, an extra chorus or a fade the tab does not have, for any source.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> the stem-separation plan says "Multi-point anchors are deferred. The user sees a constant shift, not drift." (<code>2026-10-04-0945…:67</code>); <code>alignment-controls.ts:70</code> is <code>showOffset: !ctx.hasTimeline && !running</code>, hiding the one manual control once a timeline commits; <code>OffsetSlider.tsx:76-78</code> notes that a recording that speeds up or slows down will still drift. <code>external:</code> Soundslice syncpoints, beat overlay and snap.</dd>
+<dt>Rationale</dt>
+<dd>Idea 1 will not always succeed, and today a failure leaves a single offset slider that disappears when a timeline commits.</dd>
+<dt>Downsides</dt>
+<dd>It reopens an item the plan deferred on purpose, and it is a large change to the UI and the tab clock. Treat it as a scope decision after idea 1 shows how often alignment fails.</dd>
+</dl>
+</article>
+</section>
+
+<section id="rejection-summary">
+<h2>Rejection Summary</h2>
+<table>
+<thead><tr><th>#</th><th>Idea</th><th>Reason Rejected</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Tempo match from length ratio</td><td>Length ratio is unreliable with intros and outros; the tempo ratio comes out of idea 1's per-bar map instead.</td></tr>
+<tr><td>2</td><td>Audio export honors the alignment</td><td>Real gap, but a bug fix and a dependency of idea 1, not a direction. Listed under idea 1's downsides.</td></tr>
+<tr><td>3</td><td>Audio-content ranking (chroma on a snippet before import)</td><td>Needs new engine-side analysis; the preview route is an audition proxy, not a feature extractor. Ideas 1 and 5 give most of the value more cheaply.</td></tr>
+<tr><td>4</td><td>Own search route in the engine wrapper</td><td>The fields it would add (description, upload date, "Provided to YouTube by") are unavailable under flat extraction, and it adds upkeep against the pinned engine.</td></tr>
+<tr><td>5</td><td>Pheromone trails (learn from picked uploaders)</td><td>Reasoned only; idea 4's per-song rejected list covers the same signal.</td></tr>
+<tr><td>6</td><td>Fully automatic "Find it for me" loop</td><td>Each retry costs a download and a separation, and the verdict arrives after. Kept only as the manual retry in idea 5.</td></tr>
+<tr><td>7</td><td>Single audio clock or worklet for stems; NTP-style rate slew</td><td>Applies to all stems, not YouTube sync, and the plan already treats the worklet as a stop-and-confirm change. Large; a separate decision.</td></tr>
+<tr><td>8</td><td>Unify the 40 ms and 25 ms tolerances; drop the stale slider note</td><td>Valid and small, but housekeeping. <code>stem-mix.ts:9</code> and <code>user-audio.ts:60</code>, <code>OffsetSlider.tsx:76-78</code>.</td></tr>
+<tr><td>9</td><td>Client-side result cache and request timeout as their own item</td><td>The engine already caches for 60 seconds; the stale-response guard is kept in idea 3 and the timeout in idea 6.</td></tr>
+<tr><td>10</td><td>Portable sync sidecar file to share between people</td><td>Widens scope past one player's practice; kept only as an optional variant of idea 4.</td></tr>
+<tr><td>-</td><td>axis: Import hand-off</td><td>No standalone survivor. It is covered inside ideas 1 and 4 (alignment on import; "Already made" matches).</td></tr>
+</tbody>
+</table>
+<p>Verification note: the generators did not run their optional source-read passes; a separate verifier read the cited files and confirmed every <code>direct:</code> quote it checked, then supplied the engine facts above. Confidence figures are the orchestrator's judgment, not measured.</p>
+</section>
+
+<footer class="composition-signal">Composed 2026-10-11 by ce-ideate from the prompt "the search function and the track sync with youtube imporovements"</footer>
+</main>
+</body>
+</html>
