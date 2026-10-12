@@ -217,3 +217,29 @@ describe('stemAnalysisFeed', () => {
     await expect(stemAnalysisFeed(sources(), initialMix(), decode)).rejects.toThrow(/piano/);
   });
 });
+
+describe('exporting an aligned YouTube take (covers AE6)', () => {
+  it('a full render hands the take\'s offset to every stem decode, so the take sits where it was heard', async () => {
+    const decode = fakeDecode();
+    await renderStemMix(sources(), initialMix(), 12, D, decode);
+    expect(decode).toHaveBeenCalledTimes(6);
+    for (const call of decode.mock.calls) expect(call[1]).toBe(12);
+  });
+
+  it('a loop-range render places the window at the tab time plus the take\'s offset', async () => {
+    const decode = vi.fn(async (_blob: Blob, _offset: number, _start: number, _duration: number): Promise<PcmAudio> => {
+      const data = new Float32Array(4).fill(0.1);
+      return { left: data, right: data.slice(), sampleRate: 48000 };
+    });
+    await renderStemMixRange(sources(), initialMix(), 12, { startSeconds: 20, durationSeconds: D }, decode);
+    for (const call of decode.mock.calls) {
+      expect(call[1]).toBe(12);
+      expect(call[2]).toBe(20);
+    }
+    expect(windowPlacement(12, 20, 5)).toEqual({ delaySeconds: 0, startSeconds: 32, audible: true });
+  });
+
+  it('a take that starts after the tab (a negative offset) is delayed, not cut', () => {
+    expect(windowPlacement(-12, 0, 30)).toEqual({ delaySeconds: 12, startSeconds: 0, audible: true });
+  });
+});
