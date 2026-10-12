@@ -218,7 +218,7 @@ describe('stemAnalysisFeed', () => {
   });
 });
 
-describe('exporting an aligned YouTube take (covers AE6)', () => {
+describe('rendering a YouTube take at its offset (covers AE6 at the render level; the app passes in the offset of the take)', () => {
   it('a full render hands the take\'s offset to every stem decode, so the take sits where it was heard', async () => {
     const decode = fakeDecode();
     await renderStemMix(sources(), initialMix(), 12, D, decode);

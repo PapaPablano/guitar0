@@ -82,6 +82,20 @@ describe('takeVerdict', () => {
     expect(takeVerdict(aligned({ map: shiftedBy(12, [0, outside, 0, 0, 0, 0]) }), bars)).toEqual({ kind: 'no-match', reason: 'inconsistent' });
   });
 
+  it('is not an offset when only the end of the tab sits somewhere else (the end anchor is checked too)', () => {
+    const lateEnd = AlignmentMap.fromAnchors(bars, bars.map((b) => b.start + 12), endOf(12) + 0.2)!;
+    expect(takeVerdict(aligned({ map: lateEnd }), bars)).toEqual({ kind: 'no-match', reason: 'inconsistent' });
+  });
+
+  it('averages the two middle offsets when there is an even number of them (five bars and the end)', () => {
+    const five = bars.slice(0, 5);
+    const anchors = [12, 14, 16.04, 18.04, 20.04];
+    const map = AlignmentMap.fromAnchors(five, anchors, 22)!;
+    const verdict = takeVerdict(aligned({ map }), five);
+    expect(verdict.kind).toBe('offset');
+    if (verdict.kind === 'offset') expect(verdict.offset).toBeCloseTo(12.02, 3);
+  });
+
   it('keeps the tolerance workable for anchors that are rounded to 10 ms', () => {
     expect(TAKE_TOLERANCE_SECONDS).toBeGreaterThanOrEqual(0.02);
     expect(TAKE_TOLERANCE_SECONDS).toBeLessThanOrEqual(0.05);
@@ -126,6 +140,13 @@ describe('what a take is remembered as', () => {
     const nudged = withNudge(withNudge(recordForTake({ kind: 'offset', offset: 12 }, bars), 12.2), 12.5);
     expect(nudged.take).toEqual({ kind: 'offset', offset: 12.5 });
     expect(nudged.previousOffset).toBe(12);
+  });
+
+  it('a nudge after a remembered no-match makes it an offset, with no previous value to keep', () => {
+    const rejected = recordForTake({ kind: 'no-match', reason: 'inconsistent' }, bars);
+    const nudged = withNudge(rejected, 3);
+    expect(nudged.take).toEqual({ kind: 'offset', offset: 3 });
+    expect(nudged).not.toHaveProperty('previousOffset');
   });
 
   it('a nudge with no record yet makes one that holds the offset', () => {
