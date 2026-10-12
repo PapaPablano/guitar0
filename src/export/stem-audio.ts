@@ -3,6 +3,7 @@ import { clampOffset } from '../audio/offset-range';
 import { AUDIO_SAMPLE_RATE } from './presets';
 import { stemGains, type MixState } from '../audio/mix-gains';
 import { STEM_NAMES, type StemName } from '../stems/engine-client';
+import { decodeToFeatureRate } from '../alignment/analyze';
 
 export type StemSources = Record<StemName, Blob>;
 
@@ -104,4 +105,37 @@ async function sumStems(
     right[i] = Math.max(-1, Math.min(1, right[i]));
   }
   return { left, right, sampleRate: AUDIO_SAMPLE_RATE };
+}
+
+/**
+ * The stems mixed at their gains as one mono feed at the analysis rate, for judging a take against the tab.
+ * Each stem is decoded straight to that rate, one at a time and not kept, so a long take never holds more
+ * than one stem plus the sum. The feed is as long as the longest stem; a stem that cannot be read fails the
+ * whole feed, since a partial mix could match the tab wrongly.
+ */
+export async function stemAnalysisFeed(
+  sources: StemSources,
+  mix: MixState,
+  decode: (blob: Blob) => Promise<Float32Array> = decodeToFeatureRate,
+): Promise<Float32Array> {
+  const gains = stemGains(mix);
+  let sum = new Float32Array(0);
+  for (const name of STEM_NAMES) {
+    const gain = gains[name];
+    if (gain === 0) continue;
+    let samples: Float32Array;
+    try {
+      samples = await decode(sources[name]);
+    } catch (e) {
+      throw new Error(`The ${name} stem could not be read to line the take up${e instanceof Error ? `: ${e.message}` : '.'}`);
+    }
+    if (samples.length > sum.length) {
+      const longer = new Float32Array(samples.length);
+      longer.set(sum);
+      sum = longer;
+    }
+    for (let i = 0; i < samples.length; i++) sum[i] += samples[i] * gain;
+  }
+  for (let i = 0; i < sum.length; i++) sum[i] = Math.max(-1, Math.min(1, sum[i]));
+  return sum;
 }

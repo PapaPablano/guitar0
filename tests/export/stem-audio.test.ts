@@ -165,3 +165,55 @@ describe('renderStemMixRange', () => {
     await expect(renderStemMixRange(sources(), initialMix(), 0, { startSeconds: 0, durationSeconds: D }, decode)).rejects.toThrow(/stem could not be read/);
   });
 });
+
+import { stemAnalysisFeed } from '../../src/export/stem-audio';
+
+describe('stemAnalysisFeed', () => {
+  /** Decodes a stem to mono samples whose level identifies the stem. */
+  const feedDecode = (length = 4) =>
+    vi.fn(async (blob: Blob): Promise<Float32Array> => new Float32Array(length).fill(LEVEL[(await blob.text()) as StemName]));
+
+  it('sums the stems at their gains into one mono feed', async () => {
+    const mix = initialMix();
+    for (const n of STEM_NAMES) mix[n].muted = !['drums', 'bass', 'other'].includes(n);
+    const feed = await stemAnalysisFeed(sources(), mix, feedDecode());
+    expect(feed.length).toBe(4);
+    expect(feed[0]).toBeCloseTo(0.02 + 0.04 + 0.16, 6);
+  });
+
+  it('does not decode a stem that has no gain', async () => {
+    const mix = initialMix();
+    mix.guitar.muted = true;
+    const decode = feedDecode();
+    await stemAnalysisFeed(sources(), mix, decode);
+    expect(decode).toHaveBeenCalledTimes(5);
+  });
+
+  it('is as long as the longest stem and tolerates a shorter one', async () => {
+    const decode = vi.fn(async (blob: Blob): Promise<Float32Array> => new Float32Array((await blob.text()) === 'drums' ? 6 : 3).fill(0.1));
+    const feed = await stemAnalysisFeed(sources(), initialMix(), decode);
+    expect(feed.length).toBe(6);
+    expect(feed[0]).toBeCloseTo(0.6, 6);
+    expect(feed[5]).toBeCloseTo(0.1, 6);
+  });
+
+  it('does not run past full scale', async () => {
+    const decode = vi.fn(async () => new Float32Array(4).fill(0.9));
+    const feed = await stemAnalysisFeed(sources(), initialMix(), decode);
+    expect(feed[0]).toBe(1);
+  });
+
+  it('returns an empty feed when every stem is silent', async () => {
+    const mix = initialMix();
+    for (const n of STEM_NAMES) mix[n].muted = true;
+    expect((await stemAnalysisFeed(sources(), mix, feedDecode())).length).toBe(0);
+  });
+
+  it('fails with the stem name instead of judging a partial mix', async () => {
+    const decode = vi.fn(async (blob: Blob): Promise<Float32Array> => {
+      if ((await blob.text()) === 'piano') throw new Error('bad data');
+      return new Float32Array(4);
+    });
+    await expect(stemAnalysisFeed(sources(), initialMix(), decode)).rejects.toThrow(/piano/);
+  });
+});

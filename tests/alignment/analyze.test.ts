@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { barFactsOf, barSpansOf, MAX_ANALYSIS_SECONDS, MAX_ANALYSIS_TAB_SECONDS, startAnalysis, type AnalysisDeps, type MatchRun } from '../../src/alignment/analyze';
 import { FEATURE_RATE } from '../../src/alignment/features';
 import { runMatchJob, type MatchJob, type MatchJobResult } from '../../src/alignment/job';
+import { initialMix } from '../../src/audio/mix-gains';
+import { stemAnalysisFeed, type StemSources } from '../../src/export/stem-audio';
+import { STEM_NAMES } from '../../src/stems/engine-client';
 import { makeTimeline } from '../helpers/make-timeline';
 import { barSpans, inserted, renderSong, shifted, songNotes, unrelatedMusic } from '../helpers/synthetic-audio';
 
@@ -205,6 +208,96 @@ describe('startAnalysis', () => {
     expect(await job.result).toEqual({ kind: 'cancelled' });
     await flush();
     expect(deps.startMatch).not.toHaveBeenCalled();
+  });
+
+  it('uses a supplied feed instead of decoding a file, and hands those samples to the match job', async () => {
+    const { deps } = fakes();
+    const feed = new Float32Array([0.1, 0.2, 0.3]);
+    const samples = vi.fn(async () => feed);
+    const job = startAnalysis({ ...args(), file: undefined, samples }, deps);
+    await flush();
+    job.cancel();
+    expect(samples).toHaveBeenCalledTimes(1);
+    expect(deps.decode).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.startMatch).mock.calls[0][0].recording).toBe(feed);
+  });
+
+  it('fails cleanly when the supplied feed cannot be built, and starts no worker', async () => {
+    const { deps } = fakes();
+    const job = startAnalysis({ ...args(), file: undefined, samples: vi.fn(async () => Promise.reject(new Error('stem unreadable'))) }, deps);
+    expect(await job.result).toEqual({ kind: 'failed', reason: 'decode' });
+    expect(deps.startMatch).not.toHaveBeenCalled();
+  });
+
+  it('fails cleanly when neither a file nor a feed is given', async () => {
+    const { deps } = fakes();
+    const job = startAnalysis({ ...args(), file: undefined }, deps);
+    expect(await job.result).toEqual({ kind: 'failed', reason: 'decode' });
+  });
+
+  it('refuses a take over thirty minutes without building the feed', async () => {
+    const { deps } = fakes();
+    const samples = vi.fn(async () => new Float32Array(10));
+    const job = startAnalysis({ ...args({ durationSeconds: MAX_ANALYSIS_SECONDS + 1 }), file: undefined, samples }, deps);
+    expect(await job.result).toEqual({ kind: 'not-found', reason: 'too-long' });
+    expect(samples).not.toHaveBeenCalled();
+  });
+
+  it('cancelling while the feed is being built returns cancelled and never starts the worker', async () => {
+    const { deps } = fakes();
+    let finish: (f: Float32Array) => void = () => {};
+    const job = startAnalysis({ ...args(), file: undefined, samples: () => new Promise<Float32Array>((resolve) => (finish = resolve)) }, deps);
+    await flush();
+    job.cancel();
+    finish(new Float32Array(10));
+    expect(await job.result).toEqual({ kind: 'cancelled' });
+    await flush();
+    expect(deps.startMatch).not.toHaveBeenCalled();
+  });
+
+  describe('a take split into stems, judged against the tab (covers AE1)', () => {
+    const notes = songNotes(24, 2, 51);
+    const tab48 = renderSong(notes, 48, 48000, 'plain');
+    // Two stems that each carry half of the song's notes, like a take whose parts were split; the whole take starts 12 s late.
+    const stemSamples: Record<string, Float32Array> = {
+      guitar: shifted(renderSong(notes.filter((_, i) => i % 2 === 0), 48, FEATURE_RATE, 'rich', 61), 12, FEATURE_RATE),
+      other: shifted(renderSong(notes.filter((_, i) => i % 2 === 1), 48, FEATURE_RATE, 'rich', 62), 12, FEATURE_RATE),
+    };
+    const sources = {} as StemSources;
+    for (const name of STEM_NAMES) sources[name] = new Blob([name]);
+    const decodeStem = async (blob: Blob) => stemSamples[await blob.text()] ?? new Float32Array(0);
+    const real: AnalysisDeps = {
+      decode: async () => new Float32Array(0),
+      startMatch: (job: MatchJob, onProgress) => ({ result: Promise.resolve(runMatchJob(job, onProgress)), terminate: () => {} }),
+    };
+    const judge = (mix: ReturnType<typeof initialMix>) =>
+      startAnalysis(
+        {
+          samples: () => stemAnalysisFeed(sources, mix, decodeStem),
+          durationSeconds: 60,
+          tabSeconds: 48,
+          bars: barSpans(24, 2),
+          renderTab: async () => pcm(tab48, 48000),
+        },
+        real,
+      ).result;
+
+    it('finds the 12 s start from the mix of all the stems', { timeout: 30000 }, async () => {
+      const result = await judge(initialMix());
+      expect(result.kind).toBe('aligned');
+      if (result.kind === 'aligned') {
+        expect(Math.abs(result.map.base - 12)).toBeLessThanOrEqual(0.05);
+        expect(result.map.holds).toHaveLength(0);
+      }
+    });
+
+    it('also finds it from the mix without the guitar stem', { timeout: 30000 }, async () => {
+      const mix = initialMix();
+      mix.guitar.muted = true;
+      const result = await judge(mix);
+      expect(result.kind).toBe('aligned');
+      if (result.kind === 'aligned') expect(Math.abs(result.map.base - 12)).toBeLessThanOrEqual(0.05);
+    });
   });
 
   it('runs the real matcher through the job shapes: a late start and an extra section are found in a render at 48 kHz', { timeout: 30000 }, async () => {
