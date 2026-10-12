@@ -82,23 +82,41 @@ describe('takeVerdict', () => {
     expect(takeVerdict(aligned({ map: shiftedBy(12, [0, outside, 0, 0, 0, 0]) }), bars)).toEqual({ kind: 'no-match', reason: 'inconsistent' });
   });
 
-  it('is not an offset when only the end of the tab sits somewhere else (the end anchor is checked too)', () => {
+  it('does not judge the take by where its end anchor sits (the end is read off a coarser grid than the bars)', () => {
     const lateEnd = AlignmentMap.fromAnchors(bars, bars.map((b) => b.start + 12), endOf(12) + 0.2)!;
-    expect(takeVerdict(aligned({ map: lateEnd }), bars)).toEqual({ kind: 'no-match', reason: 'inconsistent' });
+    expect(takeVerdict(aligned({ map: lateEnd }), bars)).toEqual({ kind: 'offset', offset: 12 });
   });
 
-  it('averages the two middle offsets when there is an even number of them (five bars and the end)', () => {
-    const five = bars.slice(0, 5);
-    const anchors = [12, 14, 16.04, 18.04, 20.04];
-    const map = AlignmentMap.fromAnchors(five, anchors, 22)!;
-    const verdict = takeVerdict(aligned({ map }), five);
+  it('averages the two middle offsets when there is an even number of them', () => {
+    const four = bars.slice(0, 4);
+    const anchors = [12, 14, 16.02, 18.02];
+    const map = AlignmentMap.fromAnchors(four, anchors, 20)!;
+    const verdict = takeVerdict(aligned({ map }), four);
     expect(verdict.kind).toBe('offset');
-    if (verdict.kind === 'offset') expect(verdict.offset).toBeCloseTo(12.02, 3);
+    if (verdict.kind === 'offset') expect(verdict.offset).toBeCloseTo(12.01, 3);
+  });
+
+  it('plays an accepted take within the tolerance of every bar the analysis found (the residual against the per-bar anchors)', () => {
+    // A take about 0.4% slow: its bars drift by a few hundredths over the song, and it is still one offset.
+    const jitter = [0, 0.005, 0.01, 0.015, 0.02, 0.02];
+    const map = shiftedBy(12, jitter);
+    const verdict = takeVerdict(aligned({ map }), bars);
+    expect(verdict.kind).toBe('offset');
+    if (verdict.kind !== 'offset') return;
+    const played = AlignmentMap.fromOffset(verdict.offset);
+    const anchors = map.anchorData!.anchors;
+    const worst = Math.max(...bars.map((bar, k) => Math.abs(played.toRec(bar.start, 'start') - anchors[k])));
+    expect(worst).toBeLessThanOrEqual(TAKE_TOLERANCE_SECONDS);
+  });
+
+  it('rejects a take about 1% slow, whose bars drift past what one offset can follow', () => {
+    const jitter = bars.map((_, k) => k * 0.04);
+    expect(takeVerdict(aligned({ map: shiftedBy(12, jitter) }), bars)).toEqual({ kind: 'no-match', reason: 'inconsistent' });
   });
 
   it('keeps the tolerance workable for anchors that are rounded to 10 ms', () => {
     expect(TAKE_TOLERANCE_SECONDS).toBeGreaterThanOrEqual(0.02);
-    expect(TAKE_TOLERANCE_SECONDS).toBeLessThanOrEqual(0.05);
+    expect(TAKE_TOLERANCE_SECONDS).toBeLessThanOrEqual(0.03);
   });
 
   it('covers AE3: an offset beyond 30 s is out of range', () => {
