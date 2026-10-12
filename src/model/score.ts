@@ -56,6 +56,8 @@ export interface TrackInfo {
   readonly stringCount: number;
   /** Open-string midi pitches, highest-pitched string first. */
   readonly tuning: readonly number[];
+  /** The fret the capo is on (0 when there is none): every string sounds this many semitones above its open pitch, and fret numbers count from the capo. */
+  readonly capo?: number;
   /** False when the track carries pitches only; frets were then assigned by the parser. */
   readonly hasTabData: boolean;
   readonly isPercussion: boolean;

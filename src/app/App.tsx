@@ -194,6 +194,8 @@ export function App() {
 
   /** Names the recording whose profile lookup is in flight; any newer load or removal makes it stale. */
   const profileRuns = useRef(createRunGuard());
+  /** Which recording load is the latest, so a slower earlier one cannot replace a newer one. */
+  const loadRuns = useRef(createRunGuard());
   /** Content hash of the loaded recording, once known; null means nothing is restored or saved for it. */
   const profileHash = useRef<string | null>(null);
   /** Gives up the exact copy of the loaded recording when it is replaced or removed. */
@@ -772,10 +774,11 @@ export function App() {
   async function onLoadRecording(file: File) {
     setUserAudioError(null);
     const token = sessionToken.current;
+    const run = loadRuns.current.begin();
     try {
       const next = await loadUserAudio(file, session?.timeline.durationSeconds ?? 0);
-      if (token !== sessionToken.current) {
-        // another song was opened while this recording loaded
+      if (token !== sessionToken.current || !loadRuns.current.isCurrent(run)) {
+        // another song was opened, or a newer recording was picked, while this recording loaded
         next.dispose();
         return;
       }
@@ -798,6 +801,7 @@ export function App() {
       void restoreProfile(file, next);
     } catch (e) {
       // keep whatever was playing before
+      if (!loadRuns.current.isCurrent(run)) return;
       setUserAudioError(e instanceof Error ? e.message : 'That recording could not be opened.');
     }
   }
@@ -815,8 +819,10 @@ export function App() {
     const preset = id === WRITTEN ? undefined : presetById(id);
     applyFileTuning(session.score, session.written, trackIndex, preset?.tuning ?? null);
     const timeline = buildTimeline(session.score);
+    const detecting = isDetecting();
     session.clock.dispose();
     setSession({ ...session, timeline, clock: connectAudio(session.score, timeline) });
+    if (detecting) requestDetection();
     setTuningId(FILE_TUNING);
     playingRef.current = false;
     setPlaying(false);
@@ -824,8 +830,21 @@ export function App() {
 
   function retryAudio() {
     if (!session) return;
+    const detecting = isDetecting();
     session.clock.dispose();
     setSession({ ...session, clock: connectAudio(session.score, session.timeline) });
+    if (detecting) requestDetection();
+  }
+
+  /** Whether the loaded recording is being lined up with the tab, or waiting to be, which a rebuild of the tab's sound would cancel. */
+  function isDetecting(): boolean {
+    return alignStatus.phase === 'analysing' || alignStatus.phase === 'waiting' || alignRequest !== null;
+  }
+
+  /** Lines the loaded recording up again once the tab's new sound is ready. */
+  function requestDetection() {
+    const { userClock: loaded } = live.current;
+    if (loaded?.file) setAlignRequest({ file: loaded.file, clock: loaded });
   }
 
   const onFrame = useCallback(
@@ -866,7 +885,7 @@ export function App() {
       const target = e.target as HTMLElement | null;
       const action = interpretKey(e.key, { tag: target?.tagName ?? 'body' });
       if (!action || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (action === 'toggle-fullscreen' && e.repeat) return;
+      if ((action === 'toggle-fullscreen' || action === 'toggle-play' || action === 'toggle-loop') && e.repeat) return;
       e.preventDefault();
       switch (action) {
         case 'toggle-play':

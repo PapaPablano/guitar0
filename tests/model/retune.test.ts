@@ -49,6 +49,15 @@ describe('retuneTimeline', () => {
     expect(new Set(notes.map((n) => n.string)).size).toBe(2);
   });
 
+  it('counts a capo: the sounding pitch includes it, and the new fret is counted from it', () => {
+    const base = halfDown([{ start: 0, end: 1, string: 3, fret: 5 }]);
+    const capoed = { ...base, tracks: [{ ...base.tracks[0], capo: 2 }] };
+    const [n] = retuneTimeline(capoed, 0, std).notesForTrack(0);
+    // string 3 is 54 half-down; capo 2 and fret 5 sound 61. In standard (G = 55) with the capo on 2, that is fret 4.
+    expect(std[n.string - 1] + 2 + n.fret).toBe(54 + 2 + 5);
+    expect([n.string, n.fret]).toEqual([3, 4]);
+  });
+
   it('returns the same timeline when the tuning already matches', () => {
     const src = makeTimeline([{ start: 0, end: 1 }]);
     expect(retuneTimeline(src, 0, std)).toBe(src);

@@ -80,6 +80,8 @@ export interface FretboardOptions {
 interface Naming {
   readonly mode: LabelMode;
   readonly tuning: readonly number[];
+  /** The capo fret: a fretted note sounds that many semitones above open pitch plus its fret. */
+  readonly capo?: number;
   readonly spelling: NoteSpelling;
 }
 
@@ -88,7 +90,7 @@ export function dotText(note: NoteEvent, naming: Naming): { main: string; badge:
   const open = naming.tuning[note.string - 1];
   if (naming.mode === 'fret' || open === undefined) return { main: fretLabel(note), badge: null };
   if (note.techniques.dead) return { main: 'x', badge: null };
-  const name = noteName(open + note.fret, naming.spelling);
+  const name = noteName(open + (naming.capo ?? 0) + note.fret, naming.spelling);
   const main = note.techniques.ghost ? `(${name})` : name;
   return { main, badge: naming.mode === 'both' ? String(note.fret) : null };
 }
@@ -121,6 +123,7 @@ export function renderFretboard(
   const naming: Naming = {
     mode: options.labelMode ?? DEFAULT_LABEL_MODE,
     tuning,
+    capo: timeline.tracks[trackIndex]?.capo ?? 0,
     spelling: spellingForTuning(tuning),
   };
 

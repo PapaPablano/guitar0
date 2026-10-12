@@ -3,6 +3,7 @@ import { secondsToTicks, ticksToSeconds } from '../model/alphatab-adapter';
 import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
+import { readOutputLatency } from './output-latency';
 import { loadSoundFontBytes } from './soundfont-cache';
 import { substituteUnplayablePrograms } from './font-substitutes';
 import { programGain } from './track-balance';
@@ -32,22 +33,6 @@ export interface SynthOptions {
   onProgress?: (fraction: number) => void;
 }
 
-/** Output latency in seconds: the delay between the synth reporting a position and it being heard. */
-let cachedLatency: number | undefined;
-
-export function readOutputLatency(): number {
-  if (cachedLatency !== undefined) return cachedLatency;
-  try {
-    const ctx = new AudioContext();
-    const latency = (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
-    void ctx.close();
-    cachedLatency = latency;
-    return latency;
-  } catch {
-    return 0;
-  }
-}
-
 /**
  * A Clock backed by alphaTab's synth. The synth reports its position a few times a second; between
  * reports the position is interpolated with the monotonic clock, and the output latency is taken
@@ -58,7 +43,7 @@ export class SynthClock implements Clock {
   private isPlaying = false;
   private currentRate = 1;
   private loopRange: LoopRange | null = null;
-  private readonly latency: number;
+  private readonly latency: () => number;
   private silentTrack: number | null = null;
   /** Tracks whose level has been set away from the default, so one that goes back to 1 is set back. */
   private readonly levelled = new Set<number>();
@@ -75,9 +60,9 @@ export class SynthClock implements Clock {
     private readonly api: alphaTab.AlphaTabApi,
     private readonly duration: number,
     private readonly tempoMap: readonly TempoPoint[],
-    latencySeconds = readOutputLatency(),
+    latencySeconds: number | (() => number) = readOutputLatency,
   ) {
-    this.latency = latencySeconds;
+    this.latency = typeof latencySeconds === 'function' ? latencySeconds : () => latencySeconds;
     api.playerPositionChanged.on((e) => {
       // The tick position does not depend on playback speed, so it is converted with our own tempo
       // map; the reported time does (it runs in real time when the tempo is slowed).
@@ -112,7 +97,7 @@ export class SynthClock implements Clock {
   }
 
   time(): number {
-    const heard = this.position() - (this.isPlaying ? this.latency * this.currentRate : 0);
+    const heard = this.position() - (this.isPlaying ? this.latency() * this.currentRate : 0);
     return clamp(heard, 0, this.duration);
   }
 

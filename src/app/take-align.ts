@@ -11,16 +11,19 @@ import { tabFingerprint } from '../audio/tab-fingerprint';
 
 /**
  * Which build of this decision a remembered take came from. A record without the current one is judged again, so a change to
- * the analysis or to this decision bumps it and forces a re-check.
+ * the analysis or to this decision bumps it and forces a re-check. A nudge is stored in the same field as the detected offset,
+ * so a change to how a take is timed on playback bumps it too: a nudge that cancelled the old timing must not be replayed on the new.
+ * 2: stems report the position that is heard (output latency taken off), and the tolerance below was tightened.
  */
-export const TAKE_REVISION = 1;
+export const TAKE_REVISION = 2;
 
 /**
  * How far any one bar's offset may sit from the take's median offset and still count as one offset. Anchors are rounded to
- * 10 ms, so nothing under about 20 ms is workable; 50 ms is the working bar of the bar-level alignment (R2 of its plan).
+ * 10 ms, so nothing under about 20 ms is workable. A take plays at the median, so a bar this far from it is heard this far
+ * off the tab; 25 ms keeps that under what a player hears as lag, where a manual load follows each bar's own anchor.
  * A take whose tempo differs even slightly drifts past this within a song, which is what rejects it (KD3).
  */
-export const TAKE_TOLERANCE_SECONDS = 0.05;
+export const TAKE_TOLERANCE_SECONDS = 0.025;
 
 export type TakeVerdict =
   | { readonly kind: 'offset'; readonly offset: number }
@@ -42,8 +45,9 @@ function median(values: readonly number[]): number {
 /**
  * The one offset an aligned result stands for, or the reason it does not. The whole-song result is used, never the bar-by-bar
  * fallback. It counts only when it is the lined-up tier with no holds and no skipped stretches, every bar's offset (its anchor
- * minus the tab bar's start, and the end anchor against the tab's end) is within the tolerance of the median, and the median
- * is within the shared 30 s range.
+ * minus the tab bar's start) is within the tolerance of the median, and the median is within the shared 30 s range. The end
+ * anchor is left out of the test and the median: it is read off a coarser grid than the bars (match.ts) and only says where
+ * the take ends, which a take played at one offset does not follow.
  */
 function constantOffsetOf(result: Extract<AnalysisResult, { kind: 'aligned' }>, bars: readonly BarSpan[]): TakeVerdict {
   if (result.tier !== 'lined-up') return noMatch('not-confident');
@@ -52,7 +56,6 @@ function constantOffsetOf(result: Extract<AnalysisResult, { kind: 'aligned' }>, 
     return noMatch('inconsistent');
   }
   const offsets = bars.map((bar, k) => anchored.anchors[k] - bar.start);
-  offsets.push(anchored.endAnchor - bars[bars.length - 1].end);
   const middle = median(offsets);
   if (offsets.some((d) => Math.abs(d - middle) > TAKE_TOLERANCE_SECONDS)) return noMatch('inconsistent');
   if (Math.abs(middle) > OFFSET_MAX_SECONDS) return noMatch('out-of-range');

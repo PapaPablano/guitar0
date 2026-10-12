@@ -364,6 +364,7 @@ const UNPICKED_STRENGTH = 0.55;
 interface Naming {
   readonly mode: LabelMode;
   readonly tuning: readonly number[];
+  readonly capo?: number;
   readonly spelling: ReturnType<typeof spellingForTuning>;
 }
 
@@ -386,7 +387,7 @@ export function renderNeckView(
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
   const steps = stepsAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD);
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
-  const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, spelling: spellingForTuning(tuning) };
+  const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, capo: timeline.tracks[trackIndex]?.capo ?? 0, spelling: spellingForTuning(tuning) };
   const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount) : photoPlacement(width, height);
   const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount) : null;
   const poseOf = (note: NoteEvent) => cues?.poses.get(note.id);

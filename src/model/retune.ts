@@ -58,7 +58,7 @@ function place(
 /** Octave shifts to try, nearest first. A pitch outside the new tuning's range is moved by octaves. */
 const OCTAVE_TRIES = [0, 12, -12, 24, -24, 36, -36];
 
-export function retuneNotes(notes: readonly NoteEvent[], from: readonly number[], to: readonly number[]): NoteEvent[] {
+export function retuneNotes(notes: readonly NoteEvent[], from: readonly number[], to: readonly number[], capo = 0): NoteEvent[] {
   let chordTick = Number.NaN;
   let taken = new Set<number>();
   return notes.map((note) => {
@@ -68,9 +68,10 @@ export function retuneNotes(notes: readonly NoteEvent[], from: readonly number[]
     }
     const open = from[note.string - 1];
     if (open === undefined) return note;
-    const pitch = open + note.fret;
+    // The capo raises every string, so the sounding pitch includes it and a fret in the new tuning is counted from it.
+    const pitch = open + capo + note.fret;
     for (const shift of OCTAVE_TRIES) {
-      const spot = place(pitch + shift, to, note.string, taken);
+      const spot = place(pitch + shift - capo, to, note.string, taken);
       if (!spot) continue;
       taken.add(spot.string);
       return spot.string === note.string && spot.fret === note.fret ? note : { ...note, ...spot };
@@ -86,7 +87,7 @@ export function retuneNotes(notes: readonly NoteEvent[], from: readonly number[]
 export function retuneTimeline(timeline: Timeline, trackIndex: number, tuning: readonly number[]): Timeline {
   const track = timeline.tracks[trackIndex];
   if (!track || sameTuning(track.tuning, tuning) || track.tuning.length !== tuning.length) return timeline;
-  const retuned = retuneNotes(timeline.notesForTrack(trackIndex), track.tuning, tuning);
+  const retuned = retuneNotes(timeline.notesForTrack(trackIndex), track.tuning, tuning, track.capo ?? 0);
   return {
     ...timeline,
     tracks: timeline.tracks.map((t) => (t.index === trackIndex ? { ...t, tuning } : t)),
