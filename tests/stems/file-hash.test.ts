@@ -28,3 +28,20 @@ describe('hashFile', () => {
     await expect(hashFile(f)).resolves.toHaveLength(64);
   });
 });
+
+import { hashVideoLink } from '../../src/stems/file-hash';
+
+describe('hashVideoLink', () => {
+  it('is 64 lowercase hex characters, the key shape the desktop alignment store requires', async () => {
+    expect(await hashVideoLink('https://www.youtube.com/watch?v=abc123')).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it('is stable for one link and differs for two links', async () => {
+    const a = await hashVideoLink('https://www.youtube.com/watch?v=abc123');
+    expect(await hashVideoLink('https://www.youtube.com/watch?v=abc123')).toBe(a);
+    expect(await hashVideoLink('https://www.youtube.com/watch?v=zzz999')).not.toBe(a);
+  });
+  it('does not collide with the hash of a file that holds the same text', async () => {
+    const link = 'https://www.youtube.com/watch?v=abc123';
+    expect(await hashVideoLink(link)).not.toBe(await hashFile(new File([link], 'x.txt')));
+  });
+});

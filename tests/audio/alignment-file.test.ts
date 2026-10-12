@@ -150,3 +150,45 @@ describe('barSignature', () => {
     expect(tabFingerprint([{ start: 0, end: 2 }])).toMatch(/^1:[0-9a-f]{8}$/);
   });
 });
+
+describe('a take\'s record (a YouTube take judged against the tab)', () => {
+  const VIDEO = 'c'.repeat(64);
+  const offsetRecord = (): AlignmentRecord => ({ source: 'auto', holds: [], revision: 1, fingerprint: '6:0f0f0f0f', take: { kind: 'offset', offset: 12.25 }, previousOffset: 12 });
+  const noMatchRecord = (): AlignmentRecord => ({ source: 'auto', holds: [], revision: 1, fingerprint: '6:0f0f0f0f', take: { kind: 'no-match', reason: 'inconsistent' } });
+
+  it('round-trips an offset with the detected one kept as the previous value', () => {
+    expect(parseAlignmentFile(toAlignmentFile(VIDEO, offsetRecord()), VIDEO)).toEqual(offsetRecord());
+  });
+
+  it('round-trips a no-match with its reason, for every reason', () => {
+    for (const reason of ['too-long', 'silent', 'not-confident', 'out-of-range', 'inconsistent'] as const) {
+      const record: AlignmentRecord = { ...noMatchRecord(), take: { kind: 'no-match', reason } };
+      expect(parseAlignmentFile(toAlignmentFile(VIDEO, record), VIDEO)).toEqual(record);
+    }
+  });
+
+  it('survives being written out as text and read back', () => {
+    const text = JSON.stringify(toAlignmentFile(VIDEO, offsetRecord()), null, 2);
+    expect(parseAlignmentFile(JSON.parse(text), VIDEO)).toEqual(offsetRecord());
+  });
+
+  it('clamps a stored offset beyond the shared range', () => {
+    const file = { ...toAlignmentFile(VIDEO, offsetRecord()), take: { offset: 500 } };
+    expect(parseAlignmentFile(file, VIDEO)?.take).toEqual({ kind: 'offset', offset: 30 });
+  });
+
+  it('reads an unknown outcome shape as a record with no outcome, not an error', () => {
+    for (const take of [{ offset: 'x' }, { reason: 'boom' }, {}, 5, 'text', null, [1]]) {
+      const record = parseAlignmentFile({ ...toAlignmentFile(VIDEO, offsetRecord()), take }, VIDEO);
+      expect(record).not.toBeNull();
+      expect(record).not.toHaveProperty('take');
+      expect(record?.fingerprint).toBe('6:0f0f0f0f');
+    }
+  });
+
+  it('leaves a recording\'s record without any outcome, exactly as before', () => {
+    const file = toAlignmentFile(HASH, full());
+    expect(file).not.toHaveProperty('take');
+    expect(parseAlignmentFile(file, HASH)).not.toHaveProperty('take');
+  });
+});

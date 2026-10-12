@@ -137,3 +137,28 @@ describe('WebAlignmentStore', () => {
     await expect(store.save(A, record())).resolves.toBeUndefined();
   });
 });
+
+describe('a take\'s record in the alignment store', () => {
+  const VIDEO = 'd'.repeat(64);
+  const take = (extra: Partial<AlignmentRecord> = {}): AlignmentRecord => ({ source: 'auto', holds: [], revision: 1, fingerprint: '6:0f0f0f0f', take: { kind: 'offset', offset: 12 }, ...extra });
+
+  it('saves and loads a take outcome under the video key', async () => {
+    const store = new FileAlignmentStore(memoryBackend());
+    await store.save(VIDEO, take());
+    await expect(store.load(VIDEO)).resolves.toEqual(take());
+  });
+
+  it('leaves a recording\'s record under another key untouched', async () => {
+    const store = new FileAlignmentStore(memoryBackend());
+    await store.save(A, record());
+    await store.save(VIDEO, take());
+    await expect(store.load(A)).resolves.toEqual(record());
+  });
+
+  it('a nudge overwrites the stored offset and keeps the detected one as the previous value', async () => {
+    const store = new FileAlignmentStore(memoryBackend());
+    await store.save(VIDEO, take());
+    await store.save(VIDEO, take({ take: { kind: 'offset', offset: 12.2 }, previousOffset: 12 }));
+    await expect(store.load(VIDEO)).resolves.toMatchObject({ take: { kind: 'offset', offset: 12.2 }, previousOffset: 12 });
+  });
+});
