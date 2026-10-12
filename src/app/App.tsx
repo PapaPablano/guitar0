@@ -25,7 +25,7 @@ import { ExportDialog } from './ExportDialog';
 import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
-import { controlsFor } from './alignment-controls';
+import { controlsFor, takeControls } from './alignment-controls';
 import { decideOnOpen, evidenceFor, recordFromMap, settleAnalysis, withAttempt, type AlignStatus, type AlignStamp, type RedetectCause } from './auto-align';
 import { describeDiff, diffAlignments } from './alignment-diff';
 import { checkRecord } from '../alignment/spot-check';
@@ -753,7 +753,7 @@ export function App() {
   const audioReady = audio.status === 'ready' || userClock !== null || stems !== null;
   /** What each control does in the current state, derived once so the offset control, playback and export agree. */
   const stateControls = takeMap
-    ? controlsFor({ phase: 'idle' }, { hasTimeline: false, hasRecordingFile: false })
+    ? takeControls()
     : controlsFor(alignStatus, { hasTimeline: alignment.hasAnchors, hasRecordingFile: userClock?.file != null });
   useEffect(() => {
     if (audioReady) clock?.setRate(tempoPercent / 100);
