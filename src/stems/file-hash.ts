@@ -1,3 +1,9 @@
+/** SHA-256 of some bytes as lowercase hex. */
+async function sha256Hex(bytes: BufferSource): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /** Hashes already started, by File object, so the profile restore and the stem panel read each file's bytes once. */
 const hashes = new WeakMap<File, Promise<string>>();
 
@@ -5,10 +11,7 @@ const hashes = new WeakMap<File, Promise<string>>();
 export function hashFile(file: File): Promise<string> {
   const known = hashes.get(file);
   if (known) return known;
-  const started = (async () => {
-    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
-  })();
+  const started = (async () => sha256Hex(await file.arrayBuffer()))();
   hashes.set(file, started);
   // A failure is not remembered, so a later attempt can succeed.
   started.catch(() => {
@@ -21,7 +24,6 @@ export function hashFile(file: File): Promise<string> {
  * SHA-256 hex of a YouTube take's link, as the key its alignment is saved under. The desktop store wants 64
  * lowercase hex characters; the `youtube:` prefix keeps it apart from the hash of any file's bytes.
  */
-export async function hashVideoLink(url: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`youtube:${url}`));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+export function hashVideoLink(url: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(`youtube:${url}`));
 }

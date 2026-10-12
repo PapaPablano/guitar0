@@ -219,7 +219,7 @@ describe('stepAfterJudge', () => {
 
 describe('stepAfterPrecheck', () => {
   it('goes on to load the stems and judge them when nothing is remembered', () => {
-    expect(stepAfterPrecheck({ action: 'proceed' })).toEqual({ step: 'load', offset: null });
+    expect(stepAfterPrecheck({ action: 'detect' })).toEqual({ step: 'load', offset: null });
   });
 
   it('covers AE4: loads the stems and uses a remembered offset without judging', () => {

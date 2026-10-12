@@ -64,7 +64,7 @@ export interface StateControls {
   readonly canReanalyse: boolean;
 }
 
-/** What the controls do while a YouTube take is on: it was lined up before it played, so the nudge shows as a fine-tune and nothing about the loaded recording applies. */
+/** The controls while a YouTube take is on: it was lined up before it played, so the nudge only fine-tunes. */
 export function takeControls(): StateControls {
   return controlsFor({ phase: 'idle' }, { hasTimeline: false, hasRecordingFile: false });
 }

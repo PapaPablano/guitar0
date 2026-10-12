@@ -27,10 +27,9 @@ export type TakeVerdict =
   | { readonly kind: 'no-match'; readonly reason: TakeNoMatchReason };
 
 /** What a finished analysis means for a take: a verdict, or the check could not run (`failed`), or it was cancelled. */
-export type TakeJudged =
-  | TakeVerdict
-  | { readonly kind: 'failed'; readonly reason: 'decode' | 'render' | 'worker' | 'no-sound' }
-  | { readonly kind: 'cancelled' };
+export type TakeFailReason = 'decode' | 'render' | 'worker' | 'no-sound';
+
+export type TakeJudged = TakeVerdict | { readonly kind: 'failed'; readonly reason: TakeFailReason } | { readonly kind: 'cancelled' };
 
 const noMatch = (reason: TakeNoMatchReason): TakeVerdict => ({ kind: 'no-match', reason });
 
@@ -125,19 +124,13 @@ export function takeNoMatchText(reason: TakeNoMatchReason): string {
 }
 
 /** What the player is told when the check itself could not run; that is not a no-match, and the take was not played. */
-export function takeFailedText(reason: 'decode' | 'render' | 'worker' | 'no-sound'): string {
+export function takeFailedText(reason: TakeFailReason): string {
   const why =
     reason === 'decode' ? 'its audio could not be read'
     : reason === 'render' || reason === 'no-sound' ? 'the tab could not be played to compare'
     : 'the comparison stopped unexpectedly';
   return `The take could not be checked against the tab because ${why}. It was not played. Try again.`;
 }
-
-/** What the app tells the stem panel before it downloads anything, from what is remembered for the video. */
-export type TakePrecheck =
-  | { readonly action: 'proceed' }
-  | { readonly action: 'reuse'; readonly offset: number }
-  | { readonly action: 'stay'; readonly reason: TakeNoMatchReason };
 
 /** What the stem panel does next with a take: show a message, give the check's error, drop it, load the stems, or switch the take on. */
 export type TakeStep =
@@ -148,13 +141,13 @@ export type TakeStep =
   | { readonly step: 'drop' };
 
 /** Before any download: a remembered no-match is shown as it is; a remembered offset skips only the check; otherwise the take is loaded and judged (KTD8). */
-export function stepAfterPrecheck(pre: TakePrecheck): TakeStep {
+export function stepAfterPrecheck(pre: TakeOpenDecision): TakeStep {
   switch (pre.action) {
     case 'stay':
       return { step: 'show', text: takeNoMatchText(pre.reason), canRecheck: true };
     case 'reuse':
       return { step: 'load', offset: pre.offset };
-    case 'proceed':
+    case 'detect':
       return { step: 'load', offset: null };
   }
 }

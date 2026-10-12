@@ -284,6 +284,11 @@ export function App() {
     });
   }
 
+  /** Whether the stems on screen are a YouTube take, which owns its own alignment (KTD7). */
+  function takeOnScreen(): boolean {
+    return stemsRef.current?.videoUrl !== undefined;
+  }
+
   /** Saves a take's outcome under its video, after a short pause so a run of nudges is one save. */
   function rememberTake(url: string, record: AlignmentRecord) {
     takeRecords.current.set(url, record);
@@ -294,11 +299,10 @@ export function App() {
   const takes: TakeChecks = {
     async precheck(videoUrl) {
       const current = live.current.session;
-      if (!current) return { action: 'proceed' };
+      if (!current) return { action: 'detect' };
       const record = await alignmentStore.load(await hashVideoLink(videoUrl));
       if (record) takeRecords.current.set(videoUrl, record);
-      const decision = decideTakeOnOpen(record, barSpansOf(current.timeline));
-      return decision.action === 'detect' ? { action: 'proceed' } : decision;
+      return decideTakeOnOpen(record, barSpansOf(current.timeline));
     },
     async judge(sources: StemSources, videoUrl, takeSeconds, onProgress, signal): Promise<TakeJudged> {
       const current = live.current.session;
@@ -306,7 +310,13 @@ export function App() {
       takeJob.current?.cancel();
       const run = takeRuns.current.begin();
       // The panel's Cancel stops the check too, not just the import.
-      signal.addEventListener('abort', () => takeRuns.current.isCurrent(run) && cancelTake(), { once: true });
+      signal.addEventListener(
+        'abort',
+        () => {
+          if (takeRuns.current.isCurrent(run)) cancelTake();
+        },
+        { once: true },
+      );
       const token = sessionToken.current;
       const stale = () => !takeRuns.current.isCurrent(run) || token !== sessionToken.current;
       const waited = await waitForTabSound(stale);
@@ -358,7 +368,7 @@ export function App() {
     }
     userClockRef.current?.setAlignment(map);
     // A take on screen keeps its own offset: a recording's late result must not move it.
-    if (!stemsRef.current?.videoUrl) stemsRef.current?.clock.setAlignment(map);
+    if (!takeOnScreen()) stemsRef.current?.clock.setAlignment(map);
     setAlignment(map);
     setOffset(map.base);
     live.current.alignment = map;
@@ -953,14 +963,15 @@ export function App() {
             onLoad={onLoadRecording}
             onOffsetChange={(raw) => {
               const seconds = clampOffset(raw);
-              const url = stemsRef.current?.videoUrl;
-              if (takeMap && url && stemsRef.current) {
+              const onScreen = stemsRef.current;
+              if (takeMap && onScreen?.videoUrl) {
                 // A nudge on a take belongs to the take: it is remembered for that video and never touches the recording.
                 const next = takeMap.withBase(seconds);
-                stemsRef.current.clock.setAlignment(next);
+                onScreen.clock.setAlignment(next);
                 setTakeMap(next);
-                const bars = live.current.session ? barSpansOf(live.current.session.timeline) : [];
-                rememberTake(url, withNudge(takeRecords.current.get(url), next.base, bars));
+                const remembered = takeRecords.current.get(onScreen.videoUrl);
+                const bars = remembered || !live.current.session ? [] : barSpansOf(live.current.session.timeline);
+                rememberTake(onScreen.videoUrl, withNudge(remembered, next.base, bars));
                 return;
               }
               offsetMoved.current = true;
@@ -982,7 +993,7 @@ export function App() {
               setMix(next);
               mixMoved.current = true;
               // A take's mix is not the recording's: it is never written into the recording's saved profile (KTD7).
-              if (isDesktop() && !stemsRef.current?.videoUrl) {
+              if (isDesktop() && !takeOnScreen()) {
                 profileMix.current = next;
                 scheduleProfileSave(live.current.offset);
               }
