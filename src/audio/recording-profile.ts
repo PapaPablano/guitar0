@@ -9,6 +9,15 @@ export const PROFILE_VERSION = 1;
 /** Most recordings remembered; the oldest entry is dropped first. */
 export const PROFILE_CAP = 200;
 
+/** Why a YouTube take was judged not to line up with the tab; the same reasons the analysis gives. */
+export const TAKE_NO_MATCH_REASONS = ['too-long', 'silent', 'not-confident', 'out-of-range', 'inconsistent'] as const;
+export type TakeNoMatchReason = (typeof TAKE_NO_MATCH_REASONS)[number];
+
+/** How a YouTube take was judged against the tab: placed by one offset, or found not to line up. */
+export type TakeOutcome =
+  | { readonly kind: 'offset'; readonly offset: number }
+  | { readonly kind: 'no-match'; readonly reason: TakeNoMatchReason };
+
 /**
  * How the recording was lined up with the tab beyond its base offset (kept in the recording's alignment file, see
  * `alignment-file.ts`). A record means the recording was analysed
@@ -34,8 +43,10 @@ export interface AlignmentRecord {
   tier?: 'lined-up' | 'roughly';
   /** A detection that failed for this revision and tab, so opening the recording does not repeat it. */
   attempt?: { revision: number; fingerprint: string };
-  /** The offset the owner had set when a detected timeline replaced it, kept so there is something to fall back to. */
+  /** The offset the owner had set when a detected timeline replaced it, kept so there is something to fall back to. For a take, the detected offset kept when a nudge overwrote it. */
   previousOffset?: number;
+  /** Set only on the record of a YouTube take: the offset it was placed by, or why it did not line up. */
+  take?: TakeOutcome;
 }
 
 /**

@@ -54,7 +54,10 @@ export interface AnalysisDeps {
 }
 
 export interface AnalysisArgs {
-  readonly file: Blob;
+  /** The recording to decode. Leave it out when `samples` supplies the audio instead. */
+  readonly file?: Blob;
+  /** Builds the audio to compare as mono samples at `FEATURE_RATE`, for a take that is not one file (its stems mixed). Used instead of `file`. */
+  readonly samples?: () => Promise<Float32Array>;
   /** The recording's length, known from its audio element before anything is decoded. */
   readonly durationSeconds: number;
   /** The tab's length, to refuse a render the page could not hold. */
@@ -119,6 +122,11 @@ const browserDeps: AnalysisDeps = {
   },
 };
 
+/** One audio file as mono samples at `FEATURE_RATE`, decoded fresh each time and not kept, for callers that mix several files. */
+export function decodeToFeatureRate(file: Blob): Promise<Float32Array> {
+  return browserDeps.decode(file);
+}
+
 /** Each recording's decoded samples for the page session, so analysing it again does not decode it again. */
 const decodedRecordings = new WeakMap<Blob, Float32Array>();
 
@@ -158,7 +166,9 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
     }
     let recording: Float32Array;
     try {
-      recording = await decodeRecording(args.file, deps);
+      if (args.samples) recording = await args.samples();
+      else if (args.file) recording = await decodeRecording(args.file, deps);
+      else return settle({ kind: 'failed', reason: 'decode' });
     } catch {
       return settle({ kind: 'failed', reason: 'decode' });
     }

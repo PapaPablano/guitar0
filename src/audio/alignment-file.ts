@@ -1,6 +1,6 @@
 import { AlignmentMap } from './alignment-map';
 import { clampOffset } from './offset-range';
-import { SECTION_NAME_MAX, type AlignmentRecord, type BarEvidence, type SectionRecord } from './recording-profile';
+import { SECTION_NAME_MAX, TAKE_NO_MATCH_REASONS, type AlignmentRecord, type BarEvidence, type SectionRecord, type TakeNoMatchReason, type TakeOutcome } from './recording-profile';
 
 /** Bumped when the file's shape changes; a file with any other version reads as "no alignment". */
 export const ALIGNMENT_FILE_VERSION = 1;
@@ -38,6 +38,8 @@ export interface AlignmentFile {
   sections?: SectionRecord[];
   endAnchor?: number;
   bars?: AlignmentFileBar[];
+  /** Only in a YouTube take's file: the offset it was placed by, or why it did not line up. */
+  take?: { offset?: number; reason?: TakeNoMatchReason };
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -69,6 +71,16 @@ function normalizeEvidence(entry: unknown): BarEvidence {
   if (isNumber(entry.confidence)) evidence.confidence = entry.confidence;
   if (typeof entry.matched === 'boolean') evidence.matched = entry.matched;
   return evidence;
+}
+
+/** A take's outcome from untrusted data: a finite offset (clamped) or a known reason; anything else is no outcome. */
+function normalizeTake(raw: unknown): TakeOutcome | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (isNumber(raw.offset)) return { kind: 'offset', offset: clampOffset(raw.offset) };
+  if (typeof raw.reason === 'string' && (TAKE_NO_MATCH_REASONS as readonly string[]).includes(raw.reason)) {
+    return { kind: 'no-match', reason: raw.reason as TakeNoMatchReason };
+  }
+  return undefined;
 }
 
 /**
@@ -104,6 +116,8 @@ export function normalizeAlignmentRecord(raw: unknown): AlignmentRecord | undefi
     record.attempt = { revision: raw.attempt.revision as number, fingerprint: raw.attempt.fingerprint };
   }
   if (isNumber(raw.previousOffset)) record.previousOffset = clampOffset(raw.previousOffset);
+  const take = normalizeTake(raw.take);
+  if (take) record.take = take;
   return record;
 }
 
@@ -120,6 +134,7 @@ export function toAlignmentFile(recording: string, record: AlignmentRecord): Ali
   if (record.fingerprint) file.fingerprint = record.fingerprint;
   if (record.previousOffset !== undefined) file.previousOffset = round(record.previousOffset, 3);
   if (record.attempt) file.attempt = { ...record.attempt };
+  if (record.take) file.take = record.take.kind === 'offset' ? { offset: round(clampOffset(record.take.offset), 3) } : { reason: record.take.reason };
   if (record.sections && record.sections.length > 0) file.sections = record.sections.map((s) => ({ ...s }));
   if (record.anchors && record.endAnchor !== undefined) {
     file.endAnchor = round(record.endAnchor, 3);

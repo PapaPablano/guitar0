@@ -41,6 +41,14 @@ function channels() {
 }
 
 describe('StemMixClock', () => {
+  it('reports the length of the stems own audio, which can differ from the tab length', () => {
+    const { list, el } = channels();
+    el('vocals').duration = 245.5;
+    const clock = new StemMixClock(list, 60);
+    expect(clock.mediaSeconds).toBe(list[0].element.duration);
+    expect(clock.mediaSeconds).not.toBe(60);
+  });
+
   it('covers AE4: every stem gets the same rate with pitch preserved', () => {
     const { list } = channels();
     const clock = new StemMixClock(list, 60);
@@ -367,5 +375,16 @@ describe('StemMixClock with holds', () => {
     clock.time();
     expect(clock.pass).toBe(2);
     for (const e of elements) expect(e.currentTime).toBeCloseTo(36.5, 6);
+  });
+});
+
+describe('StemMixClock offset for a lined-up take', () => {
+  it('reports the offset map of a take as the offset the export reads (export places the stems by clock.offset)', () => {
+    const { list } = channels();
+    const clock = new StemMixClock(list, 60);
+    clock.setAlignment(AlignmentMap.fromOffset(12));
+    expect(clock.offset).toBe(12);
+    clock.setAlignment(AlignmentMap.fromOffset(12).withBase(12.2));
+    expect(clock.offset).toBeCloseTo(12.2, 9);
   });
 });

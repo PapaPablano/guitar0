@@ -64,6 +64,11 @@ export interface StateControls {
   readonly canReanalyse: boolean;
 }
 
+/** The controls while a YouTube take is on: it was lined up before it played, so the nudge only fine-tunes. */
+export function takeControls(): StateControls {
+  return controlsFor({ phase: 'idle' }, { hasTimeline: false, hasRecordingFile: false });
+}
+
 export function controlsFor(status: AlignStatus, ctx: { hasTimeline: boolean; hasRecordingFile: boolean }): StateControls {
   const running = status.phase === 'analysing' || status.phase === 'waiting';
   return {

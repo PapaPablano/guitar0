@@ -15,6 +15,8 @@ interface OffsetSliderProps {
   offsetSeconds: number | null;
   /** The offset is the only manual timing control, shown only while no timeline is committed. */
   offsetControl: boolean;
+  /** True for a YouTube take the app lined up itself, where the control only fine-tunes. */
+  autoPlaced?: boolean;
   fileName: string | null;
   error: string | null;
   onLoad: (file: File) => void;
@@ -22,9 +24,9 @@ interface OffsetSliderProps {
   onRemove: () => void;
 }
 
-export function OffsetSlider({ offsetSeconds, offsetControl, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
+export function OffsetSlider({ offsetSeconds, offsetControl, autoPlaced = false, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
   const input = useRef<HTMLInputElement>(null);
-  // The offset controls follow the recording alone: not the desktop bridge, not stems (AE10).
+  // The controls show for a loaded recording and for the stems; the note below says which one they move.
   const loaded = offsetSeconds !== null;
 
   return (
@@ -74,7 +76,9 @@ export function OffsetSlider({ offsetSeconds, offsetControl, fileName, error, on
           </button>
           {offsetControl && (
             <p className="muted note">
-              The recording could not be lined up automatically, so this offset moves the whole recording against the tab. A recording that speeds up or slows down against the tab will still drift.
+              {autoPlaced
+                ? 'This take was lined up with the tab automatically. Nudge it only to fine-tune.'
+                : 'The recording could not be lined up automatically, so this offset moves the whole recording against the tab. A recording that speeds up or slows down against the tab will still drift.'}
             </p>
           )}
         </>

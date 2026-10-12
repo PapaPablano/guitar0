@@ -53,6 +53,11 @@ export class StemMixClock implements Clock {
     });
   }
 
+  /** The length of the stems' own audio, which can differ from the tab's length the clock plays for. */
+  get mediaSeconds(): number {
+    return this.channels[0].element.duration;
+  }
+
   /** The 1-based pass of the loop in progress. */
   get pass(): number {
     return this.passNumber;
