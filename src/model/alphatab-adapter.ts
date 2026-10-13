@@ -1,5 +1,5 @@
 import * as alphaTab from '@coderline/alphatab';
-import type { BarEvent, NoteEvent, SlideKind, TempoPoint, Techniques, Timeline, TrackInfo } from './score';
+import type { BarEvent, NoteEvent, PickStroke, SlideKind, TempoPoint, Techniques, Timeline, TrackInfo } from './score';
 
 const TICKS_PER_QUARTER = 960;
 /** Standard guitar tuning, highest string first (E4 B3 G3 D3 A2 E2). */
@@ -68,6 +68,12 @@ function maxBendSemitones(note: alphaTab.model.Note): number {
   let max = 0;
   for (const p of points) max = Math.max(max, p.value);
   return max / 2;
+}
+
+function strokeOf(beat: alphaTab.model.Beat): PickStroke {
+  if (beat.pickStroke === alphaTab.model.PickStroke.Down) return 'down';
+  if (beat.pickStroke === alphaTab.model.PickStroke.Up) return 'up';
+  return 'none';
 }
 
 function techniquesOf(note: alphaTab.model.Note): Techniques {
@@ -229,6 +235,7 @@ export function buildTimeline(score: alphaTab.model.Score): Timeline {
               playbackBar: playbackIndex,
               scoreBar: masterBar.index,
               techniques: techniquesOf(note),
+              stroke: strokeOf(beat),
             }),
           );
         }

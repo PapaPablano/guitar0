@@ -3,6 +3,9 @@
 
 export type SlideKind = 'none' | 'shift' | 'legato' | 'out-down' | 'out-up' | 'in-below' | 'in-above';
 
+/** How the picking hand plays a beat: down, up, or not marked in the file. */
+export type PickStroke = 'down' | 'up' | 'none';
+
 export interface Techniques {
   /** Largest bend in semitones; 0 when the note is not bent. */
   readonly bend: number;
@@ -36,6 +39,8 @@ export interface NoteEvent {
   /** Bar index in score order, for placing the tab cursor across repeats. */
   readonly scoreBar: number;
   readonly techniques: Techniques;
+  /** The pick stroke the file marks on the beat this note is in; every note of a chord shares it. Absent reads as `none`. */
+  readonly stroke?: PickStroke;
 }
 
 export interface BarEvent {
