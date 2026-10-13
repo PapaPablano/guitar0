@@ -5,6 +5,7 @@ import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../ex
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
+import { loadPickPhoto } from '../export/pick-photo';
 import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
@@ -119,8 +120,10 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
       const photo = panels.includes('neck') ? await loadNeckPhoto() : undefined;
+      const pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
       if (!current()) {
         photo?.close();
+        pick?.photo.close();
         return;
       }
       setPhase({ name: 'exporting', fraction: 0 });
@@ -132,6 +135,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
         panels,
         view,
         photo,
+        pickPhoto: pick,
         alignment,
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
@@ -190,7 +194,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
                   Shows: {panels.map((p) => PANEL_NAMES[p]).join(' + ')}{' '}
                   <span className="muted">(change it under Views on the player)</span>
                 </p>
-                {panels.includes('neck') && onNeckCuesChange && (
+                {(panels.includes('neck') || panels.includes('pick')) && onNeckCuesChange && (
                   <label className="field">
                     <input type="checkbox" checked={view.neckCues ?? true} onChange={(e) => onNeckCuesChange(e.target.checked)} /> Show
                     technique cues (hammer-ons, slides, bends)

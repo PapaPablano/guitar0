@@ -2,6 +2,7 @@ import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 import { AlignmentMap, type AlignmentData } from '../audio/alignment-map';
 import { hydrateTimeline, type TimelineData } from '../model/serialize';
 import type { PanelId } from '../app/stage-layout';
+import type { NeckProfile } from '../render/neck-profile';
 import { renderStageFrame, type ExportViewOptions, type FrameContext } from '../render/stage-frame';
 import { tabTimeAt, type PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
@@ -19,6 +20,8 @@ export interface StartMessage {
   view: ExportViewOptions;
   /** The guitar photo, loaded on the main thread; needed when the real guitar is one of the panels. */
   photo?: ImageBitmap;
+  /** The pick view's photo and the profile it was measured with, sent together; needed when the pick view is one of the panels. */
+  pickPhoto?: { photo: ImageBitmap; profile: NeckProfile };
   /** How long the video lasts: the tab plus any extra playing the tab waits through. */
   outputSeconds: number;
   /** Where the recording sits against the tab; absent when the video is the tab's own length. */
@@ -75,6 +78,7 @@ async function run(msg: StartMessage): Promise<void> {
   const audioEncoder = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: onError });
   audioEncoder.configure(audioConfig());
   if (msg.panels.includes('neck') && !msg.photo) throw new Error('The guitar photo was not loaded for the real guitar view.');
+  if (msg.panels.includes('pick') && !msg.pickPhoto) throw new Error('The guitar photo and its profile were not loaded for the pick view.');
 
   // Audio first: it is already rendered, so it goes in as one-second blocks.
   const block = audio.sampleRate;
@@ -104,7 +108,7 @@ async function run(msg: StartMessage): Promise<void> {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     if (failure) throw failure;
     const t = tabTimeAt(alignment, frameTime(frame, preset.fps));
-    renderStageFrame(ctx as unknown as FrameContext, timeline, msg.trackIndex, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null });
+    renderStageFrame(ctx as unknown as FrameContext, timeline, msg.trackIndex, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null, pickPhoto: msg.pickPhoto ?? null });
     const videoFrame = new VideoFrame(canvas, {
       timestamp: Math.round((frame * 1e6) / preset.fps),
       duration: Math.round(1e6 / preset.fps),

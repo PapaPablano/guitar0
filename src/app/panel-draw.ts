@@ -2,10 +2,12 @@ import { barAtX, getBarTimelineLayout, renderBarTimeline } from '../render/bar-t
 import { renderFretboard, type LabelMode } from '../render/fretboard';
 import { renderHighway } from '../render/highway';
 import { renderNeckFrame } from '../render/neck-view';
+import { PICK_PROFILE } from '../render/neck-profile';
 import { getStripLayout, renderTabStrip, scoreBarAtX, type LoopBars } from '../render/tab-strip';
 import type { Timeline } from '../model/score';
 import { fitCanvas } from './canvas-fit';
 import { PANEL_NAMES, type PanelId } from './stage-layout';
+import type { PickPhoto } from './use-pick-photo';
 
 /** A drawing surface: one of the panels, or the slim bar strip that stands in for the tab strip's seeking and looping. */
 export type SurfaceKind = PanelId | 'bar';
@@ -19,6 +21,8 @@ export interface PanelDrawState {
   readonly labelMode: LabelMode;
   readonly neckCues: boolean;
   readonly photo: HTMLImageElement | null;
+  /** The pick view's photo and profile; its bundled profile with no photo until it has loaded when absent. */
+  readonly pickPhoto?: PickPhoto | null;
 }
 
 export const SURFACE_NAMES: Record<SurfaceKind, string> = { ...PANEL_NAMES, bar: 'Bar timeline' };
@@ -44,6 +48,15 @@ export function drawSurface(kind: SurfaceKind, canvas: HTMLCanvasElement, s: Pan
         lookahead: s.lookahead,
         labelMode: s.labelMode,
         techniqueCues: s.neckCues,
+      });
+      break;
+    case 'pick':
+      renderNeckFrame(ctx, s.pickPhoto?.image ?? null, s.timeline, s.trackIndex, s.t, width, height, {
+        zoom: true,
+        lookahead: s.lookahead,
+        labelMode: s.labelMode,
+        techniqueCues: s.neckCues,
+        profile: s.pickPhoto?.profile ?? PICK_PROFILE,
       });
       break;
     case 'bar':

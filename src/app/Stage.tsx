@@ -8,6 +8,7 @@ import { drawSurface, surfaceLabel, type SurfaceKind } from './panel-draw';
 import { needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
+import { usePickPhoto } from './use-pick-photo';
 
 interface StageProps {
   timeline: Timeline;
@@ -48,6 +49,7 @@ export function Stage({
 }: StageProps) {
   const canvases = useRef<Partial<Record<SurfaceKind, HTMLCanvasElement | null>>>({});
   const photo = useNeckPhoto();
+  const pickPhoto = usePickPhoto();
   const panels = panelsOf(layout);
   const bar = needsBarStrip(panels);
   const key = `${layout.top}/${layout.bottom}`;
@@ -61,7 +63,7 @@ export function Stage({
     const draw = () => {
       const t = clock.time();
       const live = liveRef.current;
-      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current };
+      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current };
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
@@ -76,7 +78,7 @@ export function Stage({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, onFrame, photo]);
+  }, [timeline, trackIndex, clock, onFrame, photo, pickPhoto]);
 
   function panel(id: PanelId) {
     const seekable = id === 'tab';
@@ -93,7 +95,7 @@ export function Stage({
           {...(seekable ? barSelect('tab') : {})}
         />
         <div className="panel-tools">
-          {id === 'neck' && (
+          {(id === 'neck' || id === 'pick') && (
             <button
               type="button"
               aria-pressed={neckCues}

@@ -8,6 +8,7 @@ import { drawSurface, surfaceLabel } from './panel-draw';
 import { PANEL_NAMES, type PanelId } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
+import { usePickPhoto } from './use-pick-photo';
 
 interface PanelFullscreenProps {
   panel: PanelId;
@@ -55,6 +56,7 @@ export function PanelFullscreen({
   const mainRef = useRef<HTMLCanvasElement>(null);
   const barRef = useRef<HTMLCanvasElement>(null);
   const photo = useNeckPhoto();
+  const pickPhoto = usePickPhoto();
   const liveRef = useRef({ loop, lookahead, labelMode, neckCues });
   liveRef.current = { loop, lookahead, labelMode, neckCues };
   const barSelect = useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeekBar, resetKey: panel });
@@ -96,7 +98,7 @@ export function PanelFullscreen({
     const draw = () => {
       const t = clock.time();
       const live = liveRef.current;
-      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current };
+      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current };
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
@@ -109,7 +111,7 @@ export function PanelFullscreen({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, panel, photo]);
+  }, [timeline, trackIndex, clock, panel, photo, pickPhoto]);
 
   const name = PANEL_NAMES[panel];
   return (
@@ -132,7 +134,7 @@ export function PanelFullscreen({
           {...barSelect('bar')}
         />
       )}
-      {panel === 'neck' && (
+      {(panel === 'neck' || panel === 'pick') && (
         <button
           type="button"
           className="panel-fullscreen-cues"

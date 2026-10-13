@@ -5,6 +5,7 @@ import type { PcmAudio } from './audio';
 import { exportLength, fitPcm } from './audio';
 import type { StartMessage, WorkerReply } from './encoder.worker';
 import type { PanelId } from '../app/stage-layout';
+import type { NeckProfile } from '../render/neck-profile';
 import type { ExportViewOptions } from '../render/stage-frame';
 import type { ExportPreset } from './presets';
 
@@ -31,6 +32,8 @@ export function startExport(args: {
   view: ExportViewOptions;
   /** The guitar photo; needed when the real guitar is one of the panels. */
   photo?: ImageBitmap;
+  /** The pick view's photo and the profile it was measured with; needed when the pick view is one of the panels. */
+  pickPhoto?: { photo: ImageBitmap; profile: NeckProfile };
   /** Where the recording sits against the tab; the video lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
   onProgress: (fraction: number) => void;
@@ -75,10 +78,11 @@ export function startExport(args: {
         panels: [...args.panels],
         view: args.view,
         photo: args.photo,
+        pickPhoto: args.pickPhoto,
         outputSeconds,
         alignment,
       };
-      worker.postMessage(start, [audio.left.buffer, audio.right.buffer, ...(args.photo ? [args.photo] : [])]);
+      worker.postMessage(start, [audio.left.buffer, audio.right.buffer, ...(args.photo ? [args.photo] : []), ...(args.pickPhoto ? [args.pickPhoto.photo] : [])]);
     } catch (e) {
       worker.terminate();
       reject(e instanceof Error ? e : new Error(String(e)));
