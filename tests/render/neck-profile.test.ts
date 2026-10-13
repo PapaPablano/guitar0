@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NECK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
+import { NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
 import { PHOTO_FRET_COUNT, photoNoteX, photoNoteXAt, photoPlacement, photoRingRadius, photoStringY } from '../../src/render/neck-view';
 
 describe('the Real guitar view keeps its numbers (characterization)', () => {
@@ -51,9 +51,24 @@ describe('neck profiles', () => {
     });
   };
   sane('NECK_PROFILE', NECK_PROFILE);
+  sane('PICK_PROFILE', PICK_PROFILE);
 
   it('gives the Real guitar view no pick point', () => {
     expect(NECK_PROFILE.pickX).toBeUndefined();
+  });
+
+  it('puts the new view pick point beyond its last fret and inside its photo', () => {
+    expect(PICK_PROFILE.pickX).toBeDefined();
+    expect(PICK_PROFILE.pickX as number).toBeGreaterThan(PICK_PROFILE.fretX[PICK_PROFILE.fretX.length - 1]);
+    expect(PICK_PROFILE.pickX as number).toBeLessThan(PICK_PROFILE.photoWidth);
+  });
+
+  it('keeps the new view photo the same shape as its image (1920 by 961)', () => {
+    expect(PICK_PROFILE.photoWidth / PICK_PROFILE.photoHeight).toBeCloseTo(1920 / 961, 2);
+  });
+
+  it('gives the new view 23 frets, like the Real guitar view', () => {
+    expect(PICK_PROFILE.fretX).toHaveLength(23);
   });
 
   it('moves rings and wires when a profile has a different nut and fret list', () => {

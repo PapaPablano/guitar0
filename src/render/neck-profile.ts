@@ -46,3 +46,29 @@ export const NECK_PROFILE: NeckProfile = {
   neckRow: 236,
   inlayFrets: [3, 5, 7, 9, 12, 14, 16, 18, 20, 23],
 };
+
+/**
+ * The photo the pick view ships with: the same guitar from above, headstock on the left, with the neck running on into the body
+ * so the strings cross a pickup. Measured from the 1920 by 961 image, in half-size units.
+ */
+export const PICK_PROFILE: NeckProfile = {
+  photoWidth: 960,
+  photoHeight: 481,
+  nutX: 134.5,
+  fretX: [184, 231, 276.5, 319, 361, 400.5, 437, 470, 504.5, 537.5, 567.5, 597.5, 625, 651, 675, 697, 718.5, 737.5, 755.5, 772.5, 789, 805, 820],
+  endX: 960,
+  stringKnotsX: [160, 450, 750, 930],
+  stringKnotsY: [
+    [209.3, 205.8, 202.3, 200.2],
+    [219.3, 218.2, 217.1, 216.4],
+    [229, 230.4, 231.8, 232.6],
+    [239.3, 242.9, 246.6, 248.9],
+    [250, 255.7, 261.6, 265.1],
+    [260.5, 268.3, 276.4, 281.2],
+  ],
+  viewStart: 20,
+  viewEnd: 940,
+  neckRow: 238,
+  inlayFrets: [3, 5, 7, 9, 12, 14, 16, 18, 20, 23],
+  pickX: 880,
+};
