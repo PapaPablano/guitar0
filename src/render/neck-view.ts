@@ -1,4 +1,5 @@
 import type { DrawContext } from './draw-context';
+import { NECK_PROFILE, type NeckProfile } from './neck-profile';
 import { DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
 import { emphasisAt } from './emphasis';
 import { BEND_REACH, bendSide, cuesAt, SHIVER_HERTZ, SHIVER_REACH, type FingerPose, type NeckCues, type NoteEffect } from './neck-cue-model';
@@ -9,37 +10,17 @@ import { spellingForTuning } from './note-names';
 import type { NoteEvent, Timeline } from '../model/score';
 
 /**
- * The full-screen view draws glowing rings over a photograph of a real guitar neck. Everything here
- * is measured from that photo (`guitar-photo.jpg`, headstock on the left, shown at 949 by 475 of these units), in the
- * photo's own pixels, so the rings land on its frets and strings.
+ * The full-screen view draws glowing rings over a photograph of a real guitar neck. Everything it draws against is
+ * measured from that photo and held in a `NeckProfile` (headstock on the left), in the photo's own pixels, so the rings land on
+ * its frets and strings. Without a profile argument the Real guitar view's photo is used.
  */
-export const PHOTO_WIDTH = 949;
-export const PHOTO_HEIGHT = 475;
-
-/** X of the nut, then of each fret wire from fret 1 to fret 24. */
-const NUT_X = 134;
-const FRET_X = [182, 228, 273, 316, 356, 396, 430, 464, 499, 531, 560, 590, 617, 643, 667, 688, 709, 728, 746, 763, 779, 795, 810] as const;
-export const PHOTO_FRET_COUNT = FRET_X.length;
-/** X of the bridge, where the strings end. */
-const BRIDGE_X = 945;
-
-/** Y of each of the six strings (high e first) at these X positions; between them the strings run straight. */
-const STRING_KNOTS_X = [140, 270, 380, 520, 680, 810] as const;
-const STRING_KNOTS_Y: readonly (readonly number[])[] = [
-  [208, 206, 205, 203, 201, 199],
-  [217, 217, 216, 216, 215, 215],
-  [227, 227, 228, 229, 229, 230],
-  [237, 238, 240, 241, 243, 245],
-  [247, 250, 252, 254, 258, 260],
-  [257, 261, 264, 268, 272, 275],
-];
-
-/** The stretch of the photo the view shows (the headstock to the last frets) and the row the neck runs along. */
-const VIEW_START = 20;
-const VIEW_END = 820;
-const NECK_ROW = 236;
+export const PHOTO_WIDTH = NECK_PROFILE.photoWidth;
+export const PHOTO_HEIGHT = NECK_PROFILE.photoHeight;
+export const PHOTO_FRET_COUNT = NECK_PROFILE.fretX.length;
 
 export interface PhotoPlacement {
+  /** The profile of the photo being drawn against. */
+  readonly profile: NeckProfile;
   /** True on a tall screen: the photo is turned so the headstock is at the top, like a guitar held up. */
   readonly rotated: boolean;
   /** Screen pixels per photo pixel. */
@@ -60,22 +41,24 @@ export interface NeckWindow {
 }
 
 /** Where the photo sits on a screen: the neck (or the given stretch of it) fills the long side, and the photo always covers the whole screen. */
-export function photoPlacement(width: number, height: number, window?: NeckWindow): PhotoPlacement {
+export function photoPlacement(width: number, height: number, window?: NeckWindow, profile: NeckProfile = NECK_PROFILE): PhotoPlacement {
   const rotated = height > width;
   const along = rotated ? height : width;
   const across = rotated ? width : height;
-  const span = window ? Math.min(window.span, VIEW_END - VIEW_START) : VIEW_END - VIEW_START;
-  const scale = Math.max(along / span, across / PHOTO_HEIGHT);
+  const { viewStart, viewEnd } = profile;
+  const span = window ? Math.min(window.span, viewEnd - viewStart) : viewEnd - viewStart;
+  const scale = Math.max(along / span, across / profile.photoHeight);
   const halfAcross = across / (2 * scale);
   const halfSpan = span / 2;
   const centreX = window
-    ? Math.min(VIEW_END - halfSpan, Math.max(VIEW_START + halfSpan, window.centreX))
-    : (VIEW_START + VIEW_END) / 2;
+    ? Math.min(viewEnd - halfSpan, Math.max(viewStart + halfSpan, window.centreX))
+    : (viewStart + viewEnd) / 2;
   return {
+    profile,
     rotated,
     scale,
     centreX,
-    centreY: Math.min(PHOTO_HEIGHT - halfAcross, Math.max(halfAcross, window?.centreY ?? NECK_ROW)),
+    centreY: Math.min(profile.photoHeight - halfAcross, Math.max(halfAcross, window?.centreY ?? profile.neckRow)),
     width,
     height,
   };
@@ -123,15 +106,15 @@ function centreAt(first: number, moves: readonly CameraMove[], t: number): numbe
   return first;
 }
 
-const paths = new WeakMap<readonly NoteEvent[], CameraPath>();
+const paths = new WeakMap<readonly NoteEvent[], Map<NeckProfile, CameraPath>>();
 
 /**
  * The camera over the whole song, one frame per played bar: the middle of the frets that bar uses. It holds that frame for the
  * whole bar and glides to the next bar's frame only when it is clearly somewhere else, so alternating nearby positions never
  * rock it. Played-bar order means a repeated section frames the same each time. Built from the notes alone, so exported frames match the screen.
  */
-function cameraPath(notes: readonly NoteEvent[]): CameraPath {
-  const cached = paths.get(notes);
+function cameraPath(notes: readonly NoteEvent[], profile: NeckProfile): CameraPath {
+  const cached = paths.get(notes)?.get(profile);
   if (cached) return cached;
   interface Reach {
     low: number;
@@ -142,7 +125,7 @@ function cameraPath(notes: readonly NoteEvent[]): CameraPath {
   for (const note of notes) {
     const pull = cameraPull(note);
     if (pull === 'none') continue;
-    const x = photoNoteX(note.fret);
+    const x = photoNoteX(note.fret, profile);
     const bar = bars.get(note.playbackBar) ?? {};
     bars.set(note.playbackBar, bar);
     const reach = bar[pull];
@@ -172,13 +155,15 @@ function cameraPath(notes: readonly NoteEvent[]): CameraPath {
     }
   }
   const path = { first, moves };
-  paths.set(notes, path);
+  const byProfile = paths.get(notes) ?? new Map<NeckProfile, CameraPath>();
+  byProfile.set(profile, path);
+  paths.set(notes, byProfile);
   return path;
 }
 
 /** Where the following camera is centred at time `t`. */
-function followCentre(notes: readonly NoteEvent[], t: number): number {
-  const { first, moves } = cameraPath(notes);
+function followCentre(notes: readonly NoteEvent[], t: number, profile: NeckProfile): number {
+  const { first, moves } = cameraPath(notes, profile);
   return centreAt(first, moves, t);
 }
 
@@ -194,11 +179,12 @@ interface SongRange {
   readonly highString: number;
 }
 
-const ranges = new WeakMap<readonly NoteEvent[], SongRange | null>();
+const ranges = new WeakMap<readonly NoteEvent[], Map<NeckProfile, SongRange | null>>();
 
 /** The lowest and highest frets the camera frames, and the first and last strings, the song uses. Muted and open notes do not stretch the frets; they only count when nothing else is played. */
-function songRange(notes: readonly NoteEvent[]): SongRange | null {
-  if (ranges.has(notes)) return ranges.get(notes) ?? null;
+function songRange(notes: readonly NoteEvent[], profile: NeckProfile): SongRange | null {
+  const cachedRange = ranges.get(notes);
+  if (cachedRange?.has(profile)) return cachedRange.get(profile) ?? null;
   const pulls = notes.map(cameraPull);
   const best = pulls.includes('firm') ? 'firm' : pulls.includes('loose') ? 'loose' : null;
   let lowX = Infinity;
@@ -209,12 +195,14 @@ function songRange(notes: readonly NoteEvent[]): SongRange | null {
     lowString = Math.min(lowString, note.string);
     highString = Math.max(highString, note.string);
     if (best !== null && pulls[i] !== best) return;
-    const x = photoNoteX(note.fret);
+    const x = photoNoteX(note.fret, profile);
     lowX = Math.min(lowX, x);
     highX = Math.max(highX, x);
   });
   const range: SongRange | null = notes.length > 0 ? { lowX, highX, lowString, highString } : null;
-  ranges.set(notes, range);
+  const byProfile = cachedRange ?? new Map<NeckProfile, SongRange | null>();
+  byProfile.set(profile, range);
+  ranges.set(notes, byProfile);
   return range;
 }
 
@@ -229,18 +217,19 @@ export function zoomedPlacement(
   notes: readonly NoteEvent[],
   t: number,
   stringCount = 6,
+  profile: NeckProfile = NECK_PROFILE,
 ): PhotoPlacement {
-  const range = songRange(notes);
-  if (!range) return photoPlacement(width, height);
+  const range = songRange(notes, profile);
+  if (!range) return photoPlacement(width, height, undefined, profile);
   const fitSpan = Math.max(MIN_ZOOM_SPAN, range.highX - range.lowX + 2 * FIT_MARGIN);
   let centreX = (range.lowX + range.highX) / 2;
   let span = fitSpan;
   if (fitSpan > ZOOM_SPAN) {
-    centreX = followCentre(notes, t);
+    centreX = followCentre(notes, t, profile);
     span = ZOOM_SPAN;
   }
-  const centreY = (photoStringY(range.lowString, stringCount, centreX) + photoStringY(range.highString, stringCount, centreX)) / 2;
-  return photoPlacement(width, height, { centreX, span, centreY });
+  const centreY = (photoStringY(range.lowString, stringCount, centreX, profile) + photoStringY(range.highString, stringCount, centreX, profile)) / 2;
+  return photoPlacement(width, height, { centreX, span, centreY }, profile);
 }
 
 /** Where a photo point lands on the screen. */
@@ -253,16 +242,15 @@ export function photoToScreen(place: PhotoPlacement, px: number, py: number): { 
 }
 
 /** Y of a string in the photo at photo-X `x`; strings beyond the six are spread between the outer two. */
-export function photoStringY(string: number, stringCount: number, x: number): number {
+export function photoStringY(string: number, stringCount: number, x: number, profile: NeckProfile = NECK_PROFILE): number {
   const at = stringCount > 1 ? ((string - 1) / (stringCount - 1)) * 5 : 2.5;
   const low = Math.min(4, Math.floor(at));
   const mix = at - low;
-  return lineAt(STRING_KNOTS_Y[low], x) * (1 - mix) + lineAt(STRING_KNOTS_Y[low + 1], x) * mix;
+  return lineAt(profile.stringKnotsY[low], profile.stringKnotsX, x) * (1 - mix) + lineAt(profile.stringKnotsY[low + 1], profile.stringKnotsX, x) * mix;
 }
 
 /** Straight-line value through the knots, carried on past both ends at the end slopes. */
-function lineAt(ys: readonly number[], x: number): number {
-  const xs = STRING_KNOTS_X;
+function lineAt(ys: readonly number[], xs: readonly number[], x: number): number {
   const last = xs.length - 1;
   const i = x <= xs[0] ? 0 : x >= xs[last] ? last - 1 : xs.findIndex((k, n) => n < last && x >= k && x < xs[n + 1]);
   const slope = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]);
@@ -270,38 +258,40 @@ function lineAt(ys: readonly number[], x: number): number {
 }
 
 /** Photo-X of a note's ring: between its fret wires, or just behind the nut for an open string. */
-export function photoNoteX(fret: number): number {
-  if (fret <= 0) return NUT_X - 14;
-  const shown = Math.min(fret, PHOTO_FRET_COUNT);
-  const before = shown === 1 ? NUT_X : FRET_X[shown - 2];
-  return (before + FRET_X[shown - 1]) / 2;
+export function photoNoteX(fret: number, profile: NeckProfile = NECK_PROFILE): number {
+  const { nutX, fretX } = profile;
+  if (fret <= 0) return nutX - 14;
+  const shown = Math.min(fret, fretX.length);
+  const before = shown === 1 ? nutX : fretX[shown - 2];
+  return (before + fretX[shown - 1]) / 2;
 }
 
 /** Photo-X of a finger at a fret that may be between whole frets, as it is while a slide carries it. */
-export function photoNoteXAt(fret: number): number {
+export function photoNoteXAt(fret: number, profile: NeckProfile = NECK_PROFILE): number {
   const low = Math.floor(fret);
   const high = Math.ceil(fret);
-  if (low === high) return photoNoteX(low);
-  return photoNoteX(low) + (photoNoteX(high) - photoNoteX(low)) * (fret - low);
+  if (low === high) return photoNoteX(low, profile);
+  return photoNoteX(low, profile) + (photoNoteX(high, profile) - photoNoteX(low, profile)) * (fret - low);
 }
 
 /**
  * Photo pixels a finger at photo-X `x` on `string` is off its string when it is `across` gaps over, positive toward the
  * lower-pitched neighbour. A gap is the distance to the neighbour on that side, or to the other one at the edge of the neck.
  */
-function acrossOffset(string: number, stringCount: number, x: number, across: number): number {
+function acrossOffset(string: number, stringCount: number, x: number, across: number, profile: NeckProfile): number {
   if (across === 0) return 0;
   const toward = string + (across > 0 ? 1 : -1);
   const neighbour = toward >= 1 && toward <= stringCount ? toward : string - (across > 0 ? 1 : -1);
-  const gap = neighbour >= 1 && neighbour <= stringCount ? Math.abs(photoStringY(neighbour, stringCount, x) - photoStringY(string, stringCount, x)) : 10;
+  const gap = neighbour >= 1 && neighbour <= stringCount ? Math.abs(photoStringY(neighbour, stringCount, x, profile) - photoStringY(string, stringCount, x, profile)) : 10;
   return across * gap;
 }
 
 /** Ring radius in photo pixels: it follows the gap between frets, which narrows up the neck. */
-export function photoRingRadius(fret: number): number {
-  const shown = Math.min(Math.max(fret, 1), PHOTO_FRET_COUNT);
-  const before = shown === 1 ? NUT_X : FRET_X[shown - 2];
-  return Math.max(3.5, Math.min((FRET_X[shown - 1] - before) * 0.36, 6.5));
+export function photoRingRadius(fret: number, profile: NeckProfile = NECK_PROFILE): number {
+  const { nutX, fretX } = profile;
+  const shown = Math.min(Math.max(fret, 1), fretX.length);
+  const before = shown === 1 ? nutX : fretX[shown - 2];
+  return Math.max(3.5, Math.min((fretX[shown - 1] - before) * 0.36, 6.5));
 }
 
 /** Extra drawing calls a surface needs to place the photo; canvases provide these. */
@@ -328,7 +318,7 @@ export function drawNeckPhoto(
   ctx.translate(width / 2, height / 2);
   if (place.rotated) ctx.rotate(Math.PI / 2);
   ctx.scale(place.scale, place.scale);
-  ctx.drawImage(image, -place.centreX, -place.centreY, PHOTO_WIDTH, PHOTO_HEIGHT);
+  ctx.drawImage(image, -place.centreX, -place.centreY, place.profile.photoWidth, place.profile.photoHeight);
   ctx.restore();
 }
 
@@ -343,7 +333,10 @@ export function renderNeckFrame(
   height: number,
   options: NeckViewOptions = {},
 ): void {
-  const place = options.zoom ? zoomedPlacement(width, height, timeline.notesForTrack(trackIndex), t, timeline.tracks[trackIndex]?.stringCount) : photoPlacement(width, height);
+  const profile = options.profile ?? NECK_PROFILE;
+  const place = options.zoom
+    ? zoomedPlacement(width, height, timeline.notesForTrack(trackIndex), t, timeline.tracks[trackIndex]?.stringCount, profile)
+    : photoPlacement(width, height, undefined, profile);
   drawNeckPhoto(ctx, image, width, height, place);
   renderNeckView(ctx, timeline, trackIndex, t, width, height, options);
 }
@@ -356,6 +349,8 @@ export interface NeckViewOptions {
   readonly techniqueCues?: boolean;
   /** Zoom in on the stretch of neck being played and follow it, instead of showing the whole neck. */
   readonly zoom?: boolean;
+  /** The photo's profile; the Real guitar view's when absent. */
+  readonly profile?: NeckProfile;
 }
 
 /** Strength of the ring and string of a note a hammer-on or pull-off ends on, which is not picked. */
@@ -388,7 +383,8 @@ export function renderNeckView(
   const steps = stepsAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD);
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, capo: timeline.tracks[trackIndex]?.capo ?? 0, spelling: spellingForTuning(tuning) };
-  const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount) : photoPlacement(width, height);
+  const profile = options.profile ?? NECK_PROFILE;
+  const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount, profile) : photoPlacement(width, height, undefined, profile);
   const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount) : null;
   const poseOf = (note: NoteEvent) => cues?.poses.get(note.id);
   /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
@@ -453,13 +449,9 @@ function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, 
 }
 
 /** Photo-Y of the board's top and bottom edges at photo-X `x`, a little outside the outer strings. */
-const boardTop = (x: number) => photoStringY(1, 6, x) - 6;
-const boardBottom = (x: number) => photoStringY(6, 6, x) + 7;
-const BOARD_LEFT = NUT_X - 2;
-const BOARD_RIGHT = FRET_X[PHOTO_FRET_COUNT - 1] + 6;
+const boardTop = (x: number, profile: NeckProfile) => photoStringY(1, 6, x, profile) - 6;
+const boardBottom = (x: number, profile: NeckProfile) => photoStringY(6, 6, x, profile) + 7;
 const FAR = 5000;
-/** The frets that carry an inlay in the photo. */
-const FRET_NUMBERS: readonly number[] = [3, 5, 7, 9, 12, 14, 16, 18, 20, 23];
 const GLASS = '#9fe8ff';
 
 /** Fills a polygon given in photo coordinates. */
@@ -479,9 +471,13 @@ function fillPhotoPolygon(ctx: DrawContext, place: PhotoPlacement, points: reado
  * faint cool tint, and crisp fret lines, string lines and fret numbers are drawn over the real ones.
  */
 function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: number): void {
-  const edge = [BOARD_LEFT, ...STRING_KNOTS_X.filter((k) => k > BOARD_LEFT && k < BOARD_RIGHT), BOARD_RIGHT];
-  const topEdge = edge.map((x) => [x, boardTop(x)] as const);
-  const bottomEdge = edge.map((x) => [x, boardBottom(x)] as const);
+  const { profile } = place;
+  const { nutX, fretX, stringKnotsX } = profile;
+  const BOARD_LEFT = nutX - 2;
+  const BOARD_RIGHT = fretX[fretX.length - 1] + 6;
+  const edge = [BOARD_LEFT, ...stringKnotsX.filter((k) => k > BOARD_LEFT && k < BOARD_RIGHT), BOARD_RIGHT];
+  const topEdge = edge.map((x) => [x, boardTop(x, profile)] as const);
+  const bottomEdge = edge.map((x) => [x, boardBottom(x, profile)] as const);
 
   // dim the table, the headstock and the body
   ctx.fillStyle = '#020b0f';
@@ -506,17 +502,17 @@ function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: n
     ctx.stroke();
   };
   const px = Math.max(1, place.scale * 0.5);
-  [NUT_X, ...FRET_X].forEach((x, i) => {
+  [nutX, ...fretX].forEach((x, i) => {
     ctx.globalAlpha = i === 0 ? 0.7 : 0.38;
     ctx.lineWidth = i === 0 ? px * 2.4 : px * 1.1;
-    line(x, boardTop(x), x, boardBottom(x));
+    line(x, boardTop(x, profile), x, boardBottom(x, profile));
   });
 
   // thin string lines from the nut to the last fret
   ctx.globalAlpha = 0.3;
   ctx.lineWidth = px * 0.8;
   for (let s = 1; s <= stringCount; s++) {
-    line(NUT_X, photoStringY(s, stringCount, NUT_X), BOARD_RIGHT, photoStringY(s, stringCount, BOARD_RIGHT));
+    line(nutX, photoStringY(s, stringCount, nutX, profile), BOARD_RIGHT, photoStringY(s, stringCount, BOARD_RIGHT, profile));
   }
 
   // fret numbers just under the board, at the frets that carry inlays
@@ -525,9 +521,9 @@ function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: n
   ctx.font = `${Math.max(10, Math.round(place.scale * 6))}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  for (const fret of FRET_NUMBERS) {
-    const x = photoNoteX(fret);
-    const at = photoToScreen(place, x, boardBottom(x) + 11);
+  for (const fret of profile.inlayFrets) {
+    const x = photoNoteX(fret, profile);
+    const at = photoToScreen(place, x, boardBottom(x, profile) + 11);
     ctx.fillText(String(fret), at.x, at.y);
   }
   ctx.globalAlpha = 1;
@@ -539,8 +535,8 @@ function neckSpace(place: PhotoPlacement, stringCount: number, width: number, he
     ring: (note) => markerCentre(place, stringCount, note, poses?.get(note.id)),
     rest: (note) => markerCentre(place, stringCount, note),
     at: (string, fret) => {
-      const px = photoNoteXAt(fret);
-      return photoToScreen(place, px, photoStringY(string, stringCount, px));
+      const px = photoNoteXAt(fret, place.profile);
+      return photoToScreen(place, px, photoStringY(string, stringCount, px, place.profile));
     },
     scale: place.scale,
     width,
@@ -551,9 +547,10 @@ function neckSpace(place: PhotoPlacement, stringCount: number, width: number, he
 
 /** Where a note's ring is on the screen: at its fret and string, or where its finger is while it moves. */
 function markerCentre(place: PhotoPlacement, stringCount: number, note: NoteEvent, pose?: FingerPose): { x: number; y: number; r: number } {
-  const px = pose ? photoNoteXAt(pose.fret) : photoNoteX(note.fret);
-  const py = photoStringY(note.string, stringCount, px) + (pose ? acrossOffset(note.string, stringCount, px, pose.across) : 0);
-  return { ...photoToScreen(place, px, py), r: photoRingRadius(note.fret) * place.scale * (pose?.press ?? 1) };
+  const { profile } = place;
+  const px = pose ? photoNoteXAt(pose.fret, profile) : photoNoteX(note.fret, profile);
+  const py = photoStringY(note.string, stringCount, px, profile) + (pose ? acrossOffset(note.string, stringCount, px, pose.across, profile) : 0);
+  return { ...photoToScreen(place, px, py), r: photoRingRadius(note.fret, profile) * place.scale * (pose?.press ?? 1) };
 }
 
 /** How far a bending finger stretches its ring along the bend, at a full bend. */
@@ -585,15 +582,16 @@ function drawLitStrings(
     const effect = cues?.effects.get(note.id);
     const pose = cues?.poses.get(note.id);
     const strength = base * (effect?.muted ? MUTED_STRENGTH : 1) * (cues?.unpicked.has(note.id) ? UNPICKED_STRENGTH : 1);
-    const from = pose ? photoNoteXAt(pose.fret) : photoNoteX(note.fret);
-    const stops = effect && (effect.bend > 0 || effect.shiver > 0) ? sampledStops(from) : [from, ...STRING_KNOTS_X.filter((k) => k > from), BRIDGE_X];
+    const { profile } = place;
+    const from = pose ? photoNoteXAt(pose.fret, profile) : photoNoteX(note.fret, profile);
+    const stops = effect && (effect.bend > 0 || effect.shiver > 0) ? sampledStops(from, profile) : [from, ...profile.stringKnotsX.filter((k) => k > from), profile.endX];
     ctx.strokeStyle = stringColor(theme, note.string);
     for (const [grow, alpha] of [[9, 0.12], [5, 0.22], [2, 0.95]] as const) {
       ctx.globalAlpha = alpha * strength;
       ctx.lineWidth = grow * Math.max(1, place.scale / 2);
       ctx.beginPath();
       stops.forEach((px, i) => {
-        const y = photoStringY(note.string, stringCount, px) + stringOffset(effect, note.string, stringCount, px, from, t);
+        const y = photoStringY(note.string, stringCount, px, profile) + stringOffset(effect, note.string, stringCount, px, from, t, profile);
         const at = photoToScreen(place, px, y);
         if (i === 0) ctx.moveTo(at.x, at.y);
         else ctx.lineTo(at.x, at.y);
@@ -615,8 +613,8 @@ const MUTED_STRENGTH = 0.5;
 /** Points along a string that bends or shivers, enough to look like a curve. */
 const SAMPLES = 24;
 
-function sampledStops(from: number): number[] {
-  return Array.from({ length: SAMPLES + 1 }, (_, i) => from + ((BRIDGE_X - from) * i) / SAMPLES);
+function sampledStops(from: number, profile: NeckProfile): number[] {
+  return Array.from({ length: SAMPLES + 1 }, (_, i) => from + ((profile.endX - from) * i) / SAMPLES);
 }
 
 /**
@@ -624,12 +622,12 @@ function sampledStops(from: number): number[] {
  * displaced ring and runs straight to the bridge, which does not move, so the offset tapers to nothing there; a vibrato wave
  * travels along it from the ring.
  */
-function stringOffset(effect: NoteEffect | undefined, string: number, stringCount: number, x: number, from: number, t: number): number {
+function stringOffset(effect: NoteEffect | undefined, string: number, stringCount: number, x: number, from: number, t: number, profile: NeckProfile): number {
   if (!effect || (effect.bend === 0 && effect.shiver === 0)) return 0;
-  const taper = 1 - Math.min(1, Math.max(0, (x - from) / Math.max(1, BRIDGE_X - from)));
+  const taper = 1 - Math.min(1, Math.max(0, (x - from) / Math.max(1, profile.endX - from)));
   const wave = effect.shiver * SHIVER_REACH * Math.sin(2 * Math.PI * SHIVER_HERTZ * t - (x - from) * 0.06);
   const share = (effect.bend * BEND_REACH * bendSide(string, stringCount) + wave) * taper;
-  return acrossOffset(string, stringCount, x, share);
+  return acrossOffset(string, stringCount, x, share, profile);
 }
 
 /** A soft pair of rings around the note being played; wider right at its start. */
