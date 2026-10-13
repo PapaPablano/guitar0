@@ -1,5 +1,6 @@
 import type { NoteEvent } from '../model/score';
 import { DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
+import { pluckAt, type PickPlan } from './pick-cues';
 
 /** A bend of this many semitones or more deflects the string as far as it goes. */
 export const FULL_BEND_SEMITONES = 2;
@@ -47,6 +48,8 @@ export interface NoteEffect {
   /** 1 while a vibrato note sounds, else 0. */
   readonly shiver: number;
   readonly muted: boolean;
+  /** How far the pick has pulled the string across, -1 to 1 (positive toward the lower-pitched neighbour); only on a picked note, while it shakes. */
+  readonly pluck?: number;
 }
 
 /** The pulse from the playing step's anchor to the next step's anchor, arriving on the beat. */
@@ -166,7 +169,7 @@ function cometsOf(notes: readonly NoteEvent[], note: NoteEvent, t: number): Come
  * The technique cues to draw on the neck at time `t`, for the notes in the window the neck view shows (the playing step, the
  * trail behind it and the steps ahead). A pure function of its arguments: the same notes and time give the same cues.
  */
-export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number = DEFAULT_LOOKAHEAD, stringCount = 6): NeckCues {
+export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number = DEFAULT_LOOKAHEAD, stringCount = 6, plan?: PickPlan): NeckCues {
   const steps = stepsAt(notes, t, lookahead);
   const window = [...steps.trail, ...(steps.playing ? [steps.playing] : []), ...steps.upcoming].flatMap((s) => s.notes);
   if (window.length === 0) return NONE;
@@ -191,7 +194,9 @@ export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number
     if (tech.hammerPull === 'destination') unpicked.add(note.id);
     const noteComets = cometsOf(notes, note, t);
     comets.push(...noteComets);
-    const effect = effectOf(note, t);
+    const base = effectOf(note, t);
+    const pluck = plan ? pluckAt(plan, note, t) : 0;
+    const effect: NoteEffect | null = pluck !== 0 ? { bend: 0, shiver: 0, muted: false, ...base, pluck } : base;
     if (effect) effects.set(note.id, effect);
     if (effect && effect.bend > 0) bends.push({ note, amount: effect.bend, side: bendSide(note.string, stringCount) });
     if (tech.harmonic) harmonics.push(note);

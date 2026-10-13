@@ -86,7 +86,7 @@ The Real guitar view draws glowing rings over one bundled photo. The nut, 23 fre
 - AE2. **Covers R5.** Given a picked note, its lit string shakes after the pick and is still within a short time. Given a pull-off ending on a note, that string does not shake.
 - AE3. **Covers R6.** Given a bent note, the bend curve is drawn as today and the string also shakes at the moment of the pick.
 - AE4. **Covers R8, R10.** Given a run of single notes with no pick marks in the file, the pick alternates down and up strokes and moves to each string as its note starts.
-- AE5. **Covers R9, R10.** Given a chord marked as an up stroke in the file, the pick crosses its strings from the lowest to the highest.
+- AE5. **Covers R9, R10.** Given a chord marked as an up stroke in the file, the pick crosses its strings from the highest to the lowest.
 - AE6. **Covers R3, R22.** Given the Real guitar view, it draws exactly as it does today, with its own photo and without the pick and string effects.
 - AE7. **Covers R11.** Given the same song and photo, the full-screen view and an exported video show the same pick and string effects at the same moments.
 - AE8. **Covers R2, R14, R15, R16.** Given a photo of a six-string neck, when the player taps the seven points as prompted and gives the fret count, the preview shows rings on the right frets and strings and the pick on the pickup, and Done makes it the current photo.
@@ -288,7 +288,7 @@ stateDiagram-v2
   - Covers AE2. `pluck` is 1 at a picked note's start, falls toward 0 within the settle time, and is always 0 for a hammer-on or pull-off destination.
   - Covers AE3. A bent note's offset equals its bend offset plus the wobble term at its start, and equals the bend offset alone once settled.
   - Covers AE4. In a run of unmarked single notes the pick position at each note's start is on that note's string, and the strokes alternate.
-  - Covers AE5. For an up-stroke chord the pick passes the strings from the lowest to the highest, a flash on each, in that order.
+  - Covers AE5. For an up-stroke chord the pick passes the strings from the highest to the lowest, a flash on each, in that order.
   - Between notes the pick rests on the last picked string's pick-point position; before the first note it rests on the middle of the strings.
   - Covers AE6. With `NECK_PROFILE`, or with technique cues off, the drawn calls are identical to today's.
   - The effects at a given `t` are the same on repeated calls and independent of draw order.

@@ -5,6 +5,7 @@ import { emphasisAt } from './emphasis';
 import { BEND_REACH, bendSide, cuesAt, SHIVER_HERTZ, SHIVER_REACH, type FingerPose, type NeckCues, type NoteEffect } from './neck-cue-model';
 import { drawNeckCues, type NeckSpace } from './neck-cues';
 import { DEFAULT_LABEL_MODE, dotText, type LabelMode } from './fretboard';
+import { pickAt, pickPlan, type PickState } from './pick-cues';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
 import { spellingForTuning } from './note-names';
 import type { NoteEvent, Timeline } from '../model/score';
@@ -385,7 +386,8 @@ export function renderNeckView(
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, capo: timeline.tracks[trackIndex]?.capo ?? 0, spelling: spellingForTuning(tuning) };
   const profile = options.profile ?? NECK_PROFILE;
   const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount, profile) : photoPlacement(width, height, undefined, profile);
-  const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount) : null;
+  const pick = options.techniqueCues && profile.pickX !== undefined ? pickPlan(notes, timeline.bars) : null;
+  const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount, pick ?? undefined) : null;
   const poseOf = (note: NoteEvent) => cues?.poses.get(note.id);
   /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
   const unpicked = (note: NoteEvent) => cues?.unpicked.has(note.id) ?? false;
@@ -394,7 +396,7 @@ export function renderNeckView(
   ctx.save();
   drawDigitalNeck(ctx, place, stringCount);
 
-  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues);
+  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues, pick ? (profile.pickX as number) : profile.endX);
   steps.trail.forEach((step, i) => {
     for (const note of step.notes) {
       drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
@@ -419,6 +421,7 @@ export function renderNeckView(
     }
   }
   if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, width, height, cues.poses), cues, theme);
+  if (pick) drawPick(ctx, place, stringCount, pickAt(pick, t), theme);
   drawOpenAndMuted(ctx, width, stringCount, steps.playing, steps.upcoming[0], t, theme);
   ctx.restore();
 }
@@ -576,7 +579,9 @@ function drawLitStrings(
   upcoming: readonly Step[],
   theme: HighwayTheme,
   t: number,
-  cues: NeckCues | null = null,
+  cues: NeckCues | null,
+  /** Photo-X where the lit strings end: the pick point when the pick effects are on, else where the strings end. */
+  end: number,
 ): void {
   const light = (note: NoteEvent, base: number) => {
     const effect = cues?.effects.get(note.id);
@@ -584,14 +589,14 @@ function drawLitStrings(
     const strength = base * (effect?.muted ? MUTED_STRENGTH : 1) * (cues?.unpicked.has(note.id) ? UNPICKED_STRENGTH : 1);
     const { profile } = place;
     const from = pose ? photoNoteXAt(pose.fret, profile) : photoNoteX(note.fret, profile);
-    const stops = effect && (effect.bend > 0 || effect.shiver > 0) ? sampledStops(from, profile) : [from, ...profile.stringKnotsX.filter((k) => k > from), profile.endX];
+    const stops = effect && (effect.bend > 0 || effect.shiver > 0 || effect.pluck) ? sampledStops(from, end) : [from, ...profile.stringKnotsX.filter((k) => k > from && k < end), end];
     ctx.strokeStyle = stringColor(theme, note.string);
     for (const [grow, alpha] of [[9, 0.12], [5, 0.22], [2, 0.95]] as const) {
       ctx.globalAlpha = alpha * strength;
       ctx.lineWidth = grow * Math.max(1, place.scale / 2);
       ctx.beginPath();
       stops.forEach((px, i) => {
-        const y = photoStringY(note.string, stringCount, px, profile) + stringOffset(effect, note.string, stringCount, px, from, t, profile);
+        const y = photoStringY(note.string, stringCount, px, profile) + stringOffset(effect, note.string, stringCount, px, from, end, t, profile);
         const at = photoToScreen(place, px, y);
         if (i === 0) ctx.moveTo(at.x, at.y);
         else ctx.lineTo(at.x, at.y);
@@ -613,21 +618,89 @@ const MUTED_STRENGTH = 0.5;
 /** Points along a string that bends or shivers, enough to look like a curve. */
 const SAMPLES = 24;
 
-function sampledStops(from: number, profile: NeckProfile): number[] {
-  return Array.from({ length: SAMPLES + 1 }, (_, i) => from + ((profile.endX - from) * i) / SAMPLES);
+function sampledStops(from: number, end: number): number[] {
+  return Array.from({ length: SAMPLES + 1 }, (_, i) => from + ((end - from) * i) / SAMPLES);
 }
+
+/** How far a full pluck pulls the string across, in shares of the gap to its neighbour. */
+const PLUCK_REACH = 0.35;
 
 /**
  * How far, in photo pixels, a bent or shivering note's lit string is off the straight line at photo-X `x`. The string leaves the
  * displaced ring and runs straight to the bridge, which does not move, so the offset tapers to nothing there; a vibrato wave
  * travels along it from the ring.
  */
-function stringOffset(effect: NoteEffect | undefined, string: number, stringCount: number, x: number, from: number, t: number, profile: NeckProfile): number {
-  if (!effect || (effect.bend === 0 && effect.shiver === 0)) return 0;
-  const taper = 1 - Math.min(1, Math.max(0, (x - from) / Math.max(1, profile.endX - from)));
+function stringOffset(effect: NoteEffect | undefined, string: number, stringCount: number, x: number, from: number, end: number, t: number, profile: NeckProfile): number {
+  if (!effect || (effect.bend === 0 && effect.shiver === 0 && !effect.pluck)) return 0;
+  const taper = 1 - Math.min(1, Math.max(0, (x - from) / Math.max(1, end - from)));
   const wave = effect.shiver * SHIVER_REACH * Math.sin(2 * Math.PI * SHIVER_HERTZ * t - (x - from) * 0.06);
-  const share = (effect.bend * BEND_REACH * bendSide(string, stringCount) + wave) * taper;
+  // a plucked string is held at the finger and swings most where the pick pulled it
+  const reach = Math.min(1, Math.max(0, (x - from) / Math.max(1, end - from)));
+  const pluck = (effect.pluck ?? 0) * PLUCK_REACH * Math.sin((Math.PI / 2) * reach);
+  const share = (effect.bend * BEND_REACH * bendSide(string, stringCount) + wave) * taper + pluck;
   return acrossOffset(string, stringCount, x, share, profile);
+}
+
+/** The pick's length from tip to base, in photo pixels. */
+const PICK_SIZE = 13;
+
+/**
+ * The picking hand on the body: a flash on each string the pick has just reached, and the pick itself, a rounded triangle on the
+ * string it last played whose tip points the way the stroke goes. Drawn only for a photo that has a pick point.
+ */
+function drawPick(ctx: DrawContext, place: PhotoPlacement, stringCount: number, pick: PickState, theme: HighwayTheme): void {
+  const { profile } = place;
+  const px = profile.pickX;
+  if (px === undefined) return;
+  const onString = (string: number) => photoToScreen(place, px, photoStringY(string, stringCount, px, profile));
+
+  for (const flash of pick.flashes) {
+    const c = onString(flash.string);
+    ctx.fillStyle = stringColor(theme, flash.string);
+    for (const [reach, alpha] of [[16, 0.14], [9, 0.3]] as const) {
+      ctx.globalAlpha = alpha * flash.strength;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, reach * place.scale * (0.6 + 0.4 * flash.strength), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = 0.95 * flash.strength;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 4 * place.scale, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const c = onString(pick.string);
+  const toward = onString(pick.string + (pick.stroke === 'down' ? 1 : -1));
+  const length = Math.hypot(toward.x - c.x, toward.y - c.y) || 1;
+  const dx = (toward.x - c.x) / length;
+  const dy = (toward.y - c.y) / length;
+  const size = PICK_SIZE * place.scale;
+  const tip = { x: c.x + dx * size * 0.55, y: c.y + dy * size * 0.55 };
+  const base = { x: c.x - dx * size * 0.45, y: c.y - dy * size * 0.45 };
+  const left = { x: base.x - dy * size * 0.5, y: base.y + dx * size * 0.5 };
+  const right = { x: base.x + dy * size * 0.5, y: base.y - dx * size * 0.5 };
+  const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const trace = () => {
+    const start = mid(tip, right);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    for (const [corner, next] of [[tip, left], [left, right], [right, tip]] as const) {
+      const to = mid(corner, next);
+      ctx.quadraticCurveTo(corner.x, corner.y, to.x, to.y);
+    }
+    ctx.closePath();
+  };
+  ctx.fillStyle = '#ffffff';
+  ctx.globalAlpha = 0.92;
+  trace();
+  ctx.fill();
+  ctx.strokeStyle = stringColor(theme, Math.round(pick.string));
+  ctx.lineWidth = Math.max(1.5, place.scale * 1.2);
+  ctx.globalAlpha = 0.9;
+  trace();
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 /** A soft pair of rings around the note being played; wider right at its start. */

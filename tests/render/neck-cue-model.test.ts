@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bendSide, cuesAt, nextOnString, SHIVER_HERTZ } from '../../src/render/neck-cue-model';
 import { DEFAULT_LOOKAHEAD } from '../../src/render/fretboard-steps';
+import { pickPlan, pluckAt } from '../../src/render/pick-cues';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 
 const notesOf = (specs: NoteSpec[]) => makeTimeline(specs).notesForTrack(0);
@@ -346,5 +347,31 @@ describe('the sounding bends', () => {
 
   it('lists no bend for notes without one', () => {
     expect(cuesAt(notesOf([{ start: 1, end: 2, techniques: { vibrato: true } }]), 1.5).bends).toEqual([]);
+  });
+});
+
+describe('the pluck of a picked note', () => {
+  const picked = [{ start: 1, end: 1.6, string: 3, fret: 5 }, { start: 2, end: 2.5, string: 3, fret: 7, techniques: { hammerPull: 'destination' as const } }];
+  const notes = makeTimeline(picked).notesForTrack(0);
+  const plan = pickPlan(notes);
+
+  it('is absent without a pick plan, so the cues are as they were', () => {
+    expect(cuesAt(notes, 1.01).effects.get(notes[0].id)).toBeUndefined();
+  });
+
+  it('is set on a picked note from the pick plan and decays to nothing', () => {
+    expect(cuesAt(notes, 1.01, undefined, 6, plan).effects.get(notes[0].id)?.pluck).toBe(pluckAt(plan, notes[0], 1.01));
+    expect(cuesAt(notes, 1.5, undefined, 6, plan).effects.get(notes[0].id)?.pluck).toBeUndefined();
+  });
+
+  it('keeps the bend and vibrato of the note alongside it', () => {
+    const bent = makeTimeline([{ start: 1, end: 2, string: 3, fret: 5, techniques: { bend: 2, vibrato: true } }]).notesForTrack(0);
+    const effect = cuesAt(bent, 1.5, undefined, 6, pickPlan(bent)).effects.get(bent[0].id);
+    expect(effect?.bend).toBeGreaterThan(0);
+    expect(effect?.shiver).toBe(1);
+  });
+
+  it('is never set on a note the pick does not play', () => {
+    expect(cuesAt(notes, 2.01, undefined, 6, plan).effects.get(notes[1].id)).toBeUndefined();
   });
 });
