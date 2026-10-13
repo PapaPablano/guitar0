@@ -72,3 +72,22 @@ export const PICK_PROFILE: NeckProfile = {
   inlayFrets: [3, 5, 7, 9, 12, 14, 16, 18, 20, 23],
   pickX: 880,
 };
+
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const finiteList = (v: unknown, min: number): v is number[] => Array.isArray(v) && v.length >= min && v.every(finite);
+const increasing = (list: readonly number[]): boolean => list.every((v, i) => i === 0 || v > list[i - 1]);
+
+/** Whether a stored value is a profile the neck view can draw against: every number finite, the wires and knots in order, six strings. */
+export function isNeckProfile(value: unknown): value is NeckProfile {
+  if (typeof value !== 'object' || value === null) return false;
+  const p = value as Record<string, unknown>;
+  if (![p.photoWidth, p.photoHeight, p.nutX, p.endX, p.viewStart, p.viewEnd, p.neckRow].every(finite)) return false;
+  if ((p.photoWidth as number) <= 0 || (p.photoHeight as number) <= 0 || (p.viewEnd as number) <= (p.viewStart as number)) return false;
+  if (!finiteList(p.fretX, 1) || !increasing([p.nutX as number, ...p.fretX])) return false;
+  if (!finiteList(p.stringKnotsX, 2) || !increasing(p.stringKnotsX)) return false;
+  const knots = p.stringKnotsX.length;
+  if (!Array.isArray(p.stringKnotsY) || p.stringKnotsY.length !== 6) return false;
+  if (!p.stringKnotsY.every((row) => finiteList(row, knots) && row.length === knots)) return false;
+  if (!finiteList(p.inlayFrets, 0)) return false;
+  return p.pickX === undefined || finite(p.pickX);
+}
