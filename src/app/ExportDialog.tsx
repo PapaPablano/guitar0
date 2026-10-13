@@ -9,7 +9,7 @@ import { loadPickPhoto } from '../export/pick-photo';
 import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
-import { panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
+import { isGuitarPanel, panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
 import type { Timeline } from '../model/score';
 
 type Phase =
@@ -120,7 +120,13 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
       const photo = panels.includes('neck') ? await loadNeckPhoto() : undefined;
-      const pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
+      let pick: Awaited<ReturnType<typeof loadPickPhoto>> | undefined;
+      try {
+        pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
+      } catch (e) {
+        photo?.close();
+        throw e;
+      }
       if (!current()) {
         photo?.close();
         pick?.photo.close();
@@ -194,7 +200,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
                   Shows: {panels.map((p) => PANEL_NAMES[p]).join(' + ')}{' '}
                   <span className="muted">(change it under Views on the player)</span>
                 </p>
-                {(panels.includes('neck') || panels.includes('pick')) && onNeckCuesChange && (
+                {panels.some(isGuitarPanel) && onNeckCuesChange && (
                   <label className="field">
                     <input type="checkbox" checked={view.neckCues ?? true} onChange={(e) => onNeckCuesChange(e.target.checked)} /> Show
                     technique cues (hammer-ons, slides, bends)

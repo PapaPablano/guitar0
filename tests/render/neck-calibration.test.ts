@@ -177,3 +177,23 @@ describe('tapping on a displayed photo', () => {
     expect(tapToPhoto({ x: 10 + 200, y: 20 + 10 }, rect, { width: 2000, height: 1000 })).toBeNull();
   });
 });
+
+describe('rejecting fits that cannot be placed', () => {
+  it('refuses a 12th fret so near the nut that the frets would bunch the wrong way', () => {
+    const { taps, photoWidth, photoHeight } = perspectiveTaps(22);
+    const nutX = taps.nut[0].x;
+    const lastX = taps.last[0].x;
+    const x = nutX + 0.05 * (lastX - nutX);
+    const near = (p: Point): Point => ({ x, y: p.y });
+    const r = calibrate({ taps: { ...taps, twelfth: [near(taps.twelfth[0]), near(taps.twelfth[1])] }, fretCount: 22, photoWidth, photoHeight });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/bunch/i);
+  });
+
+  it('refuses a pick point at the very edge of the photo', () => {
+    const { taps, photoWidth, photoHeight } = perspectiveTaps(22);
+    const r = calibrate({ taps: { ...taps, pick: { x: photoWidth - 1, y: taps.pick.y } }, fretCount: 22, photoWidth, photoHeight });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/outside/i);
+  });
+});

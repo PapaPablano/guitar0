@@ -6,7 +6,7 @@ import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
 import { NeckCalibration } from './NeckCalibration';
 import { drawSurface, surfaceLabel } from './panel-draw';
-import { PANEL_NAMES, type PanelId } from './stage-layout';
+import { isGuitarPanel, PANEL_NAMES, type PanelId } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
 import { usePickPhoto } from './use-pick-photo';
@@ -136,7 +136,7 @@ export function PanelFullscreen({
           {...barSelect('bar')}
         />
       )}
-      {(panel === 'neck' || panel === 'pick') && (
+      {isGuitarPanel(panel) && (
         <button
           type="button"
           className="panel-fullscreen-cues"

@@ -29,20 +29,26 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
   const [saving, setSaving] = useState(false);
   const tapRef = useRef<HTMLCanvasElement>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const urlRef = useRef<string | null>(null);
+  /** Which photo choice is the latest, so a slower earlier decode cannot replace a later one; bumped on unmount to retire them all. */
+  const choiceRef = useRef(0);
+  const savingRef = useRef(false);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    dialogRef.current?.focus();
+    return () => {
+      choiceRef.current += 1;
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        // closing mid-save would not stop the save, so Escape waits like Cancel does
+        if (!savingRef.current) onClose();
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -52,9 +58,14 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
   function choose(file: File | undefined) {
     if (!file) return;
     setError(null);
+    const choice = ++choiceRef.current;
     const url = URL.createObjectURL(file);
     const next = new Image();
     next.onload = () => {
+      if (choice !== choiceRef.current) {
+        URL.revokeObjectURL(url);
+        return;
+      }
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
       urlRef.current = url;
       setImage(next);
@@ -62,6 +73,7 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
     };
     next.onerror = () => {
       URL.revokeObjectURL(url);
+      if (choice !== choiceRef.current) return;
       dispatch({ type: 'photoFailed', message: 'That photo could not be read. Try a JPEG or PNG.' });
     };
     next.src = url;
@@ -129,7 +141,8 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
   }, [state, turned]);
 
   async function done() {
-    if (!turned) return;
+    if (!turned || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -139,11 +152,14 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
     } catch (e) {
       setError(`The photo could not be saved, so the current one stays. ${e instanceof Error ? e.message : ''}`.trim());
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   async function useBundled() {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -153,6 +169,7 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
     } catch (e) {
       setError(`The bundled photo could not be restored. ${e instanceof Error ? e.message : ''}`.trim());
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -161,7 +178,18 @@ export function NeckCalibration({ onClose, store = defaultPickPhotoStore() }: Ne
 
   return (
     <div className="overlay">
-      <section className="dialog calibration" role="dialog" aria-modal="true" aria-label="Calibrate guitar photo">
+      {/* the page's shortcuts (Space, arrows, F, L) must not fire under the dialog, so every key but Escape stops here; the dialog holds focus */}
+      <section
+        ref={dialogRef}
+        tabIndex={-1}
+        className="dialog calibration"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Calibrate guitar photo"
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') e.stopPropagation();
+        }}
+      >
         <h2>Your guitar photo</h2>
 
         {state.step === 'choosing' && (

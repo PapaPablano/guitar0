@@ -86,8 +86,19 @@ describe('the calibration flow', () => {
     if (next.step === 'preview') expect(next.result.profile.fretX).toHaveLength(24);
   });
 
+  it('returns to tapping with the reason when a fret count change makes the taps unfittable', () => {
+    const s = run([chosen(), ...taps(GOOD)]);
+    const next = flowReducer(s, { type: 'fretCount', count: 40 });
+    expect(next.step).toBe('tapping');
+    if (next.step === 'tapping') {
+      expect(next.taps).toHaveLength(0);
+      expect(next.message).toMatch(/frets/i);
+    }
+  });
+
   it('starts at 22 frets', () => {
     const s = run([chosen()]);
+    expect(s.step).toBe('tapping');
     if (s.step === 'tapping') expect(s.fretCount).toBe(DEFAULT_FRETS);
   });
 

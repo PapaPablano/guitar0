@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_LONG_SIDE, normalizeTransform, normalizedSize } from '../../src/app/normalize-photo';
-import type { NormalizeSpec } from '../../src/render/neck-calibration';
+import { calibrate, type NormalizeSpec } from '../../src/render/neck-calibration';
 
 const spec = (angle: number, width: number, height: number, minX: number, minY: number, centre = { x: width / 2, y: height / 2 }): NormalizeSpec => ({
   angle,
@@ -42,6 +42,49 @@ describe('normalizing a photo for the pick view', () => {
       expect(p.x).toBeLessThanOrEqual(1000 + 1e-6);
       expect(p.y).toBeGreaterThanOrEqual(-1e-6);
       expect(p.y).toBeLessThanOrEqual(2000 + 1e-6);
+    }
+  });
+});
+
+describe('normalizing agrees with the fit', () => {
+  const sh = (n: number) => 1 - Math.pow(2, -n / 12);
+  const wire = (n: number) => 200 + (2400 * sh(n)) / (1 + 0.5 * sh(n));
+  const top = (x: number) => 300 + 0.03 * (x - 200);
+  const bottom = (x: number) => 420 - 0.03 * (x - 200);
+  const taps = (turn: (p: { x: number; y: number }) => { x: number; y: number }) => {
+    const at = (x: number, edge: 'top' | 'bottom') => turn({ x, y: edge === 'top' ? top(x) : bottom(x) });
+    return {
+      nut: [at(200, 'top'), at(200, 'bottom')] as const,
+      twelfth: [at(wire(12), 'top'), at(wire(12), 'bottom')] as const,
+      last: [at(wire(22), 'top'), at(wire(22), 'bottom')] as const,
+      pick: turn({ x: wire(22) + 120, y: 360 }),
+    };
+  };
+
+  it('puts the original taps where the fitted profile says the nut, last fret and pick point are, whichever way the photo was turned', () => {
+    const H = 1000;
+    const cases = [
+      { photo: { width: 2200, height: 1000 }, turn: (p: { x: number; y: number }) => p },
+      // a quarter turn clockwise: the headstock ends up at the top
+      { photo: { width: 1000, height: 2200 }, turn: (p: { x: number; y: number }) => ({ x: H - p.y, y: p.x }) },
+      // a quarter turn the other way: the headstock at the bottom
+      { photo: { width: 1000, height: 2200 }, turn: (p: { x: number; y: number }) => ({ x: p.y, y: 2200 - p.x }) },
+    ];
+    for (const { photo, turn } of cases) {
+      const t = taps(turn);
+      const r = calibrate({ taps: t, fretCount: 22, photoWidth: photo.width, photoHeight: photo.height });
+      if (!r.ok) throw new Error(r.reason);
+      const m = normalizeTransform(r.normalize, 1);
+      const toUnits = (p: { x: number; y: number }) => ({
+        x: (m[0] * p.x + m[2] * p.y + m[4]) * r.normalize.unitsPerPixel,
+        y: (m[1] * p.x + m[3] * p.y + m[5]) * r.normalize.unitsPerPixel,
+      });
+      const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      expect(toUnits(mid(t.nut[0], t.nut[1])).x).toBeCloseTo(r.profile.nutX, 6);
+      expect(toUnits(mid(t.last[0], t.last[1])).x).toBeCloseTo(r.profile.fretX[21], 6);
+      expect(toUnits(t.pick).x).toBeCloseTo(r.profile.pickX as number, 6);
+      // the high e string tap lands above the low E string tap, so the neck is the right way up
+      expect(toUnits(t.nut[0]).y).toBeLessThan(toUnits(t.nut[1]).y);
     }
   });
 });

@@ -21,35 +21,49 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 
 /**
  * The pick view's current photo and profile, held in a ref so a frame loop can read it without re-rendering. It is the saved photo
- * when there is one that loads, and the bundled photo otherwise (R18, R20).
+ * when there is one that loads, and the bundled photo otherwise (R18, R20). Loads are numbered: only the latest one to start may
+ * set the photo, so a slow earlier load never overwrites a newer calibration, and a load that is out of date or unmounted frees its object URL.
  */
 export function usePickPhoto(store: PickPhotoStore = defaultPickPhotoStore()): { readonly current: PickPhoto } {
   const photo = useRef<PickPhoto>({ image: null, profile: PICK_PROFILE });
   useEffect(() => {
     let alive = true;
+    let latest = 0;
     let objectUrl: string | null = null;
     const release = () => {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = null;
     };
     const load = async () => {
+      const mine = ++latest;
+      const stale = () => !alive || mine !== latest;
       const resolved = await resolvePickPhoto(store).catch(() => ({ source: 'bundled' as const, photo: null, profile: PICK_PROFILE }));
+      if (stale()) return;
       let next: PickPhoto | null = null;
+      let nextUrl: string | null = null;
       if (resolved.source === 'stored') {
         const url = URL.createObjectURL(resolved.photo);
         try {
-          next = { image: await loadImage(url), profile: resolved.profile };
-          release();
-          objectUrl = url;
+          const image = await loadImage(url);
+          if (stale()) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          next = { image, profile: resolved.profile };
+          nextUrl = url;
         } catch {
           URL.revokeObjectURL(url);
+          if (stale()) return;
         }
       }
       if (!next) {
-        release();
-        next = { image: await loadImage(bundledUrl).catch(() => null), profile: PICK_PROFILE };
+        const image = await loadImage(bundledUrl).catch(() => null);
+        if (stale()) return;
+        next = { image, profile: PICK_PROFILE };
       }
-      if (alive) photo.current = next;
+      release();
+      objectUrl = nextUrl;
+      photo.current = next;
     };
     void load();
     const stopListening = onPickPhotoChanged(() => void load());

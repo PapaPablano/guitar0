@@ -6,7 +6,7 @@ import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
 import { NeckCalibration } from './NeckCalibration';
 import { drawSurface, surfaceLabel, type SurfaceKind } from './panel-draw';
-import { needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
+import { isGuitarPanel, needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
 import { usePickPhoto } from './use-pick-photo';
@@ -97,7 +97,7 @@ export function Stage({
           {...(seekable ? barSelect('tab') : {})}
         />
         <div className="panel-tools">
-          {(id === 'neck' || id === 'pick') && (
+          {isGuitarPanel(id) && (
             <button
               type="button"
               aria-pressed={neckCues}

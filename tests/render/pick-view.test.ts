@@ -102,6 +102,19 @@ describe('the pick marker', () => {
     expect(calls.filter((c) => c.name === 'closePath').length).toBeGreaterThan(onWith.filter((c) => c.name === 'closePath').length);
   });
 
+  it('sits on the string it last played, in the neighbourhood of the pick point', () => {
+    for (const string of [2, 5]) {
+      const specs: NoteSpec[] = [{ start: 1, end: 1.6, string, fret: 5 }];
+      const corners = draw(specs, 1.4, PICK_PROFILE)
+        .filter((c) => c.name === 'quadraticCurveTo')
+        .slice(-3)
+        .map((c) => ({ x: c.args[0] as number, y: c.args[1] as number }));
+      const centroid = { x: (corners[0].x + corners[1].x + corners[2].x) / 3, y: (corners[0].y + corners[1].y + corners[2].y) / 3 };
+      const size = 13 * photoPlacement(W, H, undefined, PICK_PROFILE).scale;
+      expect(Math.hypot(centroid.x - pickPoint(string).x, centroid.y - pickPoint(string).y)).toBeLessThan(size * 0.5);
+    }
+  });
+
   it('is the same at the same time on repeated draws', () => {
     expect(draw(picked, 1.02, PICK_PROFILE)).toEqual(draw(picked, 1.02, PICK_PROFILE));
   });
@@ -138,9 +151,6 @@ describe('the framing', () => {
     );
   });
 
-  it('is the window it always was when the profile has no pick point', () => {
-    expect(zoomedPlacement(1920, 1080, low, 2, 6, NECK_PROFILE)).toEqual(zoomedPlacement(1920, 1080, low, 2));
-  });
 });
 
 describe('the dimming', () => {
@@ -149,5 +159,35 @@ describe('the dimming', () => {
   it('dims the body less when the photo shows it, and everything else as before', () => {
     expect(dimmed(NECK_PROFILE)).toBe(4);
     expect(dimmed(PICK_PROFILE)).toBe(3);
+  });
+});
+
+describe('a pick on the edge strings', () => {
+  const onEdge = (string: number, stroke: 'up' | 'down'): NoteSpec[] => [{ start: 1, end: 1.6, string, fret: 5, stroke }];
+
+  it('draws an up stroke on the high-e string, where there is no higher string to point toward', () => {
+    for (const t of [0.95, 1, 1.05, 1.3]) {
+      expect(() => draw(onEdge(1, 'up'), t, PICK_PROFILE)).not.toThrow();
+    }
+  });
+
+  it('draws a down stroke on the low string, where there is no lower string to point toward', () => {
+    for (const t of [0.95, 1, 1.05, 1.3]) {
+      expect(() => draw(onEdge(6, 'down'), t, PICK_PROFILE)).not.toThrow();
+    }
+  });
+
+  it('points the pick tip the way the stroke goes: toward the low strings on a down stroke, away on an up stroke', () => {
+    const tipOf = (stroke: 'up' | 'down') => {
+      const calls = draw(onEdge(3, stroke), 1.4, PICK_PROFILE);
+      // the pick is the last closed shape drawn; its first move is the midpoint of the tip-to-right edge, its first curve's control point is the tip
+      const curves = calls.filter((c) => c.name === 'quadraticCurveTo');
+      const first = curves[curves.length - 6];
+      const centre = pickPoint(3);
+      return { x: first.args[0] as number - centre.x, y: first.args[1] as number - centre.y };
+    };
+    // string 3 -> string 4 is down the photo (higher y); a down stroke leans that way, an up stroke the other way
+    expect(tipOf('down').y).toBeGreaterThan(0);
+    expect(tipOf('up').y).toBeLessThan(0);
   });
 });

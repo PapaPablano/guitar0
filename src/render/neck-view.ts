@@ -395,7 +395,8 @@ export function renderNeckView(
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, capo: timeline.tracks[trackIndex]?.capo ?? 0, spelling: spellingForTuning(tuning) };
   const profile = options.profile ?? NECK_PROFILE;
   const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount, profile) : photoPlacement(width, height, undefined, profile);
-  const pick = options.techniqueCues && profile.pickX !== undefined ? pickPlan(notes, timeline.bars) : null;
+  const pickX = options.techniqueCues ? profile.pickX : undefined;
+  const pick = pickX !== undefined ? pickPlan(notes, timeline.bars) : null;
   const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount, pick ?? undefined) : null;
   const poseOf = (note: NoteEvent) => cues?.poses.get(note.id);
   /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
@@ -405,7 +406,7 @@ export function renderNeckView(
   ctx.save();
   drawDigitalNeck(ctx, place, stringCount);
 
-  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues, pick ? (profile.pickX as number) : profile.endX);
+  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues, pickX ?? profile.endX);
   steps.trail.forEach((step, i) => {
     for (const note of step.notes) {
       drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
@@ -685,10 +686,14 @@ function drawPick(ctx: DrawContext, place: PhotoPlacement, stringCount: number, 
   }
 
   const c = onString(pick.string);
-  const toward = onString(pick.string + (pick.stroke === 'down' ? 1 : -1));
-  const length = Math.hypot(toward.x - c.x, toward.y - c.y) || 1;
-  const dx = (toward.x - c.x) / length;
-  const dy = (toward.y - c.y) / length;
+  // the way the stroke goes, from the string behind the pick to the one ahead, both kept on the neck so the edge strings have a direction too
+  const sign = pick.stroke === 'down' ? 1 : -1;
+  const onNeck = (string: number) => onString(Math.min(stringCount, Math.max(1, string)));
+  const ahead = onNeck(pick.string + sign);
+  const behind = onNeck(pick.string - sign);
+  const length = Math.hypot(ahead.x - behind.x, ahead.y - behind.y) || 1;
+  const dx = (ahead.x - behind.x) / length;
+  const dy = (ahead.y - behind.y) / length;
   const size = PICK_SIZE * place.scale;
   const tip = { x: c.x + dx * size * 0.55, y: c.y + dy * size * 0.55 };
   const base = { x: c.x - dx * size * 0.45, y: c.y - dy * size * 0.45 };

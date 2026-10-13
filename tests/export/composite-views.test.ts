@@ -334,8 +334,38 @@ describe('the pick view in a frame', () => {
 });
 
 describe('a start message for the pick view', () => {
-  it('carries the profile with the photo so the worker cannot draw it against the wrong one', () => {
-    const message: Pick<StartMessage, 'pickPhoto'> = { pickPhoto: { photo: {} as ImageBitmap, profile: PICK_PROFILE } };
-    expect(message.pickPhoto?.profile).toBe(PICK_PROFILE);
+  it('posts the profile together with the photo, and hands the photo over to the worker', () => {
+    const posted: { message: unknown; transfer: unknown[] }[] = [];
+    class FakeWorker {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(message: unknown, transfer: unknown[] = []) {
+        posted.push({ message, transfer });
+      }
+      terminate() {}
+    }
+    const original = (globalThis as { Worker?: unknown }).Worker;
+    (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+    const photo = { width: 4, height: 4 } as unknown as ImageBitmap;
+    const calibrated: NeckProfile = { ...PICK_PROFILE, nutX: PICK_PROFILE.nutX + 3 };
+    try {
+      void startExport({
+        timeline,
+        trackIndex: 0,
+        preset: presetById('landscape'),
+        audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+        panels: ['highway', 'pick'],
+        view: { lookahead: 6 },
+        pickPhoto: { photo, profile: calibrated },
+        onProgress: () => {},
+      }).result.catch(() => {});
+    } finally {
+      (globalThis as { Worker?: unknown }).Worker = original;
+    }
+    const start = posted[0].message as StartMessage;
+    expect(start.pickPhoto?.profile).toEqual(calibrated);
+    expect(start.pickPhoto?.photo).toBe(photo);
+    expect(posted[0].transfer).toContain(photo);
+    expect(start.photo).toBeUndefined();
   });
 });

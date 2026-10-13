@@ -5,6 +5,9 @@ export type PanelId = 'highway' | 'tab' | 'fretboard' | 'neck' | 'pick';
 
 export const PANEL_IDS: readonly PanelId[] = ['highway', 'tab', 'fretboard', 'neck', 'pick'];
 
+/** The two views that draw the guitar photo with rings: the Real guitar view and the pick view. They share dots, technique cues and the neck drawing. */
+export const isGuitarPanel = (p: PanelId): boolean => p === 'neck' || p === 'pick';
+
 export const PANEL_NAMES: Record<PanelId, string> = {
   highway: 'Highway',
   tab: 'Tab strip',
@@ -68,7 +71,7 @@ export function needsBarStrip(panels: readonly PanelId[]): boolean {
 
 /** Whether the label and look-ahead controls apply: the fretboard and both real guitar views show dots. */
 export function showsDots(layout: StageLayout): boolean {
-  return panelsOf(layout).some((p) => p === 'fretboard' || p === 'neck' || p === 'pick');
+  return panelsOf(layout).some((p) => p === 'fretboard' || isGuitarPanel(p));
 }
 
 export const LAYOUT_KEY = 'tab-highway.stage-layout';
