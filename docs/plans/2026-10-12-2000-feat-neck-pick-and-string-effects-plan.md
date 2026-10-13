@@ -36,7 +36,7 @@ The Real guitar view draws glowing rings over one bundled photo. The nut, 23 fre
 
 - R1. The new view's bundled photo shows the body below the neck, through a pickup, so there is guitar under the picking hand's side of the view.
 - R22. The new view is a view mode the player can choose like the existing ones, including full screen and video export, and the existing Real guitar view keeps its photo, rings and behavior exactly as they are.
-- R2. Calibration asks for seven taps, each with its own prompt: the nut, the 12th fret and the last fret, each at the high-E side and the low-E side of the neck, then the pick point. The player says whether the neck has 22 or 24 frets.
+- R2. Calibration asks for seven taps, each with its own prompt: the nut, the 12th fret and the last fret, each at the high-E side and the low-E side of the neck, then the pick point. The player says how many frets the neck has, from 20 to 24.
 - R3. A profile with no pick point draws with none of the pick and string effects; the Real guitar view uses such a profile.
 - R13. Each neck photo has a profile that holds where the nut, the frets, the strings and the pick point sit on it. The views and video export draw against it, and each bundled photo ships with a measured profile, so no calibration is needed to use either view.
 - R14. The player can choose a photo of their own and calibrate it for the new view.
@@ -159,7 +159,7 @@ The Real guitar view draws glowing rings over one bundled photo. The nut, 23 fre
 - KTD1. **A `NeckProfile` replaces the module constants in the neck drawing code.** It holds the photo size, the nut, each fret wire, the string knots, where the strings end, the pick point and the view's start, end and neck row. `PhotoPlacement` carries it, every function that reads a constant takes it as a trailing argument that defaults to the Real guitar view's profile, and the profiles are measured data in `src/render/neck-profile.ts`: `NECK_PROFILE` (today's numbers for `src/assets/guitar-photo.jpg`, no pick point) and `PICK_PROFILE` (the new view's bundled photo, with a pick point). This keeps existing call sites and tests working and lets both views share the drawing code. Serves R13, R22.
 - KTD2. **The pick point is a photo-X on the neck axis.** The string heights there come from the existing straight-line extension of the string knots past the last knot (`photoStringY` already carries lines on at the end slopes), so no per-string pick data is stored. A calibration tap is projected onto the axis. Serves R2, R4, R7.
 - KTD3. **Calibration fits an axis map and edge lines, in a photo it first turns upright.** Three axis points (nut, 12th, last fret, each the middle of its edge pair) and their known share of the scale length (`1 - 2^(-n/12)`) fix a one-dimensional projective map from share to photo-X, which is how frets bunch on an angled photo. Each neck edge is a straight line through its three taps, and the strings between are spread between the edges as `photoStringY` already does. Before fitting, the photo is rotated by the angle of the nut-to-last-fret axis, plus a quarter turn when needed, so the neck runs left to right with the headstock on the left; the turned bitmap is what is stored. Serves R15.
-- KTD4. **The new view's current photo and its profile live in one browser-storage record.** IndexedDB holds the turned photo's bytes and the profile JSON together under one key, so they never disagree; reads and writes are guarded like `src/audio/profile-store-web.ts` and a failure means the new view's bundled photo. The desktop app's webview uses the same store. The photo is downscaled to a long side of at most 2048 pixels before it is stored. The Real guitar view never reads this record. Serves R17, R18, R20, R22.
+- KTD4. **The new view's current photo and its profile live in one browser-storage record.** IndexedDB holds the turned photo's bytes and the profile JSON together under one key, so they never disagree; reads and writes are guarded like `src/audio/profile-store-web.ts` and a failure means the new view's bundled photo. The desktop app's webview uses the same store. The photo is downscaled to a long side of at most 2048 pixels before it is stored; the profile is in photo units, not pixels, so it is unchanged by the downscale. The Real guitar view never reads this record. Serves R17, R18, R20, R22.
 - KTD5. **Effects are pure functions of notes, the profile and the time.** A new `src/render/pick-cues.ts` gives the pick's position, each flash's strength and each picked note's pluck wobble at time `t`. Nothing reads a clock, so exported frames match the screen. Serves R5, R7, R8, R9, R11.
 - KTD6. **Each note carries its pick stroke.** `NoteEvent` gets `stroke: 'down' | 'up' | 'none'`, set in `src/model/alphatab-adapter.ts` from the beat's pick stroke; notes of one chord share it. Where the file marks none, `pick-cues.ts` infers it: a single note on a whole beat is down, a single note between beats is up, and a chord is down. Serves R10.
 - KTD7. **Pluck wobble is a term of the existing string offset.** `NoteEffect` gets a `pluck` value that decays from 1 at a picked note's start, and `stringOffset` adds a lateral wave scaled by `pluck` and by a sine envelope along the span from the ring to the pick point. A note in `cues.unpicked` has `pluck` 0. Bend and vibrato terms are unchanged, so R6 holds by addition. Serves R5, R6.
@@ -326,7 +326,7 @@ stateDiagram-v2
   - Covers AE8. Taps generated from the bundled profile's own positions give a profile whose frets are within a quarter of a fret gap of the originals.
   - Covers AE12. Taps from a perspective-projected neck with converging strings give frets that bunch toward the body at the right rate.
   - Covers AE12. A photo with the headstock at the top is turned upright; the fitted nut is left of the last fret.
-  - A 22-fret and a 24-fret answer give different fret counts and spacing.
+  - A 22-fret and a 24-fret answer give different fret counts and spacing, and a count outside the supported range is rejected.
   - Taps in the wrong order, or with the edges crossing, are rejected with a reason.
   - The pick tap beyond the last fret gives a pick X beyond it; a tap on the neck is rejected.
 - **Verification:** The fit recovers a synthetic profile, and the fitted bundled-photo taps match the measured profile closely enough that rings fall between the fret wires.
@@ -348,7 +348,7 @@ stateDiagram-v2
   - Covers AE10. Saving a photo does not change what the Real guitar view's loader returns.
   - Covers AE14. A failed write or a blocked store leaves the previous record, or the bundled photo, and reports the failure.
   - A stored record with an unknown version or a corrupt profile reads as the bundled photo.
-  - A photo over the size cap is stored downscaled with its profile scaled with it.
+  - A photo over the size cap is stored downscaled and its profile is unchanged (units, not pixels).
 - **Verification:** After reload, the new view uses the saved photo; with storage blocked, the bundled photo is used without an error; the Real guitar view is unaffected in both.
 
 ### U8. Calibration interface
@@ -424,7 +424,7 @@ stateDiagram-v2
 - `npm test`, `npm run typecheck` and `npm run build` pass.
 - The Real guitar view draws exactly as it did before, and the new view with technique cues off has none of the pick and string effects.
 - The live view and exported frames agree at the same time for the same song and photo.
-- The bundled photo is tracked in the repo as an asset, the repo-root copy is gone, and no dead experiment code is left in the diff.
+- The new view's bundled photo is tracked in the repo as an asset, the untracked repo-root source image is left for the user to keep or remove, and no dead experiment code is left in the diff.
 
 ## Risks & Dependencies
 
