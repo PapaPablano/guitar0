@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { playbackBarIndexAt } from '../model/bars';
 import type { Timeline } from '../model/score';
 import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
+import { NeckCalibration } from './NeckCalibration';
 import { drawSurface, surfaceLabel } from './panel-draw';
 import { PANEL_NAMES, type PanelId } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
@@ -57,6 +58,7 @@ export function PanelFullscreen({
   const barRef = useRef<HTMLCanvasElement>(null);
   const photo = useNeckPhoto();
   const pickPhoto = usePickPhoto();
+  const [calibrating, setCalibrating] = useState(false);
   const liveRef = useRef({ loop, lookahead, labelMode, neckCues });
   liveRef.current = { loop, lookahead, labelMode, neckCues };
   const barSelect = useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeekBar, resetKey: panel });
@@ -145,6 +147,12 @@ export function PanelFullscreen({
           Techniques {neckCues ? 'on' : 'off'}
         </button>
       )}
+      {panel === 'pick' && (
+        <button type="button" className="panel-fullscreen-cues panel-fullscreen-photo" onClick={() => setCalibrating(true)} title="Use a photo of your own guitar">
+          Photo
+        </button>
+      )}
+      {calibrating && <NeckCalibration onClose={() => setCalibrating(false)} />}
       <button type="button" className="panel-fullscreen-close" onClick={onClose} aria-label="Exit full screen">
         ✕
       </button>

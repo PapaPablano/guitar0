@@ -1,19 +1,13 @@
 import { useEffect, useRef } from 'react';
 import bundledUrl from '../assets/pick-guitar-photo.jpg';
 import { PICK_PROFILE, type NeckProfile } from '../render/neck-profile';
+import { onPickPhotoChanged } from './pick-photo-events';
 import { defaultPickPhotoStore, resolvePickPhoto, type PickPhotoStore } from './pick-photo-store';
 
 /** What the pick view draws against: the photo once it has loaded (null until then) and the profile that goes with it. */
 export interface PickPhoto {
   readonly image: HTMLImageElement | null;
   readonly profile: NeckProfile;
-}
-
-const listeners = new Set<() => void>();
-
-/** Tells every pick view the saved photo changed, so it loads the new one. Calibration calls this after saving or clearing. */
-export function pickPhotoChanged(): void {
-  for (const listener of listeners) listener();
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -58,11 +52,10 @@ export function usePickPhoto(store: PickPhotoStore = defaultPickPhotoStore()): {
       if (alive) photo.current = next;
     };
     void load();
-    const reload = () => void load();
-    listeners.add(reload);
+    const stopListening = onPickPhotoChanged(() => void load());
     return () => {
       alive = false;
-      listeners.delete(reload);
+      stopListening();
       release();
     };
   }, [store]);

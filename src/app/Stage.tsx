@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { playbackBarIndexAt } from '../model/bars';
 import type { Timeline } from '../model/score';
 import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
+import { NeckCalibration } from './NeckCalibration';
 import { drawSurface, surfaceLabel, type SurfaceKind } from './panel-draw';
 import { needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
@@ -50,6 +51,7 @@ export function Stage({
   const canvases = useRef<Partial<Record<SurfaceKind, HTMLCanvasElement | null>>>({});
   const photo = useNeckPhoto();
   const pickPhoto = usePickPhoto();
+  const [calibrating, setCalibrating] = useState(false);
   const panels = panelsOf(layout);
   const bar = needsBarStrip(panels);
   const key = `${layout.top}/${layout.bottom}`;
@@ -105,6 +107,11 @@ export function Stage({
               Techniques {neckCues ? 'on' : 'off'}
             </button>
           )}
+          {id === 'pick' && (
+            <button type="button" onClick={() => setCalibrating(true)} title="Use a photo of your own guitar">
+              Photo
+            </button>
+          )}
           <button type="button" onClick={() => onFullscreen(id)} aria-label={`Full screen ${PANEL_NAMES[id]}`} title={`Full screen ${PANEL_NAMES[id]}`}>
             ⤢
           </button>
@@ -128,6 +135,7 @@ export function Stage({
           {...barSelect('bar')}
         />
       )}
+      {calibrating && <NeckCalibration onClose={() => setCalibrating(false)} />}
     </div>
   );
 }

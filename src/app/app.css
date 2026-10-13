@@ -804,3 +804,23 @@ button.primary:hover:not(:disabled) {
   border-radius: 50%;
   background: var(--accent-warm);
 }
+
+.dialog.calibration {
+  width: min(960px, 96vw);
+  max-height: 94vh;
+  overflow: auto;
+}
+
+.calibration-photo {
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  background: #000;
+  border-radius: 8px;
+  touch-action: manipulation;
+  cursor: crosshair;
+}
+
+.panel-fullscreen-photo {
+  right: 200px;
+}
