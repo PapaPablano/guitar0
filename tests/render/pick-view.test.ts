@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
-import { photoPlacement, photoStringY, photoToScreen, renderNeckView } from '../../src/render/neck-view';
+import { photoPlacement, photoStringY, photoToScreen, renderNeckView, zoomedPlacement } from '../../src/render/neck-view';
 import { PLUCK_SECONDS } from '../../src/render/pick-cues';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -104,5 +104,50 @@ describe('the pick marker', () => {
 
   it('is the same at the same time on repeated draws', () => {
     expect(draw(picked, 1.02, PICK_PROFILE)).toEqual(draw(picked, 1.02, PICK_PROFILE));
+  });
+});
+
+describe('the framing', () => {
+  const inFrame = (place: ReturnType<typeof photoPlacement>, w: number, h: number) => {
+    const p = photoToScreen(place, PICK_PROFILE.pickX as number, photoStringY(3, 6, PICK_PROFILE.pickX as number, PICK_PROFILE));
+    return p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h;
+  };
+  const low = makeTimeline([1, 2, 3, 4].map((start, i) => ({ start, end: start + 0.5, string: 1 + i, fret: 1 + i }))).notesForTrack(0);
+  // a song that spans the whole neck, so the camera follows it
+  const wide = makeTimeline([2, 5, 9, 14, 19, 22].map((fret, i) => ({ start: 0.5 + i * 2, end: 1.2 + i * 2, string: 2, fret }))).notesForTrack(0);
+
+  it('covers AE15: keeps the pick point in frame for a song in the low frets, on a wide and on a tall screen', () => {
+    for (const [w, h] of [[1920, 1080], [540, 1170]]) {
+      expect(inFrame(zoomedPlacement(w, h, low, 2, 6, PICK_PROFILE), w, h)).toBe(true);
+    }
+  });
+
+  it('keeps it in frame all through a following camera move, which never jumps from frame to frame', () => {
+    let before: number | null = null;
+    for (let t = 0; t <= 12; t += 0.02) {
+      const place = zoomedPlacement(1920, 1080, wide, t, 6, PICK_PROFILE);
+      expect(inFrame(place, 1920, 1080)).toBe(true);
+      if (before !== null) expect(Math.abs(place.centreX - before)).toBeLessThan(25);
+      before = place.centreX;
+    }
+  });
+
+  it('zooms in less than it does for a photo with no pick point, to make room', () => {
+    expect(zoomedPlacement(1920, 1080, low, 2, 6, PICK_PROFILE).scale).toBeLessThan(
+      zoomedPlacement(1920, 1080, low, 2, 6, { ...PICK_PROFILE, pickX: undefined }).scale,
+    );
+  });
+
+  it('is the window it always was when the profile has no pick point', () => {
+    expect(zoomedPlacement(1920, 1080, low, 2, 6, NECK_PROFILE)).toEqual(zoomedPlacement(1920, 1080, low, 2));
+  });
+});
+
+describe('the dimming', () => {
+  const dimmed = (profile: NeckProfile) => draw(picked, 1.5, profile).filter((c) => c.name === 'fill' && Math.abs(c.alpha - 0.62) < 1e-9).length;
+
+  it('dims the body less when the photo shows it, and everything else as before', () => {
+    expect(dimmed(NECK_PROFILE)).toBe(4);
+    expect(dimmed(PICK_PROFILE)).toBe(3);
   });
 });

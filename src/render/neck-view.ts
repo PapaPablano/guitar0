@@ -170,6 +170,8 @@ function followCentre(notes: readonly NoteEvent[], t: number, profile: NeckProfi
 
 /** Room left around the lowest and highest frets used, in photo pixels (about a fret and a half low down the neck). */
 const FIT_MARGIN = 45;
+/** Room kept past the pick point, in photo pixels, when the view frames it. */
+const PICK_MARGIN = 30;
 /** The least neck the zoomed view shows, so a song of one or two frets is not blown up past the photo's sharpness. */
 const MIN_ZOOM_SPAN = 240;
 
@@ -228,6 +230,13 @@ export function zoomedPlacement(
   if (fitSpan > ZOOM_SPAN) {
     centreX = followCentre(notes, t, profile);
     span = ZOOM_SPAN;
+  }
+  if (profile.pickX !== undefined) {
+    // take in the pick point as well: the window grows to the right until it holds it, so it glides as smoothly as the camera does
+    const low = centreX - span / 2;
+    const high = Math.max(centreX + span / 2, profile.pickX + PICK_MARGIN);
+    centreX = (low + high) / 2;
+    span = high - low;
   }
   const centreY = (photoStringY(range.lowString, stringCount, centreX, profile) + photoStringY(range.highString, stringCount, centreX, profile)) / 2;
   return photoPlacement(width, height, { centreX, span, centreY }, profile);
@@ -455,6 +464,8 @@ function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, 
 const boardTop = (x: number, profile: NeckProfile) => photoStringY(1, 6, x, profile) - 6;
 const boardBottom = (x: number, profile: NeckProfile) => photoStringY(6, 6, x, profile) + 7;
 const FAR = 5000;
+/** How much the body is dimmed when the photo shows it. */
+const BODY_DIM = 0.22;
 const GLASS = '#9fe8ff';
 
 /** Fills a polygon given in photo coordinates. */
@@ -486,7 +497,10 @@ function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: n
   ctx.fillStyle = '#020b0f';
   ctx.globalAlpha = 0.62;
   fillPhotoPolygon(ctx, place, [[-FAR, -FAR], [BOARD_LEFT, -FAR], [BOARD_LEFT, FAR], [-FAR, FAR]]);
+  // a photo with a pick point shows the body past the neck, which is dimmed less so the pickup and the pick read on the guitar
+  ctx.globalAlpha = profile.pickX !== undefined ? BODY_DIM : 0.62;
   fillPhotoPolygon(ctx, place, [[BOARD_RIGHT, -FAR], [FAR, -FAR], [FAR, FAR], [BOARD_RIGHT, FAR]]);
+  ctx.globalAlpha = 0.62;
   fillPhotoPolygon(ctx, place, [[BOARD_LEFT, -FAR], [BOARD_RIGHT, -FAR], ...[...topEdge].reverse()]);
   fillPhotoPolygon(ctx, place, [[BOARD_LEFT, FAR], [BOARD_RIGHT, FAR], ...[...bottomEdge].reverse()]);
   // the board itself: a slight cool tint and a little shade so the lit strings stand out
