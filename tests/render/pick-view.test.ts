@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
-import { photoPlacement, photoStringY, photoToScreen, renderNeckView, zoomedPlacement } from '../../src/render/neck-view';
+import { PICK_SIZE, photoPlacement, photoStringY, photoToScreen, renderNeckView, zoomedPlacement } from '../../src/render/neck-view';
 import { PLUCK_SECONDS } from '../../src/render/pick-cues';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -110,7 +110,7 @@ describe('the pick marker', () => {
         .slice(-3)
         .map((c) => ({ x: c.args[0] as number, y: c.args[1] as number }));
       const centroid = { x: (corners[0].x + corners[1].x + corners[2].x) / 3, y: (corners[0].y + corners[1].y + corners[2].y) / 3 };
-      const size = 13 * photoPlacement(W, H, undefined, PICK_PROFILE).scale;
+      const size = PICK_SIZE * photoPlacement(W, H, undefined, PICK_PROFILE).scale;
       expect(Math.hypot(centroid.x - pickPoint(string).x, centroid.y - pickPoint(string).y)).toBeLessThan(size * 0.5);
     }
   });

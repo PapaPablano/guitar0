@@ -656,8 +656,8 @@ function stringOffset(effect: NoteEffect | undefined, string: number, stringCoun
   return acrossOffset(string, stringCount, x, share, profile);
 }
 
-/** The pick's length from tip to base, in photo pixels. */
-const PICK_SIZE = 13;
+/** The pick's length from tip to base, in photo pixels: three times the first cut, so it reads at a glance. */
+export const PICK_SIZE = 39;
 
 /**
  * The picking hand on the body: a flash on each string the pick has just reached, and the pick itself, a rounded triangle on the
