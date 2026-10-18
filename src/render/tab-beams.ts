@@ -1,6 +1,6 @@
 import type { BarEvent } from '../model/score';
 
-const TICKS_PER_QUARTER = 960;
+export const TICKS_PER_QUARTER = 960;
 const MAX_FLAGS = 3;
 
 export interface BeamInput {

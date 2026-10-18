@@ -1,6 +1,6 @@
 import type { DrawContext } from './draw-context';
 import { barSpans } from './bars';
-import { beatTicksFor, flagCount, planBeams } from './tab-beams';
+import { beatTicksFor, flagCount, planBeams, TICKS_PER_QUARTER, type BeamPlan } from './tab-beams';
 import { fretLabel, techniqueMark } from './techniques';
 import { playbackBarIndexAt } from '../model/bars';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
@@ -14,8 +14,10 @@ export const MIN_BAR_WIDTH = 90;
 export const GUTTER_WIDTH = 96;
 export const FRET_FONT_MAX = 16;
 export const FRET_FONT_MIN = 11;
+/** X of the stacked TAB letters and of the time-signature digits inside the gutter. */
+const CLEF_X = 24;
+const SIGNATURE_X = 64;
 
-const TICKS_PER_QUARTER = 960;
 /** Space before a bar's first note, so its fret number clears the bar line. */
 const LEAD_PAD = MIN_SLOT_WIDTH / 2 + 2;
 const CURSOR_FRACTION = 0.3;
@@ -48,6 +50,11 @@ export interface StripBar {
   readonly repeatEnd: boolean;
   readonly notes: readonly NoteEvent[];
   readonly slots: readonly StripSlot[];
+  /** Where the playhead is within the bar at each note's start second, for the cursor to blend between. */
+  readonly secondsAnchors: readonly Anchor[];
+  /** X of each inner beat line within the bar, left to right. */
+  readonly beatXs: readonly number[];
+  readonly beams: BeamPlan;
 }
 
 export interface StripLayout {
@@ -140,7 +147,19 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
   for (const { scoreBar, playback, repeatStart, repeatEnd } of barSpans(timeline)) {
     const barNotes = notesByPlaybackBar.get(playback.playbackIndex) ?? [];
     const { slots, width: barWidth } = buildSlots(playback, barNotes);
-    bars.push({ scoreBar, x, width: barWidth, playback, repeatStart, repeatEnd, notes: barNotes, slots });
+    bars.push({
+      scoreBar,
+      x,
+      width: barWidth,
+      playback,
+      repeatStart,
+      repeatEnd,
+      notes: barNotes,
+      slots,
+      secondsAnchors: barAnchors(playback, slots, barWidth, 'seconds'),
+      beatXs: beatXsFor(playback, barAnchors(playback, slots, barWidth, 'tick')),
+      beams: planBeams(slots, playback.startTick, playback.timeSignature),
+    });
     x += barWidth;
   }
 
@@ -175,31 +194,25 @@ function interpolate(anchors: readonly Anchor[], key: number): number {
   return a.x + ((key - a.key) / (b.key - a.key)) * (b.x - a.x);
 }
 
-function secondsAnchors(bar: StripBar): Anchor[] {
-  return [
-    { key: bar.playback.startSeconds, x: 0 },
-    ...bar.slots.map((s) => ({ key: s.seconds, x: s.offset })),
-    { key: bar.playback.endSeconds, x: bar.width },
-  ];
+/** The bar's start, each note's slot and the bar's end, keyed by seconds or by ticks. */
+function barAnchors(playback: BarEvent, slots: readonly StripSlot[], width: number, key: 'seconds' | 'tick'): Anchor[] {
+  const start = key === 'seconds' ? playback.startSeconds : playback.startTick;
+  const end = key === 'seconds' ? playback.endSeconds : playback.endTick;
+  return [{ key: start, x: 0 }, ...slots.map((s) => ({ key: s[key], x: s.offset })), { key: end, x: width }];
 }
 
-function tickAnchors(bar: StripBar): Anchor[] {
-  return [
-    { key: bar.playback.startTick, x: 0 },
-    ...bar.slots.map((s) => ({ key: s.tick, x: s.offset })),
-    { key: bar.playback.endTick, x: bar.width },
-  ];
+function beatXsFor(playback: BarEvent, tickAnchors: readonly Anchor[]): number[] {
+  const beat = beatTicksFor(playback.timeSignature);
+  const xs: number[] = [];
+  for (let tick = playback.startTick + beat; tick < playback.endTick; tick += beat) {
+    xs.push(interpolate(tickAnchors, tick));
+  }
+  return xs;
 }
 
 /** X of each inner beat line within the bar, left to right; the bar line itself is not one. */
-export function barBeatXs(bar: StripBar): number[] {
-  const beat = beatTicksFor(bar.playback.timeSignature);
-  const anchors = tickAnchors(bar);
-  const xs: number[] = [];
-  for (let tick = bar.playback.startTick + beat; tick < bar.playback.endTick; tick += beat) {
-    xs.push(interpolate(anchors, tick));
-  }
-  return xs;
+export function barBeatXs(bar: StripBar): readonly number[] {
+  return bar.beatXs;
 }
 
 /** X of the playhead in strip space. Across a repeat this jumps back to the repeated bar. */
@@ -213,7 +226,7 @@ export function playheadStripX(layout: StripLayout, timeline: Timeline, t: numbe
   const fraction = seconds > 0 ? Math.min(1, Math.max(0, (t - played.startSeconds) / seconds)) : 0;
   const first = bar.playback;
   const key = first.startSeconds + fraction * (first.endSeconds - first.startSeconds);
-  return bar.x + interpolate(secondsAnchors(bar), key);
+  return bar.x + interpolate(bar.secondsAnchors, key);
 }
 
 /** Strip-space x shown at the left edge of the canvas when the playhead is at `t`. */
@@ -241,6 +254,10 @@ export function scoreBarStartSeconds(layout: StripLayout, scoreBar: number): num
   return stripBarFor(layout, scoreBar)?.playback.startSeconds ?? null;
 }
 
+function staffBottom(layout: StripLayout): number {
+  return layout.lineTop + layout.lineGap * (layout.stringCount - 1);
+}
+
 function fretFontSize(lineGap: number): number {
   return Math.min(FRET_FONT_MAX, Math.max(FRET_FONT_MIN, Math.round(lineGap * 0.95)));
 }
@@ -258,7 +275,7 @@ export function renderTabStrip(
   const theme = options.theme ?? DEFAULT_THEME;
   const layout = getStripLayout(timeline, trackIndex, width, height);
   const scroll = stripScrollX(layout, timeline, t);
-  const bottom = layout.lineTop + layout.lineGap * (layout.stringCount - 1);
+  const bottom = staffBottom(layout);
 
   ctx.save();
   ctx.globalAlpha = 1;
@@ -331,7 +348,7 @@ function drawStrings(ctx: DrawContext, layout: StripLayout, theme: HighwayTheme,
 function drawBeatTicks(ctx: DrawContext, bar: StripBar, layout: StripLayout, barX: number): void {
   ctx.strokeStyle = BEAT_TICK_COLOR;
   ctx.lineWidth = 1;
-  for (const offset of barBeatXs(bar)) {
+  for (const offset of bar.beatXs) {
     ctx.beginPath();
     ctx.moveTo(barX + offset, layout.lineTop - 4);
     ctx.lineTo(barX + offset, layout.lineTop - 11);
@@ -348,8 +365,10 @@ function drawBarNotes(
   staffBottom: number,
 ): void {
   const fontSize = fretFontSize(layout.lineGap);
+  const fretFont = `bold ${fontSize}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.font = fretFont;
   for (const slot of bar.slots) {
     const x = barX + slot.offset;
     for (const n of slot.notes) {
@@ -359,7 +378,6 @@ function drawBarNotes(
       // break the string behind the number so it stays readable
       ctx.fillStyle = STRIP_BACKGROUND;
       ctx.fillRect(x - boxWidth / 2, y - fontSize / 2 - 1, boxWidth, fontSize + 2);
-      ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
       ctx.fillStyle = STRIP_NOTE_TEXT;
       ctx.fillText(label, x, y);
       const mark = techniqueMark(n);
@@ -367,6 +385,7 @@ function drawBarNotes(
         ctx.fillStyle = theme.barLabel;
         ctx.font = '10px system-ui, sans-serif';
         ctx.fillText(mark, x, y - fontSize / 2 - 5);
+        ctx.font = fretFont;
       }
     }
   }
@@ -385,7 +404,7 @@ function drawRhythm(
   const stemTop = staffBottom + 8;
   const stemLength = Math.min(22, Math.max(8, layout.height - staffBottom - 14));
   const stemBottom = stemTop + stemLength;
-  const plan = planBeams(bar.slots, bar.playback.startTick, bar.playback.timeSignature);
+  const plan = bar.beams;
   const xOf = (i: number) => barX + bar.slots[i].offset;
 
   ctx.strokeStyle = theme.barLabel;
@@ -435,7 +454,7 @@ function beam(ctx: DrawContext, fromX: number, toX: number, y: number): void {
 
 /** The fixed clef and time-signature area: an opaque panel that notes scroll under. */
 function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, t: number, theme: HighwayTheme): void {
-  const bottom = layout.lineTop + layout.lineGap * (layout.stringCount - 1);
+  const bottom = staffBottom(layout);
   const middle = (layout.lineTop + bottom) / 2;
   ctx.fillStyle = STRIP_BACKGROUND;
   ctx.fillRect(0, 0, GUTTER_WIDTH, layout.height);
@@ -447,17 +466,17 @@ function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, t
   ctx.textBaseline = 'middle';
   ctx.font = `600 ${clefSize}px system-ui, sans-serif`;
   const step = clefSize * 1.05;
-  ctx.fillText('T', 24, middle - step);
-  ctx.fillText('A', 24, middle);
-  ctx.fillText('B', 24, middle + step);
+  ctx.fillText('T', CLEF_X, middle - step);
+  ctx.fillText('A', CLEF_X, middle);
+  ctx.fillText('B', CLEF_X, middle + step);
 
   const signature = timeline.bars[playbackBarIndexAt(timeline, t)]?.timeSignature;
   if (signature) {
     const signatureSize = Math.min(24, Math.max(14, Math.round(layout.lineGap * 1.3)));
     ctx.fillStyle = STRIP_NOTE_TEXT;
     ctx.font = `600 ${signatureSize}px system-ui, sans-serif`;
-    ctx.fillText(String(signature.numerator), 64, middle - signatureSize * 0.55);
-    ctx.fillText(String(signature.denominator), 64, middle + signatureSize * 0.55);
+    ctx.fillText(String(signature.numerator), SIGNATURE_X, middle - signatureSize * 0.55);
+    ctx.fillText(String(signature.denominator), SIGNATURE_X, middle + signatureSize * 0.55);
   }
 
   ctx.strokeStyle = theme.laneLine;
