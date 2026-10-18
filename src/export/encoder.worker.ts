@@ -7,6 +7,7 @@ import { renderStageFrame, type ExportViewOptions, type FrameContext } from '../
 import { tabTimeAt, type PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
 import { AUDIO_CHANNELS, frameCount, frameTime, type ExportPreset } from './presets';
+import { drawWatermark, type MarkContext } from './watermark';
 
 export interface StartMessage {
   type: 'start';
@@ -26,6 +27,8 @@ export interface StartMessage {
   outputSeconds: number;
   /** Where the recording sits against the tab; absent when the video is the tab's own length. */
   alignment?: AlignmentData;
+  /** Draw the Tab Highway mark on every frame (a Free export). */
+  watermark?: boolean;
 }
 
 export type WorkerMessage = StartMessage | { type: 'cancel' };
@@ -109,6 +112,7 @@ async function run(msg: StartMessage): Promise<void> {
     if (failure) throw failure;
     const t = tabTimeAt(alignment, frameTime(frame, preset.fps));
     renderStageFrame(ctx as unknown as FrameContext, timeline, msg.trackIndex, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null, pickPhoto: msg.pickPhoto ?? null });
+    if (msg.watermark) drawWatermark(ctx as unknown as MarkContext, preset.width, preset.height);
     const videoFrame = new VideoFrame(canvas, {
       timestamp: Math.round((frame * 1e6) / preset.fps),
       duration: Math.round(1e6 / preset.fps),

@@ -36,6 +36,8 @@ export function startExport(args: {
   pickPhoto?: { photo: ImageBitmap; profile: NeckProfile };
   /** Where the recording sits against the tab; the video lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
+  /** Draw the Tab Highway mark on every frame: true for a Free export. */
+  watermark?: boolean;
   onProgress: (fraction: number) => void;
 }): ExportJob {
   const worker = new Worker(new URL('./encoder.worker.ts', import.meta.url), { type: 'module' });
@@ -81,6 +83,7 @@ export function startExport(args: {
         pickPhoto: args.pickPhoto,
         outputSeconds,
         alignment,
+        watermark: args.watermark === true,
       };
       worker.postMessage(start, [audio.left.buffer, audio.right.buffer, ...(args.photo ? [args.photo] : []), ...(args.pickPhoto ? [args.pickPhoto.photo] : [])]);
     } catch (e) {

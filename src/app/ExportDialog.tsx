@@ -10,6 +10,7 @@ import { browserDownload, openExportFolder, saveExport, type SaveResult } from '
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
 import { isGuitarPanel, panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
+import { isPro, useTier } from './tier';
 import type { Timeline } from '../model/score';
 
 type Phase =
@@ -51,6 +52,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
+  const tier = useTier();
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
   const job = useRef<ExportJob | null>(null);
@@ -143,6 +145,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
         photo,
         pickPhoto: pick,
         alignment,
+        watermark: !isPro(tier),
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
       job.current = running;
@@ -180,6 +183,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
 
         {phase.name === 'idle' && (
           <>
+            {!isPro(tier) && <p className="muted">Free exports carry a small "Made with Tab Highway" mark. Pro exports are clean.</p>}
             {support && !support.supported ? (
               <p role="alert" className="error">
                 {support.reason}
