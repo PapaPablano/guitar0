@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { openExternal } from './desktop';
 import { songsterrSearchUrl } from './songsterr';
 
 interface DropZoneProps {
@@ -44,7 +45,7 @@ export function DropZone({ onFile, onSample, error, loading }: DropZoneProps) {
         className="song-search"
         onSubmit={(e) => {
           e.preventDefault();
-          if (searchUrl) window.open(searchUrl, '_blank', 'noopener,noreferrer');
+          if (searchUrl) void openExternal(searchUrl).catch(() => {});
         }}
       >
         <label className="field">

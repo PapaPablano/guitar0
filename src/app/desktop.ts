@@ -30,6 +30,15 @@ export async function invokeShell<T>(command: string, args?: Record<string, unkn
   return (await shell.core.invoke(command, args)) as T;
 }
 
+/** Opens a web link: through the shell in the desktop app (its webview drops new-window requests), a new tab on the web. */
+export async function openExternal(url: string, host: object = globalThis): Promise<void> {
+  if (getShell(host)) {
+    await invokeShell('open_external', { url }, host);
+    return;
+  }
+  (host as { open?: (url: string, target: string, features: string) => unknown }).open?.(url, '_blank', 'noopener,noreferrer');
+}
+
 /** Calls a shell command with raw bytes as its body (no JSON), for large data sent in slices; rejects on the web. */
 export async function invokeShellRaw(command: string, bytes: Uint8Array, headers: Record<string, string>, host: object = globalThis): Promise<void> {
   const shell = getShell(host);

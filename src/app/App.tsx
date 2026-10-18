@@ -52,7 +52,7 @@ import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
 import { hashFile, hashVideoLink } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
-import { isDesktop } from './desktop';
+import { isDesktop, openExternal } from './desktop';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { BackingTrack } from './BackingTrack';
 import { StemPanel, type ActiveStems, type TakeChecks } from './StemPanel';
@@ -1116,7 +1116,17 @@ export function App() {
         </button>
         <Menu label="More" ariaLabel="More: find on Songsterr, open another file" className="more-menu">
           {songsterrLink && (
-            <a className="link-button" href={songsterrLink} target="_blank" rel="noopener noreferrer">
+            <a
+              className="link-button"
+              href={songsterrLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                if (!isDesktop()) return;
+                e.preventDefault();
+                void openExternal(songsterrLink).catch(() => {});
+              }}
+            >
               Find on Songsterr
             </a>
           )}
