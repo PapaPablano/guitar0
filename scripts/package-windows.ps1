@@ -69,6 +69,16 @@ if (Test-Path $Stage) {
 New-Item -ItemType Directory -Force $Stage | Out-Null
 Copy-Item -Recurse (Join-Path $Inner.FullName "python") (Join-Path $Stage "python")
 Copy-Item -Recurse (Join-Path $Inner.FullName "backend") (Join-Path $Stage "backend")
+
+# diffq-fixed is licensed CC BY-NC 4.0 (non-commercial). Demucs imports it only for quantized checkpoints, and the
+# htdemucs_6s model we use is not quantized, so it is removed rather than shipped.
+$SitePackages = Join-Path $Stage "python\Lib\site-packages"
+Get-ChildItem -LiteralPath $SitePackages -Force | Where-Object { $_.Name -eq "diffq" -or $_.Name -like "diffq_fixed-*.dist-info" } | Remove-Item -Recurse -Force
+
+# Fail the build on any non-commercial or unrecognised licence in the shipped runtime (see scripts/check-licences.py).
+& (Join-Path $Stage "python\base\python.exe") -I (Join-Path $Root "scripts\check-licences.py") $SitePackages
+if ($LASTEXITCODE -ne 0) { throw "licence check failed: see the FAIL lines above" }
+
 Copy-Item -Recurse (Join-Path $Root "engine\wrapper") (Join-Path $Stage "engine")
 $TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root "src-tauri\target" }
 $Exe = Join-Path $TargetDir "release\tab-highway.exe"

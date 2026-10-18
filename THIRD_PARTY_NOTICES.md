@@ -30,9 +30,9 @@ Tab Highway bundles the packages and assets below. Each keeps its own licence.
 
 ## Assets shipped in the page
 
-### Sonivox SoundFont (sonivox.sf3) -- still in the build, no longer played
+### Sonivox SoundFont (sonivox.sf3) -- not shipped
 
-- alphaTab's build plugin still copies this file into the page, but the app no longer loads it; the band plays through MuseScore General.
+- alphaTab's build plugin copies this file into `public/` on every build, but the build step in `vite.config.ts` removes it from the output; the band plays through MuseScore General. It stays in `public/` for the dev listening pages only.
 - Supplied with alphaTab in `@coderline/alphatab/dist/soundfont/`.
 - Its licence file states Apache License 2.0, Copyright (c) 2004-2006 Sonic Network Inc.
 - Its README describes it as based on the Sonivox EAS synthesizer from the Android Open Source Project. The file's chain of custody is not fully documented, so check its provenance before wide distribution.
