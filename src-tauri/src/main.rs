@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod alignments;
+mod backup;
 mod engine;
 mod entitlement;
 mod exports;
@@ -283,7 +284,7 @@ fn main() {
         .manage(state.clone())
         .manage(exports::Exports::default())
         .manage(entitlement::Entitlements::load(engine::Layout::locate().ok().map(|layout| layout.data)))
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder])
         .setup({
             let state = state.clone();
             move |_app| {

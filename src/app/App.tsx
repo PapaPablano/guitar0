@@ -71,6 +71,7 @@ import { initialViewState, ViewControls } from './ViewControls';
 import { panelsOf, saveLayout, type PanelId, type StageLayout } from './stage-layout';
 import { FREE, isPro, layoutForTier, panelAllowed, readTier, TierContext, tempoFor, toolsForTier, type ProFeature, type TierState } from './tier';
 import { UpgradePrompt } from './UpgradePrompt';
+import { BackupDialog } from './BackupDialog';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
@@ -112,6 +113,8 @@ export function App() {
   const [tier, setTier] = useState<TierState>(FREE);
   /** The Pro feature a Free player just reached, while the upgrade prompt is open. */
   const [upgradeFor, setUpgradeFor] = useState<ProFeature | null>(null);
+  /** Whether the back up and restore dialog is open (desktop only). */
+  const [backupOpen, setBackupOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     const refresh = () => {
@@ -980,7 +983,8 @@ export function App() {
             {support.notice}
           </p>
         )}
-        <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} />
+        <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} onBackup={isDesktop() ? () => setBackupOpen(true) : undefined} />
+        {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
       <Notices />
       </main>
     );
@@ -1156,7 +1160,7 @@ export function App() {
           >
             Export video
           </button>
-          <Menu label="More" ariaLabel="More: find on Songsterr, open another file" className="more-menu">
+          <Menu label="More" ariaLabel="More: find on Songsterr, open another file, back up and restore" className="more-menu">
             {songsterrLink && (
               <a
                 className="link-button"
@@ -1183,6 +1187,11 @@ export function App() {
             >
               Open another file
             </button>
+            {isDesktop() && (
+              <button type="button" onClick={() => setBackupOpen(true)}>
+                Back up and restore…
+              </button>
+            )}
           </Menu>
         </header>
         {track && !track.hasTabData && (
@@ -1295,6 +1304,7 @@ export function App() {
           />
         )}
         <UpgradePrompt feature={upgradeFor} onClose={() => setUpgradeFor(null)} />
+        {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
         <ShortcutLegend />
         <Notices />
       </main>
