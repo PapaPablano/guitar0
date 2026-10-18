@@ -27,6 +27,9 @@ function Read-Version {
 }
 
 $Version = Read-Version
+if ($env:TABHIGHWAY_DEV_PRO -eq "1") {
+  Write-Warning "TABHIGHWAY_DEV_PRO=1: this build treats every install as Pro. It is for pre-launch testing only and must never be released."
+}
 New-Item -ItemType Directory -Force $Cache | Out-Null
 
 # 1. Web build and shell.

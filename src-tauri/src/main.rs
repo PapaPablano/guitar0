@@ -4,6 +4,7 @@
 
 mod alignments;
 mod engine;
+mod entitlement;
 mod exports;
 mod links;
 mod model_progress;
@@ -167,14 +168,29 @@ fn shutdown(state: &State) {
     engine::kill_slot(&state.starting);
 }
 
-#[tauri::command]
-fn engine_status(state: tauri::State<State>) -> Status {
-    state.status.lock().unwrap().clone()
+/// A free install is never told where the stem engine is or how to call it, so stems and YouTube import cannot be
+/// used from the page without Pro.
+fn gate(status: Status, is_pro: bool) -> Status {
+    if is_pro {
+        status
+    } else {
+        Status { url: None, secret: None, ..status }
+    }
 }
 
-/// Starts or retries setup, or restarts a stopped engine.
 #[tauri::command]
-fn engine_setup(state: tauri::State<State>) {
+fn engine_status(state: tauri::State<State>, entitlements: tauri::State<entitlement::Entitlements>) -> Status {
+    let status = state.status.lock().unwrap().clone();
+    gate(status, entitlements.is_pro())
+}
+
+/// Starts or retries setup, or restarts a stopped engine. Does nothing without Pro: the one-time download is for
+/// subscribers only.
+#[tauri::command]
+fn engine_setup(state: tauri::State<State>, entitlements: tauri::State<entitlement::Entitlements>) {
+    if !entitlements.is_pro() {
+        return;
+    }
     let state: State = state.inner().clone();
     state.allowance.lock().unwrap().on_user_retry();
     stop(&state);
@@ -266,7 +282,8 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(state.clone())
         .manage(exports::Exports::default())
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external])
+        .manage(entitlement::Entitlements::load(engine::Layout::locate().ok().map(|layout| layout.data)))
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear])
         .setup({
             let state = state.clone();
             move |_app| {
@@ -286,4 +303,28 @@ fn main() {
             shutdown(&exit_state);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ready() -> Status {
+        Status { phase: "ready".to_string(), progress: None, message: None, url: Some("http://127.0.0.1:1".to_string()), secret: Some("s".to_string()) }
+    }
+
+    #[test]
+    fn a_free_install_gets_no_engine_address_or_secret() {
+        let free = gate(ready(), false);
+        assert_eq!(free.url, None);
+        assert_eq!(free.secret, None);
+        assert_eq!(free.phase, "ready");
+    }
+
+    #[test]
+    fn a_pro_install_gets_the_engine_address_and_secret() {
+        let pro = gate(ready(), true);
+        assert_eq!(pro.url.as_deref(), Some("http://127.0.0.1:1"));
+        assert_eq!(pro.secret.as_deref(), Some("s"));
+    }
 }
