@@ -92,6 +92,10 @@ $StemDeckNotices = Join-Path $Inner.FullName "THIRD_PARTY_NOTICES.txt"
 if (Test-Path $StemDeckNotices) {
   Copy-Item $StemDeckNotices (Join-Path $Stage "THIRD_PARTY_NOTICES-stemdeck.txt")
 }
+# StemDeck ships each bundled package's licence text in licenses/. A paid release must carry them, so a release without them fails.
+$StemDeckLicences = Join-Path $Inner.FullName "licenses"
+if (-not (Test-Path $StemDeckLicences)) { throw "StemDeck $($Version.tag) has no licenses folder; the package would ship without its licence texts" }
+Copy-Item -Recurse $StemDeckLicences (Join-Path $Stage "licenses")
 New-Item -ItemType Directory -Force (Join-Path $Stage "data") | Out-Null
 
 Write-Host "Package : $Stage"

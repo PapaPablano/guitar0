@@ -22,6 +22,12 @@ These apply to the Windows desktop package only. The page's own notices are in T
 - Source: https://github.com/Anjok07/ultimatevocalremovergui
 - Downloaded on first use of the lead/backing vocal split, through `audio-separator` (MIT).
 
+### Beat and section models (beat-this, All-In-One)
+
+- Licence: MIT for the `beat-this` code and its published weights, and MIT for the All-In-One project and its `all-in-one-infer` runtime, as StemDeck's own model notes state.
+- StemDeck does not state a separate licence for the All-In-One `harmonix-all` checkpoint, which is downloaded on first use. Confirm it against the upstream model page before a paid release (tracked in `docs/launch-checklist.md`).
+- Sources: https://github.com/CPJKU/beat_this and https://github.com/mir-aidj/all-in-one
+
 ### LGPL libraries in the Python runtime
 
 - `lameenc` 1.8.4 (LGPL-3.0-or-later) and `soxr` 1.1.0 (LGPL-2.1-or-later, the python-soxr binding of libsoxr).
