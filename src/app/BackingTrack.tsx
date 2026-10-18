@@ -3,6 +3,7 @@ import { isDesktop } from './desktop';
 import { chooseMethod, methodsFor, type BackingMethod } from './backing-track';
 import { describeEngine, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { readYoutubeFlag } from './feature-flags';
+import { isPro, useTier, youtubeAllowed } from './tier';
 import { useEngineStatus } from './use-engine-status';
 
 interface BackingTrackProps {
@@ -19,10 +20,11 @@ export function BackingTrack({ recording, stems }: BackingTrackProps) {
   const status = useEngineStatus();
   const [method, setMethod] = useState<BackingMethod>('file');
   const [error, setError] = useState<string | null>(null);
-  const methods = methodsFor({ desktop: isDesktop(), youtube: readYoutubeFlag() });
+  const tier = useTier();
+  const methods = methodsFor({ desktop: isDesktop(), youtube: readYoutubeFlag() && youtubeAllowed(tier) });
 
   function choose(next: BackingMethod) {
-    const { method: chosen, startSetup } = chooseMethod(next, describeEngine(status));
+    const { method: chosen, startSetup } = chooseMethod(next, describeEngine(status, !isPro(tier)));
     setMethod(chosen);
     setError(null);
     if (startSetup) startEngineSetup().catch((e: unknown) => setError(String(e)));

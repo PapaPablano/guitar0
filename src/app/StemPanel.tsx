@@ -11,6 +11,7 @@ import type { BackingMethod } from './backing-track';
 import { isDesktop } from './desktop';
 import { stepAfterJudge, stepAfterPrecheck, TAKE_CHECKING_LABEL, type TakeJudged, type TakeOpenDecision, type TakeStep } from './take-align';
 import { readYoutubeFlag, youtubeControls } from './feature-flags';
+import { isPro, useTier, youtubeAllowed } from './tier';
 import { describeEngine, engineStateLine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, rankByLength, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
@@ -65,6 +66,7 @@ interface Source {
 /** Search, separate and mix controls. Renders nothing outside the desktop app. */
 export function StemPanel({ status, method, recording, durationSeconds, active, mix, onMixChange, onActivate, takes }: StemPanelProps) {
   const desktop = isDesktop();
+  const tier = useTier();
   const [savedJob, setSavedJob] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
@@ -131,10 +133,10 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
 
   if (!desktop) return null;
 
-  const engine = describeEngine(status);
+  const engine = describeEngine(status, !isPro(tier));
   const bar = setupBar(engine);
   const control = separateControl({ engine, hasRecording: recording !== null, hasSaved: savedJob !== null, busy });
-  const youtube = youtubeControls({ enabled: readYoutubeFlag(), stemsEnabled: engine.stemsEnabled, hasResults: results !== null });
+  const youtube = youtubeControls({ enabled: readYoutubeFlag() && youtubeAllowed(tier), stemsEnabled: engine.stemsEnabled, hasResults: results !== null });
 
   /** Separates (or reuses saved stems for) a source, then plays them. */
   async function start(source: Source) {

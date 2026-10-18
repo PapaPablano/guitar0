@@ -21,7 +21,11 @@ function dropUnusedSoundfont(): Plugin {
 export default defineConfig({
   base: './',
   // YouTube search and import is shown by default; build with VITE_ENABLE_YOUTUBE=false to hide it.
-  define: { __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE !== 'false') },
+  // VITE_DEV_PRO=1 makes a local browser session behave as Pro (the web is otherwise Free-only). Never set it for a release build.
+  define: {
+    __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE !== 'false'),
+    __DEV_PRO__: JSON.stringify(process.env.VITE_DEV_PRO === '1'),
+  },
   plugins: [react(), alphaTab(), dropUnusedSoundfont()],
   test: {
     environment: 'node',

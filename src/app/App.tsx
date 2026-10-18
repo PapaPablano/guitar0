@@ -68,7 +68,9 @@ import { canSwitchTone, programOverrides, type GuitarTone } from '../audio/guita
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
-import { saveLayout, type PanelId, type StageLayout } from './stage-layout';
+import { panelsOf, saveLayout, type PanelId, type StageLayout } from './stage-layout';
+import { FREE, isPro, layoutForTier, panelAllowed, readTier, TierContext, tempoFor, toolsForTier, type ProFeature, type TierState } from './tier';
+import { UpgradePrompt } from './UpgradePrompt';
 import { interpretKey, seekByBar } from './navigation';
 import { firstPlayableTrack, openTabBytes } from './open-file';
 import { songsterrLinkForSong } from './songsterr';
@@ -106,6 +108,36 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tempoPercent, setTempoPercent] = useState(100);
+  /** Free or Pro, from the desktop shell (always Free on the web). */
+  const [tier, setTier] = useState<TierState>(FREE);
+  /** The Pro feature a Free player just reached, while the upgrade prompt is open. */
+  const [upgradeFor, setUpgradeFor] = useState<ProFeature | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      void readTier().then((next) => {
+        if (alive) setTier(next);
+      });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+  /** Tempo changes go through the tier: Free stays at 100% and sees the prompt instead. */
+  const requestTempo = useCallback(
+    (percent: number) => {
+      const result = tempoFor(percent, tier);
+      setTempoPercent(result.percent);
+      if (result.blocked) setUpgradeFor('tempo');
+    },
+    [tier],
+  );
+  useEffect(() => {
+    if (!isPro(tier)) setTempoPercent(100);
+  }, [tier]);
   const [loop, setLoop] = useState<LoopBars | null>(null);
   const [loopOn, setLoopOn] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -144,11 +176,20 @@ export function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [fullscreenPanel, setFullscreenPanel] = useState<PanelId | null>(null);
   const [tool, setTool] = useState<ToolId>('loop');
-  const [layout, setLayoutState] = useState<StageLayout>(() => initialViewState().layout);
-  const setLayout = useCallback((next: StageLayout) => {
-    setLayoutState(next);
-    saveLayout(next);
-  }, []);
+  const [storedLayout, setLayoutState] = useState<StageLayout>(() => initialViewState().layout);
+  /** What the page shows: the player's saved layout, with Pro views swapped for free ones on a Free install. */
+  const layout = useMemo(() => layoutForTier(storedLayout, tier), [storedLayout, tier]);
+  const setLayout = useCallback(
+    (next: StageLayout) => {
+      if (!panelsOf(next).every((id) => panelAllowed(id, tier))) {
+        setUpgradeFor('real-guitar-views');
+        return;
+      }
+      setLayoutState(next);
+      saveLayout(next);
+    },
+    [tier],
+  );
   const [lookahead, setLookahead] = useState(() => initialViewState().lookahead);
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
   /** Whether the neck shows technique cues: remembered between sessions, on until the player turns it off. */
@@ -898,10 +939,10 @@ export function App() {
           clock.seek(seekByBar(timeline, clock.time(), 1));
           break;
         case 'tempo-up':
-          setTempoPercent((p) => Math.min(125, p + 5));
+          requestTempo(Math.min(125, live.current.tempoPercent + 5));
           break;
         case 'tempo-down':
-          setTempoPercent((p) => Math.max(25, p - 5));
+          requestTempo(Math.max(25, live.current.tempoPercent - 5));
           break;
         case 'toggle-loop':
           if (loop) setLoopOn((on) => !on);
@@ -913,7 +954,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top]);
+  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top, requestTempo]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
@@ -1060,200 +1101,203 @@ export function App() {
       return { startSeconds, endSeconds: scoreBarStartSeconds(strip, loop.endBar + 1) ?? timeline.durationSeconds };
     })(),
   };
-  const toolIds = availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0 });
+  const toolIds = toolsForTier(availableTools({ hasAudioSource: Boolean(userClock || stems), hasSections: sections.length > 0 }), tier);
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <h1>{title}</h1>
-        <TrackPicker
-          tracks={timeline.tracks}
-          value={trackIndex}
-          onChange={(i) => {
-            setTrackIndex(i);
-            setTuningId(FILE_TUNING);
-          }}
-        />
-        {!userClock && !stems && canPlayAlong(timeline.tracks, trackIndex) && (
-          <PlayAlongSwitch on={playAlong} onToggle={() => setPlayAlong((v) => !v)} />
-        )}
-        {canSwitchTone(track, !!userClock || !!stems) && (
-          <ToneSwitch
-            value={tones[trackIndex]}
-            written={track.program}
-            onChange={(tone) =>
-              setTones((all) => {
-                const { [trackIndex]: _dropped, ...rest } = all;
-                return tone ? { ...rest, [trackIndex]: tone } : rest;
-              })
-            }
+    <TierContext.Provider value={tier}>
+      <main className="app">
+        <header className="topbar">
+          <h1>{title}</h1>
+          <TrackPicker
+            tracks={timeline.tracks}
+            value={trackIndex}
+            onChange={(i) => {
+              setTrackIndex(i);
+              setTuningId(FILE_TUNING);
+            }}
           />
-        )}
-        <TuningChip
-          track={track}
-          sourceTrack={sourceTimeline?.tracks[trackIndex]}
-          written={session.written[trackIndex]?.[0] ?? []}
-          tuningId={tuningId}
-          onTuningChange={setTuningId}
-          onFileTuningChange={onFileTuningChange}
-        />
-        <ViewControls
-          layout={layout}
-          lookahead={lookahead}
-          labelMode={labelMode}
-          onLayoutChange={setLayout}
-          onLookaheadChange={setLookahead}
-          onLabelModeChange={setLabelMode}
-        />
-        <button
-          type="button"
-          className="primary"
-          onClick={() => { clock.pause(); setExportOpen(true); }}
-          disabled={!audioReady || stateControls.exportBlockedReason !== null}
-          title={stateControls.exportBlockedReason ?? undefined}
-        >
-          Export video
-        </button>
-        <Menu label="More" ariaLabel="More: find on Songsterr, open another file" className="more-menu">
-          {songsterrLink && (
-            <a
-              className="link-button"
-              href={songsterrLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => {
-                if (!isDesktop()) return;
-                e.preventDefault();
-                void openExternal(songsterrLink).catch(() => {});
-              }}
-            >
-              Find on Songsterr
-            </a>
+          {!userClock && !stems && canPlayAlong(timeline.tracks, trackIndex) && (
+            <PlayAlongSwitch on={playAlong} onToggle={() => setPlayAlong((v) => !v)} />
           )}
+          {canSwitchTone(track, !!userClock || !!stems) && (
+            <ToneSwitch
+              value={tones[trackIndex]}
+              written={track.program}
+              onChange={(tone) =>
+                setTones((all) => {
+                  const { [trackIndex]: _dropped, ...rest } = all;
+                  return tone ? { ...rest, [trackIndex]: tone } : rest;
+                })
+              }
+            />
+          )}
+          <TuningChip
+            track={track}
+            sourceTrack={sourceTimeline?.tracks[trackIndex]}
+            written={session.written[trackIndex]?.[0] ?? []}
+            tuningId={tuningId}
+            onTuningChange={setTuningId}
+            onFileTuningChange={onFileTuningChange}
+          />
+          <ViewControls
+            layout={layout}
+            lookahead={lookahead}
+            labelMode={labelMode}
+            onLayoutChange={setLayout}
+            onLookaheadChange={setLookahead}
+            onLabelModeChange={setLabelMode}
+          />
           <button
             type="button"
-            onClick={() => {
-              sessionToken.current += 1;
-              session.clock.dispose();
-              replaceUserClock(null);
-              setSession(null);
-            }}
+            className="primary"
+            onClick={() => { clock.pause(); setExportOpen(true); }}
+            disabled={!audioReady || stateControls.exportBlockedReason !== null}
+            title={stateControls.exportBlockedReason ?? undefined}
           >
-            Open another file
+            Export video
           </button>
-        </Menu>
-      </header>
-      {track && !track.hasTabData && (
-        <p className="notice" role="status">
-          This file has no tab data for this track, so fret positions were chosen automatically and may differ from a real tab.
-        </p>
-      )}
-      <Stage
-        timeline={timeline}
-        trackIndex={trackIndex}
-        clock={clock}
-        layout={layout}
-        neckCues={neckCues}
-        onNeckCuesChange={changeNeckCues}
-        onFullscreen={setFullscreenPanel}
-        lookahead={lookahead}
-        labelMode={labelMode}
-        loop={loopOn ? loop : null}
-        onLoopChange={setLoopRange}
-        onSeekBar={seekToBar}
-        onFrame={onFrame}
-      />
-      {audio.status === 'loading' && (
-        <p role="status" className="notice">
-          Loading sound… {Math.round(audio.progress * 100)}%
-        </p>
-      )}
-      {audio.status === 'failed' && (
-        <p role="alert" className="error">
-          The sound could not be loaded ({audio.message}).{' '}
-          <button type="button" onClick={retryAudio}>
-            Retry
-          </button>
-        </p>
-      )}
-      <Transport
-        disabled={!audioReady}
-        playing={playing}
-        tempoPercent={tempoPercent}
-        seconds={seconds}
-        durationSeconds={timeline.durationSeconds}
-        onTogglePlay={togglePlay}
-        onRestart={() => clock.seek(0)}
-        onTempoChange={setTempoPercent}
-        onSeek={(s) => clock.seek(s)}
-        marks={seekBarMarks}
-      />
-      {userClock && exactNotice && (
-        <p className={hold || !warnsOfApproximateJumps ? 'muted note' : 'notice'} role="status">
-          {exactNotice}
-        </p>
-      )}
-      {userClock && exactSession && !exactSession.pcm.complete && (
-        <ExactnessStrip
-          states={exactSession.pcm.chunkStates()}
-          chunkSeconds={exactSession.pcm.chunkSeconds}
-          durationSeconds={exactSession.pcm.durationSeconds}
-          playheadSeconds={() => userClock.element.currentTime}
-          label={exactNotice}
-        />
-      )}
-      <PracticeTools tools={toolIds.map((id) => ({ id, panel: toolPanels[id] }))} value={tool} onChange={setTool} attention={alignmentNeedsLook(alignStatus, alignChange) ? ['alignment'] : []} />
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      {fullscreenPanel && (
-        <PanelFullscreen
-          panel={fullscreenPanel}
-          loop={loopOn ? loop : null}
-          onLoopChange={setLoopRange}
-          onSeekBar={seekToBar}
+          <Menu label="More" ariaLabel="More: find on Songsterr, open another file" className="more-menu">
+            {songsterrLink && (
+              <a
+                className="link-button"
+                href={songsterrLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!isDesktop()) return;
+                  e.preventDefault();
+                  void openExternal(songsterrLink).catch(() => {});
+                }}
+              >
+                Find on Songsterr
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                sessionToken.current += 1;
+                session.clock.dispose();
+                replaceUserClock(null);
+                setSession(null);
+              }}
+            >
+              Open another file
+            </button>
+          </Menu>
+        </header>
+        {track && !track.hasTabData && (
+          <p className="notice" role="status">
+            This file has no tab data for this track, so fret positions were chosen automatically and may differ from a real tab.
+          </p>
+        )}
+        <Stage
           timeline={timeline}
           trackIndex={trackIndex}
           clock={clock}
-          lookahead={lookahead}
-          labelMode={labelMode}
+          layout={layout}
           neckCues={neckCues}
           onNeckCuesChange={changeNeckCues}
+          onFullscreen={setFullscreenPanel}
+          lookahead={lookahead}
+          labelMode={labelMode}
+          loop={loopOn ? loop : null}
+          onLoopChange={setLoopRange}
+          onSeekBar={seekToBar}
+          onFrame={onFrame}
+        />
+        {audio.status === 'loading' && (
+          <p role="status" className="notice">
+            Loading sound… {Math.round(audio.progress * 100)}%
+          </p>
+        )}
+        {audio.status === 'failed' && (
+          <p role="alert" className="error">
+            The sound could not be loaded ({audio.message}).{' '}
+            <button type="button" onClick={retryAudio}>
+              Retry
+            </button>
+          </p>
+        )}
+        <Transport
+          disabled={!audioReady}
           playing={playing}
-          canPlay={audioReady}
+          tempoPercent={tempoPercent}
+          seconds={seconds}
+          durationSeconds={timeline.durationSeconds}
           onTogglePlay={togglePlay}
-          onClose={closeFullscreen}
+          onRestart={() => clock.seek(0)}
+          onTempoChange={requestTempo}
+          onSeek={(s) => clock.seek(s)}
+          marks={seekBarMarks}
         />
-      )}
-      {exportOpen && (
-        <ExportDialog
-          timeline={timeline}
-          trackIndex={trackIndex}
-          stageLayout={layout}
-          view={{ lookahead, labelMode, neckCues }}
-          onNeckCuesChange={changeNeckCues}
-          onClose={() => setExportOpen(false)}
-          loopRange={exportLoopRange}
-          alignment={exportAlignment}
-          getAudio={(onProgress, range) =>
-            range
-              ? stems
-                ? renderStemMixRange(stems.sources, mix, stems.clock.offset, range)
+        {userClock && exactNotice && (
+          <p className={hold || !warnsOfApproximateJumps ? 'muted note' : 'notice'} role="status">
+            {exactNotice}
+          </p>
+        )}
+        {userClock && exactSession && !exactSession.pcm.complete && (
+          <ExactnessStrip
+            states={exactSession.pcm.chunkStates()}
+            chunkSeconds={exactSession.pcm.chunkSeconds}
+            durationSeconds={exactSession.pcm.durationSeconds}
+            playheadSeconds={() => userClock.element.currentTime}
+            label={exactNotice}
+          />
+        )}
+        <PracticeTools tools={toolIds.map((id) => ({ id, panel: toolPanels[id] }))} value={tool} onChange={setTool} attention={alignmentNeedsLook(alignStatus, alignChange) ? ['alignment'] : []} />
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+        {fullscreenPanel && (
+          <PanelFullscreen
+            panel={fullscreenPanel}
+            loop={loopOn ? loop : null}
+            onLoopChange={setLoopRange}
+            onSeekBar={seekToBar}
+            timeline={timeline}
+            trackIndex={trackIndex}
+            clock={clock}
+            lookahead={lookahead}
+            labelMode={labelMode}
+            neckCues={neckCues}
+            onNeckCuesChange={changeNeckCues}
+            playing={playing}
+            canPlay={audioReady}
+            onTogglePlay={togglePlay}
+            onClose={closeFullscreen}
+          />
+        )}
+        {exportOpen && (
+          <ExportDialog
+            timeline={timeline}
+            trackIndex={trackIndex}
+            stageLayout={layout}
+            view={{ lookahead, labelMode, neckCues }}
+            onNeckCuesChange={changeNeckCues}
+            onClose={() => setExportOpen(false)}
+            loopRange={exportLoopRange}
+            alignment={exportAlignment}
+            getAudio={(onProgress, range) =>
+              range
+                ? stems
+                  ? renderStemMixRange(stems.sources, mix, stems.clock.offset, range)
+                  : userClock?.file
+                  ? decodeRecordingWindow(userClock.file, userClock.offset, range.startSeconds, range.durationSeconds)
+                  : session.clock.exportAudio(onProgress).then((pcm) => slicePcm(pcm, range.startSeconds, range.durationSeconds))
+                : stems
+                ? renderStemMix(stems.sources, mix, stems.clock.offset, exportLength(timeline.durationSeconds, exportAlignment))
                 : userClock?.file
-                ? decodeRecordingWindow(userClock.file, userClock.offset, range.startSeconds, range.durationSeconds)
-                : session.clock.exportAudio(onProgress).then((pcm) => slicePcm(pcm, range.startSeconds, range.durationSeconds))
-              : stems
-              ? renderStemMix(stems.sources, mix, stems.clock.offset, exportLength(timeline.durationSeconds, exportAlignment))
-              : userClock?.file
-              ? decodeUserRecording(userClock.file, userClock.offset, exportLength(timeline.durationSeconds, exportAlignment))
-              : session.clock.exportAudio(onProgress)
-          }
-        />
-      )}
-      <ShortcutLegend />
-      <Notices />
-    </main>
+                ? decodeUserRecording(userClock.file, userClock.offset, exportLength(timeline.durationSeconds, exportAlignment))
+                : session.clock.exportAudio(onProgress)
+            }
+          />
+        )}
+        <UpgradePrompt feature={upgradeFor} onClose={() => setUpgradeFor(null)} />
+        <ShortcutLegend />
+        <Notices />
+      </main>
+    </TierContext.Provider>
   );
 }
