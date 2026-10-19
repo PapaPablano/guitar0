@@ -8,7 +8,7 @@ export function labelBoxWidth(label: string, fontSize: number): number {
 
 /** Lanes of technique marks above the staff that the layout makes room for; a crowded bar widens rather than add more. */
 export const LANE_BUDGET = 3;
-/** Font size of a technique mark. */
+/** Font size of a technique mark; the painter draws with the same figure the planner measures. */
 export const MARK_FONT_SIZE = 10;
 /** Clear space kept on each side of a mark, so neighbours do not touch. */
 const CLEARANCE = 3;
@@ -30,17 +30,18 @@ const MIN_SHIFT = 8;
 const LANE0_OFFSET = 18;
 const LANE0_MIN_Y = 9;
 const LANE_PITCH_MAX = 13;
-const LANE_PITCH_MIN = 11;
+const LANE_PITCH_MIN = 9;
+/** Lowest centre a lane may take, so a mark's text stays on the canvas. */
 const LANE_FLOOR = 5;
 
 /**
- * Y of a lane's centre. The pitch between lanes tightens on a short panel so the whole budget keeps clear of the
- * staff and each other, but never below a legible minimum, and no mark is dropped for lack of room.
+ * Y of a lane's centre. The pitch between lanes tightens on a short panel, and a lane never rises above the canvas,
+ * so no mark is dropped for lack of room; on a very short panel the highest lanes can share a height.
  */
 export function markLaneY(lineTop: number, lane: number): number {
   const first = Math.max(LANE0_MIN_Y, lineTop - LANE0_OFFSET);
   const pitch = Math.min(LANE_PITCH_MAX, Math.max(LANE_PITCH_MIN, (first - LANE_FLOOR) / (LANE_BUDGET - 1)));
-  return first - lane * pitch;
+  return Math.max(LANE_FLOOR, first - lane * pitch);
 }
 
 export type MarkKind = 'bend' | 'harmonic' | 'palmMute';
@@ -125,19 +126,20 @@ function candidates(slots: readonly MarkSlot[], fontSize: number): Candidate[] {
           stemX: centre,
         });
       }
-      if (tech.harmonic) {
-        const text = 'Harm.';
-        found.push({
-          kind: 'harmonic',
-          slot: si,
-          lastSlot: si,
-          text,
-          boxLeft: slot.offset - markWidth(text) / 2,
-          boxRight: slot.offset + markWidth(text) / 2,
-          arrowOffset: 0,
-          stemX: slot.offset,
-        });
-      }
+    }
+    // one label per slot, however many of its notes are harmonics
+    if (slot.notes.some((n) => n.techniques.harmonic)) {
+      const text = 'Harm.';
+      found.push({
+        kind: 'harmonic',
+        slot: si,
+        lastSlot: si,
+        text,
+        boxLeft: slot.offset - markWidth(text) / 2,
+        boxRight: slot.offset + markWidth(text) / 2,
+        arrowOffset: 0,
+        stemX: slot.offset,
+      });
     }
   });
 
@@ -172,7 +174,7 @@ const overlapping = (a: { left: number; right: number }, b: { left: number; righ
  * rises from a raised bend to its label crosses no text in the lanes below. A bar that needs more lanes than the budget
  * reports the slot to widen before; the layout widens and plans again.
  */
-export function planMarks(slots: readonly MarkSlot[], fontSize = 16): MarkPlan {
+export function planMarks(slots: readonly MarkSlot[], fontSize: number): MarkPlan {
   const taken: Taken[][] = Array.from({ length: MAX_SEARCH_LANES }, () => []);
   const marks: MarkPlacement[] = [];
   let overflow: MarkPlan['overflow'];

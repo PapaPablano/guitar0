@@ -1,4 +1,4 @@
-import { labelBoxWidth } from '../../src/render/strip-techniques';
+import { labelBoxWidth } from '../../src/render/strip-marks';
 import { GUTTER_WIDTH } from '../../src/render/tab-strip';
 import type { NoteSpec } from '../helpers/make-timeline';
 import type { Call } from '../helpers/recording-context';

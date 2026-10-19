@@ -15,7 +15,7 @@ import { buildTimeline, loadAlphaTex } from '../../src/model/alphatab-adapter';
 import { REPEAT_AND_TEMPO } from '../fixtures/fixtures';
 import { makeTimeline } from '../helpers/make-timeline';
 import { createRecordingContext } from '../helpers/recording-context';
-import { LANE_BUDGET } from '../../src/render/strip-marks';
+import { LANE_BUDGET, labelBoxWidth } from '../../src/render/strip-marks';
 import { busyPassage, overlaps, textBoxes } from './strip-fixtures';
 
 const W = 900;
@@ -395,26 +395,31 @@ describe('busy passage legibility', () => {
 });
 
 describe('layout for technique marks', () => {
-  const crowded = (marked: boolean) =>
-    Array.from({ length: 6 }, (_, i) => ({
-      start: i * 0.125,
-      end: (i + 1) * 0.125,
-      string: 2,
-      fret: 12,
-      techniques: marked && i % 2 === 0 ? { bend: 2 } : undefined,
-    }));
-
   it('fits the marks of a busy passage in the lane budget with no widening left to ask for', () => {
     const layout = buildStripLayout(makeTimeline(busyPassage()), 0, W, H);
     for (const bar of layout.bars) expect(Math.max(-1, ...bar.marks.map((m) => m.lane))).toBeLessThan(LANE_BUDGET);
   });
 
-  it('makes a bar wider when its marks need the room, and leaves a bar of plain notes as it was', () => {
-    const marked = buildStripLayout(makeTimeline(crowded(true)), 0, W, H).bars[0];
-    const plain = buildStripLayout(makeTimeline(crowded(false)), 0, W, H).bars[0];
-    expect(marked.width).toBeGreaterThanOrEqual(plain.width);
+  it('keeps the marks of a dense run within the lane budget and leaves a bar of plain notes with no marks', () => {
+    const specs = Array.from({ length: 8 }, (_, i) => ({
+      start: i * 0.125,
+      end: (i + 1) * 0.125,
+      string: 2,
+      fret: 12,
+      techniques: i % 2 === 0 ? { bend: 2 } : { palmMute: true, harmonic: true },
+    }));
+    const marked = buildStripLayout(makeTimeline(specs), 0, W, H).bars[0];
+    expect(Math.max(...marked.marks.map((m) => m.lane))).toBeLessThan(LANE_BUDGET);
+    const plain = buildStripLayout(makeTimeline(specs.map((sp) => ({ ...sp, techniques: undefined }))), 0, W, H).bars[0];
     expect(plain.marks).toEqual([]);
     expect(buildStripLayout(makeTimeline([]), 0, W, H).bars[0].width).toBe(MIN_BAR_WIDTH);
+  });
+
+  it('draws one Harm. label for a chord of harmonics and stops widening when marks in one slot cannot be separated', () => {
+    const chord = [1, 2, 3, 4].map((string) => ({ start: 0, end: 0.5, string, fret: 12, techniques: { harmonic: true } }));
+    const bar = buildStripLayout(makeTimeline(chord), 0, W, H).bars[0];
+    expect(bar.marks.filter((m) => m.kind === 'harmonic')).toHaveLength(1);
+    expect(bar.width).toBeLessThan(400);
   });
 
   it('keeps marks and bars where they are whatever the panel height', () => {
@@ -462,7 +467,7 @@ describe('mark lanes when drawn', () => {
 
   it('still separates them on a short panel', () => {
     const calls = draw(bendThenMute, 160);
-    expect(Math.abs(markY(calls, 'full') - markY(calls, 'P.M.'))).toBeGreaterThanOrEqual(10);
+    expect(Math.abs(markY(calls, 'full') - markY(calls, 'P.M.'))).toBeGreaterThanOrEqual(9);
   });
 
   it('draws a lone mark in the first lane with no leader', () => {
@@ -476,8 +481,26 @@ describe('mark lanes when drawn', () => {
       { start: 0, end: 0.5, string: 2, fret: 15, techniques: { bend: 2 } },
     ];
     const calls = draw(chord, 200);
-    const arrow = calls.find((c) => c.name === 'quadraticCurveTo');
+    const at = calls.findIndex((c) => c.name === 'quadraticCurveTo');
+    const start = calls.slice(0, at).reverse().find((c) => c.name === 'moveTo');
     const above = textBoxes(calls).find((b) => b.text === '15');
-    expect(Number(arrow?.args[2])).toBeGreaterThan((above?.right ?? 0) - 0.5);
+    expect(Number(start?.args[0])).toBeGreaterThan(above?.right ?? 0);
+  });
+});
+
+describe('marks on short panels', () => {
+  it('keeps every mark and fret number on the canvas at a very short panel height', () => {
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, makeTimeline(busyPassage()), 0, 0, 1400, 120);
+    for (const box of textBoxes(calls)) expect(box.top).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('label-based spacing', () => {
+  it('spaces ghost-note runs by the width of their labels, not just the floor', () => {
+    const specs = Array.from({ length: 8 }, (_, i) => ({ start: i * 0.125, end: (i + 1) * 0.125, string: 2, fret: 12, techniques: { ghost: true } }));
+    const bar = buildStripLayout(makeTimeline(specs), 0, W, H).bars[0];
+    const need = labelBoxWidth('(12)', 16) + 6;
+    for (let i = 1; i < bar.slots.length; i++) expect(bar.slots[i].offset - bar.slots[i - 1].offset).toBeGreaterThanOrEqual(need - 0.001);
   });
 });

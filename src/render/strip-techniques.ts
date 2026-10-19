@@ -1,13 +1,12 @@
 import type { DrawContext } from './draw-context';
 import type { StripBar, StripLayout } from './tab-strip';
-import { ARROW_RUN, labelBoxWidth, markLaneY, PM_DASH_FROM, PM_REACH_LEFT, PM_REACH_RIGHT, type MarkPlacement } from './strip-marks';
+import { ARROW_RUN, labelBoxWidth, markLaneY, MARK_FONT_SIZE, PM_DASH_FROM, PM_REACH_LEFT, PM_REACH_RIGHT, type MarkPlacement } from './strip-marks';
 import { fretLabel } from './techniques';
 import type { HighwayTheme } from './theme';
 import type { NoteEvent } from '../model/score';
 
-export { labelBoxWidth };
 
-const MARK_FONT = 'bold 10px system-ui, sans-serif';
+const MARK_FONT = `bold ${MARK_FONT_SIZE}px system-ui, sans-serif`;
 const SLIDE_STUB = 10;
 
 /** The next note on the same string after slot `from`, within the bar. */

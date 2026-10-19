@@ -146,12 +146,16 @@ function buildSlots(playback: BarEvent, notes: readonly NoteEvent[]): { slots: S
     });
     return { offsets, end: offset };
   };
+  const planAt = (offsets: number[]) => planMarks(groups.map((g, i) => ({ offset: offsets[i], notes: g })), FRET_FONT_MAX);
   let laid = place();
-  let plan = planMarks(groups.map((g, i) => ({ offset: laid.offsets[i], notes: g })));
-  for (let pass = 0; plan.overflow && pass < groups.length * 4 + 4; pass++) {
-    extra[plan.overflow.slot] += plan.overflow.shortfall;
+  let plan = planAt(laid.offsets);
+  // Widening before a slot cannot separate marks that all belong to that slot, so a slot that overflows twice is left as it is.
+  let widened = -1;
+  for (let pass = 0; plan.overflow && plan.overflow.slot !== widened && pass < groups.length * 4 + 4; pass++) {
+    widened = plan.overflow.slot;
+    extra[widened] += plan.overflow.shortfall;
     laid = place();
-    plan = planMarks(groups.map((g, i) => ({ offset: laid.offsets[i], notes: g })));
+    plan = planAt(laid.offsets);
   }
 
   const slots: StripSlot[] = ticks.map((tick, i) => ({
