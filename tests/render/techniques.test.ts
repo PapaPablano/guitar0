@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderHighway } from '../../src/render/highway';
-import { bendLabel, fretLabel, techniqueMark } from '../../src/render/techniques';
+import { bendLabel, fretLabel } from '../../src/render/techniques';
 import { computeLayout, laneY, timeToX } from '../../src/render/layout';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -119,14 +119,13 @@ describe('labels', () => {
     expect([bendLabel(0.5), bendLabel(1), bendLabel(2), bendLabel(3), bendLabel(4)]).toEqual(['¼', '½', 'full', '1½', '2']);
   });
 
-  it('builds the fret label and the strip mark', () => {
+  it('builds the fret label', () => {
     const timeline = makeTimeline([
       { start: 0, end: 1, fret: 7, techniques: { bend: 2, palmMute: true } },
       { start: 1, end: 2, fret: 3 },
     ]);
     const [bent, plain] = timeline.notesForTrack(0);
     expect(fretLabel(bent)).toBe('7');
-    expect(techniqueMark(bent)).toBe('bfull PM');
-    expect(techniqueMark(plain)).toBe('');
+    expect(fretLabel(plain)).toBe('3');
   });
 });

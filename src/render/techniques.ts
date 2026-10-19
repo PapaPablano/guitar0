@@ -20,19 +20,6 @@ export function bendLabel(semitones: number): string {
   return String(Math.round(semitones / 2));
 }
 
-/** Short mark for the tab strip; empty for a plain note. */
-export function techniqueMark(note: NoteEvent): string {
-  const t = note.techniques;
-  const parts: string[] = [];
-  if (t.bend > 0) parts.push(`b${bendLabel(t.bend)}`);
-  if (t.slide !== 'none') parts.push(t.slide === 'out-down' ? '\\' : '/');
-  if (t.hammerPull === 'origin') parts.push('h');
-  if (t.palmMute) parts.push('PM');
-  if (t.harmonic) parts.push('NH');
-  if (t.vibrato) parts.push('~');
-  return parts.join(' ');
-}
-
 /** The next note after `note` on the same string, from notes sorted by start. */
 function nextOnString(note: NoteEvent, notes: readonly NoteEvent[], from: number): NoteEvent | undefined {
   for (let i = from; i < notes.length; i++) {
