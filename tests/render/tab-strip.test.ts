@@ -15,6 +15,8 @@ import { buildTimeline, loadAlphaTex } from '../../src/model/alphatab-adapter';
 import { REPEAT_AND_TEMPO } from '../fixtures/fixtures';
 import { makeTimeline } from '../helpers/make-timeline';
 import { createRecordingContext } from '../helpers/recording-context';
+import { LANE_BUDGET } from '../../src/render/strip-marks';
+import { busyPassage, overlaps, textBoxes } from './strip-fixtures';
 
 const W = 900;
 const H = 200;
@@ -312,5 +314,170 @@ describe('clef gutter', () => {
     const timeline = makeTimeline([], 2, 1);
     expect(() => texts(timeline, 0)).not.toThrow();
     expect(texts(timeline, 0)).toContain('T');
+  });
+});
+
+describe('strip techniques', () => {
+  const run = (specs: Parameters<typeof makeTimeline>[0], t = 0) => {
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, makeTimeline(specs), 0, t, W, H);
+    return calls;
+  };
+  const texts = (calls: ReturnType<typeof run>) => calls.filter((c) => c.name === 'fillText').map((c) => String(c.args[0]));
+  const eighthsRun = (techniques: Parameters<typeof makeTimeline>[0][number]['techniques'], count = 4) =>
+    Array.from({ length: count }, (_, i) => ({ start: i * 0.25, end: (i + 1) * 0.25, string: 2, fret: 12, techniques }));
+
+  it('leaves two-digit frets clear of each other in a sixteenth run', () => {
+    const timeline = makeTimeline(Array.from({ length: 16 }, (_, i) => ({ start: i * 0.125, end: (i + 1) * 0.125, string: 2, fret: 15 })));
+    const bar = buildStripLayout(timeline, 0, W, H).bars[0];
+    // a 15 at the largest font is about 24 wide; the gap between slots must clear it
+    for (let i = 1; i < bar.slots.length; i++) expect(bar.slots[i].offset - bar.slots[i - 1].offset).toBeGreaterThanOrEqual(30);
+  });
+
+  it('draws a bend as an arrow with its size, not as text beside the number', () => {
+    const calls = run([{ start: 0, end: 0.5, string: 2, fret: 12, techniques: { bend: 2 } }]);
+    expect(texts(calls)).toContain('full');
+    expect(texts(calls).some((t) => t.startsWith('b'))).toBe(false);
+    expect(calls.some((c) => c.name === 'quadraticCurveTo')).toBe(true);
+  });
+
+  it('draws one P.M. label for a run of palm-muted notes and a dashed line under it', () => {
+    const calls = run(eighthsRun({ palmMute: true }));
+    expect(texts(calls).filter((t) => t === 'P.M.')).toHaveLength(1);
+    expect(calls.some((c) => c.name === 'setLineDash' && (c.args[0] as number[]).length > 0)).toBe(true);
+  });
+
+  it('starts a new P.M. bracket after an open note', () => {
+    const calls = run([
+      { start: 0, end: 0.25, string: 2, fret: 5, techniques: { palmMute: true } },
+      { start: 0.25, end: 0.5, string: 2, fret: 5 },
+      { start: 0.5, end: 0.75, string: 2, fret: 5, techniques: { palmMute: true } },
+    ]);
+    expect(texts(calls).filter((t) => t === 'P.M.')).toHaveLength(2);
+  });
+
+  it('arcs a hammer-on to the next note on its string', () => {
+    const calls = run([
+      { start: 0, end: 0.25, string: 2, fret: 12, techniques: { hammerPull: 'origin' } },
+      { start: 0.25, end: 0.5, string: 2, fret: 14, techniques: { hammerPull: 'destination' } },
+    ]);
+    expect(calls.filter((c) => c.name === 'quadraticCurveTo')).toHaveLength(1);
+  });
+
+  it('marks a harmonic with a diamond and a Harm. label', () => {
+    const calls = run([{ start: 0, end: 0.5, string: 2, fret: 12, techniques: { harmonic: true } }]);
+    expect(texts(calls)).toContain('Harm.');
+  });
+
+  it('brackets a triplet group under its beam', () => {
+    const third = 2 / 3 / 4;
+    const calls = run(Array.from({ length: 3 }, (_, i) => ({ start: i * third, end: (i + 1) * third, string: 2, fret: 5 })));
+    expect(texts(calls)).toContain('3');
+  });
+});
+
+describe('busy passage legibility', () => {
+  const draw = (specs: Parameters<typeof makeTimeline>[0], height = H) => {
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, makeTimeline(specs), 0, 0, 1400, height);
+    return calls;
+  };
+
+  it('keeps every fret number and mark clear of every other in a busy passage', () => {
+    const clashes = overlaps(textBoxes(draw(busyPassage())));
+    expect(clashes.map(([a, b]) => `${a.text}/${b.text}`)).toEqual([]);
+  });
+
+  it('keeps fret numbers in a chord stack clear of each other', () => {
+    const chord = [1, 2, 3].map((string) => ({ start: 0, end: 0.5, string, fret: 15 }));
+    expect(overlaps(textBoxes(draw(chord)))).toEqual([]);
+  });
+});
+
+describe('layout for technique marks', () => {
+  const crowded = (marked: boolean) =>
+    Array.from({ length: 6 }, (_, i) => ({
+      start: i * 0.125,
+      end: (i + 1) * 0.125,
+      string: 2,
+      fret: 12,
+      techniques: marked && i % 2 === 0 ? { bend: 2 } : undefined,
+    }));
+
+  it('fits the marks of a busy passage in the lane budget with no widening left to ask for', () => {
+    const layout = buildStripLayout(makeTimeline(busyPassage()), 0, W, H);
+    for (const bar of layout.bars) expect(Math.max(-1, ...bar.marks.map((m) => m.lane))).toBeLessThan(LANE_BUDGET);
+  });
+
+  it('makes a bar wider when its marks need the room, and leaves a bar of plain notes as it was', () => {
+    const marked = buildStripLayout(makeTimeline(crowded(true)), 0, W, H).bars[0];
+    const plain = buildStripLayout(makeTimeline(crowded(false)), 0, W, H).bars[0];
+    expect(marked.width).toBeGreaterThanOrEqual(plain.width);
+    expect(plain.marks).toEqual([]);
+    expect(buildStripLayout(makeTimeline([]), 0, W, H).bars[0].width).toBe(MIN_BAR_WIDTH);
+  });
+
+  it('keeps marks and bars where they are whatever the panel height', () => {
+    const short = buildStripLayout(makeTimeline(busyPassage()), 0, W, 120);
+    const tall = buildStripLayout(makeTimeline(busyPassage()), 0, W, 400);
+    expect(short.bars.map((b) => [b.width, b.marks.map((m) => [m.kind, m.lane, m.left])])).toEqual(
+      tall.bars.map((b) => [b.width, b.marks.map((m) => [m.kind, m.lane, m.left])]),
+    );
+  });
+
+  it('keeps the cursor on each note and the bar clickable once marks have widened a bar', () => {
+    const timeline = makeTimeline(busyPassage());
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const bar = layout.bars[0];
+    for (const slot of bar.slots) {
+      expect(playheadStripX(layout, timeline, slot.seconds)).toBeCloseTo(bar.x + slot.offset, 5);
+    }
+    const t = 0.1;
+    const x = bar.x + bar.width / 2 - stripScrollX(layout, timeline, t);
+    expect(scoreBarAtX(layout, timeline, t, x)).toBe(0);
+  });
+});
+
+describe('mark lanes when drawn', () => {
+  const bendThenMute = [
+    { start: 0, end: 0.125, string: 2, fret: 12, techniques: { bend: 2 } },
+    { start: 0.125, end: 0.25, string: 2, fret: 12, techniques: { palmMute: true } },
+    { start: 0.25, end: 0.375, string: 2, fret: 12, techniques: { palmMute: true } },
+  ];
+  const draw = (specs: Parameters<typeof makeTimeline>[0], height: number) => {
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, makeTimeline(specs), 0, 0, 1000, height);
+    return calls;
+  };
+  const markY = (calls: ReturnType<typeof draw>, text: string) => {
+    const at = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === text);
+    return Number(calls[at].args[2]);
+  };
+
+  it('draws a bend label and a palm-mute label that would share a height at different heights, and a leader for the raised one', () => {
+    const calls = draw(bendThenMute, 200);
+    expect(markY(calls, 'full')).not.toBe(markY(calls, 'P.M.'));
+    expect(calls.some((c) => c.name === 'setLineDash' && (c.args[0] as number[]).join() === '2,2')).toBe(true);
+  });
+
+  it('still separates them on a short panel', () => {
+    const calls = draw(bendThenMute, 160);
+    expect(Math.abs(markY(calls, 'full') - markY(calls, 'P.M.'))).toBeGreaterThanOrEqual(10);
+  });
+
+  it('draws a lone mark in the first lane with no leader', () => {
+    const calls = draw([{ start: 0, end: 0.5, string: 2, fret: 12, techniques: { harmonic: true } }], 200);
+    expect(calls.some((c) => c.name === 'setLineDash' && (c.args[0] as number[]).join() === '2,2')).toBe(false);
+  });
+
+  it('starts a bend arrow clear of the number above it in a chord', () => {
+    const chord = [
+      { start: 0, end: 0.5, string: 1, fret: 15 },
+      { start: 0, end: 0.5, string: 2, fret: 15, techniques: { bend: 2 } },
+    ];
+    const calls = draw(chord, 200);
+    const arrow = calls.find((c) => c.name === 'quadraticCurveTo');
+    const above = textBoxes(calls).find((b) => b.text === '15');
+    expect(Number(arrow?.args[2])).toBeGreaterThan((above?.right ?? 0) - 0.5);
   });
 });

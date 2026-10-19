@@ -34,6 +34,23 @@ const NOTE_SCALINGS = [1, 1.5, 2 / 3];
 /** How close a duration must be to a note value, as a share of it, to count as that value. */
 const VALUE_TOLERANCE = 0.02;
 
+/** Plain note values from a whole note down; a dotted or triplet note is one of these scaled. */
+const PLAIN_VALUES = [4, 2, 1, 0.5, 0.25, 0.125, 0.0625].map((q) => q * TICKS_PER_QUARTER);
+
+function hasScaling(durationTicks: number, scaling: number): boolean {
+  return PLAIN_VALUES.some((value) => Math.abs(durationTicks - value * scaling) <= value * scaling * VALUE_TOLERANCE);
+}
+
+/** True when the length is a plain note value scaled by 3/2, which prints with a dot. */
+export function isDotted(durationTicks: number): boolean {
+  return hasScaling(durationTicks, 1.5);
+}
+
+/** True when the length is a plain note value scaled by 2/3, which prints under a "3" bracket. */
+export function isTriplet(durationTicks: number): boolean {
+  return hasScaling(durationTicks, 2 / 3);
+}
+
 /**
  * Flags or beams a note of this length carries: none from a quarter up, one per halving below it. A dotted or triplet
  * note carries the flags of the plain note it is made from, so an eighth triplet has one flag, not two.

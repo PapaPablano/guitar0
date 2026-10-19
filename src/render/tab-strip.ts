@@ -1,14 +1,18 @@
 import type { DrawContext } from './draw-context';
 import { barSpans } from './bars';
 import type { Moment } from './moment';
-import { beatTicksFor, flagCount, planBeams, TICKS_PER_QUARTER, type BeamPlan } from './tab-beams';
-import { fretLabel, techniqueMark } from './techniques';
+import { beatTicksFor, flagCount, isDotted, isTriplet, planBeams, TICKS_PER_QUARTER, type BeamPlan } from './tab-beams';
+import { labelBoxWidth, planMarks, type MarkPlacement } from './strip-marks';
+import { drawStripTechniques } from './strip-techniques';
+import { fretLabel } from './techniques';
 import { playbackBarIndexAt } from '../model/bars';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
 import type { BarEvent, NoteEvent, Timeline } from '../model/score';
 
-/** Room a note needs: two digits at the largest fret-number size, plus padding. Short notes get no less. */
-export const MIN_SLOT_WIDTH = 26;
+/** Room a note needs: two digits at the largest fret-number size, plus a gap to the next. Short notes get no less. */
+export const MIN_SLOT_WIDTH = 30;
+/** Clear space kept between the label boxes of neighbouring notes. */
+const SLOT_GAP = 6;
 /** A bar with no notes, or few, is never narrower than this. */
 export const MIN_BAR_WIDTH = 90;
 /** Width of the fixed clef and time-signature area at the left of the strip. */
@@ -56,6 +60,8 @@ export interface StripBar {
   /** X of each inner beat line within the bar, left to right. */
   readonly beatXs: readonly number[];
   readonly beams: BeamPlan;
+  /** Technique marks above the staff, each in its lane; the bar is already wide enough for them. */
+  readonly marks: readonly MarkPlacement[];
 }
 
 export interface StripLayout {
@@ -105,7 +111,12 @@ function slotWidth(gapTicks: number): number {
   return Math.max(MIN_SLOT_WIDTH, MIN_SLOT_WIDTH * Math.sqrt(Math.max(0, sixteenths)));
 }
 
-function buildSlots(playback: BarEvent, notes: readonly NoteEvent[]): { slots: StripSlot[]; width: number } {
+/** Width of the widest fret label in a group of notes, at the largest font so the layout does not depend on panel height. */
+function labelWidth(notes: readonly NoteEvent[]): number {
+  return Math.max(...notes.map((n) => labelBoxWidth(fretLabel(n), FRET_FONT_MAX)));
+}
+
+function buildSlots(playback: BarEvent, notes: readonly NoteEvent[]): { slots: StripSlot[]; width: number; marks: MarkPlacement[] } {
   const byTick = new Map<number, NoteEvent[]>();
   for (const n of notes) {
     const list = byTick.get(n.tick) ?? [];
@@ -113,23 +124,46 @@ function buildSlots(playback: BarEvent, notes: readonly NoteEvent[]): { slots: S
     byTick.set(n.tick, list);
   }
   const ticks = [...byTick.keys()].sort((a, b) => a - b);
-  const slots: StripSlot[] = [];
-  let offset = LEAD_PAD;
-  ticks.forEach((tick, i) => {
-    const group = byTick.get(tick) as NoteEvent[];
-    const next = i + 1 < ticks.length ? ticks[i + 1] : playback.endTick;
-    const width = slotWidth(next - tick);
-    slots.push({
-      tick,
-      seconds: group[0].startSeconds,
-      offset,
-      width,
-      durationTicks: group[0].durationTicks,
-      notes: group,
-    });
-    offset += width;
+  const groups = ticks.map((tick) => byTick.get(tick) as NoteEvent[]);
+  const widths = ticks.map((tick, i) => {
+    const group = groups[i];
+    const nextGroup = groups[i + 1];
+    const next = nextGroup ? ticks[i + 1] : playback.endTick;
+    // never closer to the next note than its label and this one's need, however short the note
+    const needed = nextGroup ? (labelWidth(group) + labelWidth(nextGroup)) / 2 + SLOT_GAP : labelWidth(group) / 2 + SLOT_GAP;
+    return Math.max(slotWidth(next - tick), needed);
   });
-  return { slots, width: slots.length ? Math.max(MIN_BAR_WIDTH, offset) : MIN_BAR_WIDTH };
+
+  // Room added before a slot so the technique marks above the staff fit in the lanes the layout allows.
+  const extra = ticks.map(() => 0);
+  const place = () => {
+    const offsets: number[] = [];
+    let offset = LEAD_PAD;
+    widths.forEach((w, i) => {
+      offset += extra[i];
+      offsets.push(offset);
+      offset += w;
+    });
+    return { offsets, end: offset };
+  };
+  let laid = place();
+  let plan = planMarks(groups.map((g, i) => ({ offset: laid.offsets[i], notes: g })));
+  for (let pass = 0; plan.overflow && pass < groups.length * 4 + 4; pass++) {
+    extra[plan.overflow.slot] += plan.overflow.shortfall;
+    laid = place();
+    plan = planMarks(groups.map((g, i) => ({ offset: laid.offsets[i], notes: g })));
+  }
+
+  const slots: StripSlot[] = ticks.map((tick, i) => ({
+    tick,
+    seconds: groups[i][0].startSeconds,
+    offset: laid.offsets[i],
+    width: widths[i],
+    durationTicks: groups[i][0].durationTicks,
+    notes: groups[i],
+  }));
+  const markReach = plan.marks.reduce((far, m) => Math.max(far, m.right), 0);
+  return { slots, width: slots.length ? Math.max(MIN_BAR_WIDTH, laid.end, markReach) : MIN_BAR_WIDTH, marks: [...plan.marks] };
 }
 
 export function buildStripLayout(timeline: Timeline, trackIndex: number, width: number, height: number): StripLayout {
@@ -152,7 +186,7 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
 
   const bars: StripBar[] = [];
   let x = 0;
-  spans.forEach(({ scoreBar, playback, repeatStart, repeatEnd, barNotes, slots, width: barWidth }, i) => {
+  spans.forEach(({ scoreBar, playback, repeatStart, repeatEnd, barNotes, slots, marks, width: barWidth }, i) => {
     // The next bar opens on a note a lead pad in from its bar line, so the cursor runs on to that note and does not jump at the line.
     const next = spans[i + 1];
     const endExtra = next && next.slots.length > 0 && next.slots[0].tick === next.playback.startTick ? LEAD_PAD : 0;
@@ -168,6 +202,7 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
       secondsAnchors: barAnchors(playback, slots, barWidth, 'seconds', endExtra),
       beatXs: beatXsFor(playback, barAnchors(playback, slots, barWidth, 'tick')),
       beams: planBeams(slots, playback.startTick, playback.timeSignature),
+      marks,
     });
     x += barWidth;
   });
@@ -378,21 +413,15 @@ function drawBarNotes(
     for (const n of slot.notes) {
       const y = layout.lineTop + (n.string - 1) * layout.lineGap;
       const label = fretLabel(n);
-      const boxWidth = Math.max(14, label.length * fontSize * 0.62 + 4);
+      const boxWidth = labelBoxWidth(label, fontSize);
       // break the string behind the number so it stays readable
       ctx.fillStyle = STRIP_BACKGROUND;
       ctx.fillRect(x - boxWidth / 2, y - fontSize / 2 - 1, boxWidth, fontSize + 2);
       ctx.fillStyle = STRIP_NOTE_TEXT;
       ctx.fillText(label, x, y);
-      const mark = techniqueMark(n);
-      if (mark) {
-        ctx.fillStyle = theme.barLabel;
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.fillText(mark, x, y - fontSize / 2 - 5);
-        ctx.font = fretFont;
-      }
     }
   }
+  drawStripTechniques(ctx, bar, layout, theme, barX, fontSize);
   drawRhythm(ctx, bar, layout, theme, barX, bottom);
 }
 
@@ -431,11 +460,23 @@ function drawRhythm(
     }
   }
 
+  ctx.fillStyle = theme.barLabel;
+  bar.slots.forEach((slot, i) => {
+    if (slot.durationTicks >= TICKS_PER_QUARTER * 4 || !isDotted(slot.durationTicks)) return;
+    ctx.beginPath();
+    ctx.arc(xOf(i) + 5, stemBottom - 2, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
   ctx.lineWidth = 3;
   for (const group of plan.groups) {
     const first = group.members[0];
     const last = group.members[group.members.length - 1];
     beam(ctx, xOf(first), xOf(last), stemBottom);
+    if (group.members.every((m) => isTriplet(bar.slots[m].durationTicks))) {
+      drawTripletBracket(ctx, xOf(first), xOf(last), stemBottom, layout.height, theme.barLabel);
+      ctx.lineWidth = 3;
+    }
     for (const seg of group.segments) {
       const y = stemBottom - (seg.level - 1) * 5;
       if (seg.from !== seg.to) {
@@ -447,6 +488,25 @@ function drawRhythm(
       }
     }
   }
+}
+
+/** A "3" under a bracket across a beamed group whose every note is a triplet value, drawn only where the panel has room. */
+function drawTripletBracket(ctx: DrawContext, from: number, to: number, stemBottom: number, height: number, colour: string): void {
+  const y = stemBottom + 6;
+  if (y + 8 > height) return;
+  ctx.strokeStyle = colour;
+  ctx.fillStyle = colour;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(from, y - 3);
+  ctx.lineTo(from, y);
+  ctx.lineTo(to, y);
+  ctx.lineTo(to, y - 3);
+  ctx.stroke();
+  ctx.font = '9px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('3', (from + to) / 2, y + 1);
 }
 
 function beam(ctx: DrawContext, fromX: number, toX: number, y: number): void {
