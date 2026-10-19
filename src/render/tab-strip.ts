@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
 import { barSpans } from './bars';
+import type { Moment } from './moment';
 import { beatTicksFor, flagCount, planBeams, TICKS_PER_QUARTER, type BeamPlan } from './tab-beams';
 import { fretLabel, techniqueMark } from './techniques';
 import { playbackBarIndexAt } from '../model/bars';
@@ -77,6 +78,8 @@ export interface LoopBars {
 export interface TabStripOptions {
   readonly theme?: HighwayTheme;
   readonly loop?: LoopBars | null;
+  /** The frame's shared moment; its loop and playback bar win over `loop` and the time when given. */
+  readonly moment?: Moment;
 }
 
 const layoutCache = new WeakMap<Timeline, Map<string, StripLayout>>();
@@ -284,7 +287,7 @@ export function renderTabStrip(
 
   const visible = layout.bars.filter((b) => b.x + b.width - scroll >= 0 && b.x - scroll <= width);
 
-  const loop = options.loop;
+  const loop = options.moment ? options.moment.loop : options.loop;
   if (loop) {
     const first = stripBarFor(layout, loop.startBar);
     const last = stripBarFor(layout, loop.endBar);
@@ -329,7 +332,7 @@ export function renderTabStrip(
     drawBarNotes(ctx, bar, layout, theme, x, bottom);
   }
 
-  drawGutter(ctx, layout, timeline, t, theme);
+  drawGutter(ctx, layout, timeline, options.moment?.playbackBar ?? playbackBarIndexAt(timeline, t), theme);
   ctx.restore();
 }
 
@@ -453,7 +456,7 @@ function beam(ctx: DrawContext, fromX: number, toX: number, y: number): void {
 }
 
 /** The fixed clef and time-signature area: an opaque panel that notes scroll under. */
-function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, t: number, theme: HighwayTheme): void {
+function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, playbackBar: number, theme: HighwayTheme): void {
   const bottom = staffBottom(layout);
   const middle = (layout.lineTop + bottom) / 2;
   ctx.fillStyle = STRIP_BACKGROUND;
@@ -470,7 +473,7 @@ function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, t
   ctx.fillText('A', CLEF_X, middle);
   ctx.fillText('B', CLEF_X, middle + step);
 
-  const signature = timeline.bars[playbackBarIndexAt(timeline, t)]?.timeSignature;
+  const signature = timeline.bars[playbackBar]?.timeSignature;
   if (signature) {
     const signatureSize = Math.min(24, Math.max(14, Math.round(layout.lineGap * 1.3)));
     ctx.fillStyle = STRIP_NOTE_TEXT;

@@ -5,7 +5,7 @@ import type { Timeline } from '../model/score';
 import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
 import { NeckCalibration } from './NeckCalibration';
-import { drawSurface, surfaceLabel } from './panel-draw';
+import { drawSurface, frameMoment, surfaceLabel } from './panel-draw';
 import { isGuitarPanel, PANEL_NAMES, type PanelId } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
@@ -100,7 +100,9 @@ export function PanelFullscreen({
     const draw = () => {
       const t = clock.time();
       const live = liveRef.current;
-      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current };
+      const drawn = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current };
+      // One moment per frame, handed to every surface so they all agree on what is sounding.
+      const state = { ...drawn, moment: frameMoment(drawn) };
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
