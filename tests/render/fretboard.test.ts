@@ -228,9 +228,26 @@ describe('emphasis on the playing note', () => {
     expect(halos(2.5)).toBe(0);
   });
 
-  it('returns to the base size once the note is over', () => {
+  it('covers AE2: draws no playing dot, halo or trail mid-rest, and shows the next note dimmed', () => {
     const neck = neckFor(7);
-    expect(arcs(draw(specs, 2.5), neck.dotRadius).length).toBeGreaterThan(0);
+    const during = draw(specs, 1.5);
+    const gap = draw(specs, 2.5);
+    expect(arcs(during, playingRadius(neck, 1, 2, 1.5)).length).toBeGreaterThan(0);
+    expect(arcs(gap, neck.dotRadius)).toHaveLength(0);
+    // the second note shows as an outlined marker at its fret while nothing is lit
+    expect(gap.filter((c) => c.name === 'arc' && (c.args[0] as number) === noteDotX(neck, 7)).length).toBeGreaterThan(0);
+  });
+
+  it('covers AE6: keeps a long note lit while a shorter later note starts and ends', () => {
+    const neck = neckFor(7);
+    const held: NoteSpec[] = [
+      { start: 0, end: 4, string: 1, fret: 3 },
+      { start: 1, end: 1.5, string: 2, fret: 5 },
+    ];
+    const heldDot = (t: number) => arcs(draw(held, t), playingRadius(neck, 0, 4, t)).filter((c) => (c.args[0] as number) === noteDotX(neck, 3));
+    expect(heldDot(0.5).length).toBeGreaterThan(0);
+    expect(heldDot(1.2).length).toBeGreaterThan(0);
+    expect(heldDot(2).length).toBeGreaterThan(0);
   });
 
   it('swells the next marker as its start nears', () => {

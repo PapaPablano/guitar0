@@ -63,6 +63,8 @@ const LANDING_GRACE_SECONDS = 0.02;
 /** A restart that keeps missing is corrected this many times, then left alone. */
 const LANDING_MAX_CORRECTIONS = 3;
 
+const noLatency = (): number => 0;
+
 /**
  * A Clock backed by the user's own recording. Media time is the position in the tab. The recording leads:
  * tab time is read from the element's position through an alignment map, which is the recording position
@@ -124,6 +126,8 @@ export class UserAudioClock implements Clock {
     readonly file: File | null = null,
     private readonly objectUrl: string | null = null,
     private readonly source: TimeSource = performanceSource,
+    /** Seconds between the element reporting a position and it being heard; 0 for a plain element, a context's for one routed through web audio. */
+    private readonly latency: () => number = noLatency,
   ) {
     this.current = initial;
     initial.preservesPitch = true;
@@ -187,7 +191,9 @@ export class UserAudioClock implements Clock {
     if (this.leadIn) return this.leadInTime();
     if (this.heldTab !== null) return this.heldTab;
     const recording = this.current.currentTime;
-    let media = this.map.toTab(recording);
+    // What is heard is what the element reported one output latency ago, so the tab follows that and not the report.
+    const heard = this.playing ? recording - this.latency() * this.currentRate : recording;
+    let media = this.map.toTab(heard);
     const loop = this.loopRange;
     // A loop wraps when the recording reaches its end, so a loop that ends on a hold's bar line wraps on arrival
     // and one that spans a hold plays the extra playing first.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { gemBox, HIT_EFFECT_SECONDS, renderHighway, visibleNotes } from '../../src/render/highway';
 import { computeLayout, laneY, timeToX } from '../../src/render/layout';
+import { momentAt } from '../../src/render/moment';
 import { createRecordingContext } from '../helpers/recording-context';
 import { makeTimeline } from '../helpers/make-timeline';
 
@@ -198,5 +199,42 @@ describe('layering', () => {
     const noteAt = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === String(FRET));
     expect(strikeAt).toBeGreaterThanOrEqual(0);
     expect(noteAt).toBeGreaterThan(strikeAt);
+  });
+});
+
+describe('strict sounding', () => {
+  const layout = computeLayout(W, H, 6);
+
+  it('covers AE1: a 50 ms note is back to normal size 100 ms after it starts', () => {
+    const quick = makeTimeline([{ start: 2, end: 2.05, string: 3, fret: FRET }]);
+    const note = quick.notesForTrack(0)[0];
+    const base = gemBox(layout, note, 1).w;
+    expect(gemBox(layout, note, 2.02).w).toBeGreaterThan(base);
+    expect(gemBox(layout, note, 2.1).w).toBeCloseTo(base, 9);
+  });
+
+  it('covers AE3: the gem sits on the strikeline at the exact start and has left it at the exact end', () => {
+    const timeline = makeTimeline([{ start: 2, end: 3, string: 3, fret: FRET }]);
+    const note = timeline.notesForTrack(0)[0];
+    const at = (t: number) => {
+      const box = gemBox(layout, note, t);
+      return box.x + box.w / 2;
+    };
+    expect(at(2)).toBeCloseTo(layout.strikeX, 9);
+    expect(at(3)).toBeLessThan(layout.strikeX);
+  });
+
+  it('draws the same calls whether it is given the frame moment or builds its own', () => {
+    const timeline = makeTimeline([
+      { start: 1, end: 1.5, string: 2, fret: FRET },
+      { start: 2, end: 3, string: 3, fret: FRET },
+    ]);
+    for (const t of [0.5, 1.2, 1.7, 2.5, 3.2]) {
+      const own = createRecordingContext();
+      renderHighway(own.ctx, timeline, 0, t, W, H);
+      const shared = createRecordingContext();
+      renderHighway(shared.ctx, timeline, 0, t, W, H, { moment: momentAt(timeline, 0, t) });
+      expect(shared.calls).toEqual(own.calls);
+    }
   });
 });

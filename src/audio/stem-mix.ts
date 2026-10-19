@@ -6,7 +6,9 @@ import { UserAudioClock, type AudioLike, type LandingReport, type TimeSource } f
 import type { StemName } from '../stems/engine-client';
 
 /** How far a follower may sit from the leader before it is pulled back. */
-export const DRIFT_TOLERANCE_SECONDS = 0.04;
+export const DRIFT_TOLERANCE_SECONDS = 0.025;
+/** How far a follower may sit from the leader right after it starts; its start takes time, so it begins behind and is set once to the leader. */
+export const START_TOLERANCE_SECONDS = 0.008;
 /** How often followers are checked; the same cadence the recording clock uses for loops. */
 const RESYNC_MS = 20;
 
@@ -38,8 +40,10 @@ export class StemMixClock implements Clock {
     private readonly channels: readonly StemChannel[],
     durationSeconds: number,
     source?: TimeSource,
+    /** Seconds between a stem reporting a position and it being heard (the audio context's output latency). */
+    latency?: () => number,
   ) {
-    this.leader = new UserAudioClock(channels[0].element, durationSeconds, null, null, source);
+    this.leader = new UserAudioClock(channels[0].element, durationSeconds, null, null, source, latency);
     // Stems are WAV files, which seek to the sample.
     this.leader.setSeekExact(true);
     this.followers = channels.slice(1);
@@ -202,8 +206,16 @@ export class StemMixClock implements Clock {
     for (const f of this.followers) {
       if (!f.element.paused) continue;
       f.element.currentTime = target;
-      void f.element.play();
+      // The element takes a moment to start after play(), and the leader has moved on meanwhile; once it runs, line it up with the leader again.
+      void Promise.resolve(f.element.play()).then(() => this.settle(f), () => {});
     }
+  }
+
+  /** Puts a follower that has just started on the leader's position, when it began behind it. */
+  private settle(f: StemChannel): void {
+    if (!this.leader.playing || this.leader.inLeadIn || f.element.paused) return;
+    const target = this.channels[0].element.currentTime;
+    if (Math.abs(f.element.currentTime - target) > START_TOLERANCE_SECONDS) f.element.currentTime = target;
   }
 
   private startTimer(): void {

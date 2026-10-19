@@ -1,6 +1,7 @@
 import { barSpans } from './bars';
 import type { DrawContext } from './draw-context';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
+import type { Moment } from './moment';
 import type { LoopBars } from './tab-strip';
 import { playbackBarIndexAt } from '../model/bars';
 import type { BarEvent, Timeline } from '../model/score';
@@ -96,6 +97,8 @@ export function labelEvery(layout: BarTimelineLayout): number {
 export interface BarTimelineOptions {
   readonly theme?: HighwayTheme;
   readonly loop?: LoopBars | null;
+  /** The frame's shared moment; its loop wins over `loop` when given. */
+  readonly moment?: Moment;
 }
 
 /** Draws the slim bar timeline: bars, numbers, repeat marks, the loop tint and the playhead. */
@@ -116,7 +119,7 @@ export function renderBarTimeline(
   ctx.fillStyle = '#1b1e26';
   ctx.fillRect(0, 0, width, height);
 
-  const loop = options.loop;
+  const loop = options.moment ? options.moment.loop : options.loop;
   if (loop) {
     const first = layout.bars.find((b) => b.scoreBar === loop.startBar);
     const last = layout.bars.find((b) => b.scoreBar === loop.endBar);

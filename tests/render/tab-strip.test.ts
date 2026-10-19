@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStripLayout,
+  FRET_FONT_MIN,
+  GUTTER_WIDTH,
+  MIN_BAR_WIDTH,
+  MIN_SLOT_WIDTH,
   playheadStripX,
   renderTabStrip,
   scoreBarAtX,
@@ -33,7 +37,10 @@ describe('tab strip layout', () => {
     const beforeJump = playheadStripX(layout, timeline, 5.99);
     const afterJump = playheadStripX(layout, timeline, 6.01);
     expect(afterJump).toBeLessThan(beforeJump);
-    expect(afterJump).toBeCloseTo(layout.bars[0].x + (0.01 / 2) * layout.bars[0].width, 3);
+    // bar 0 opens with a note on the downbeat, so 0.01 s in the cursor is just past that note, on its way to the next
+    const [first, second] = layout.bars[0].slots;
+    const expected = layout.bars[0].x + first.offset + (0.01 / (second.seconds - first.seconds)) * (second.offset - first.offset);
+    expect(afterJump).toBeCloseTo(expected, 3);
     // playback time keeps increasing while the strip x moved back
     expect(6.01).toBeGreaterThan(5.99);
   });
@@ -96,5 +103,214 @@ describe('strip layering', () => {
     const numberAt = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === '5');
     expect(cursorAt).toBeGreaterThanOrEqual(0);
     expect(numberAt).toBeGreaterThan(cursorAt);
+  });
+});
+
+const eighths = (from: number, count: number, step = 0.25) =>
+  Array.from({ length: count }, (_, i) => ({ start: from + i * step, end: from + (i + 1) * step, string: 2, fret: 5 }));
+
+describe('note-value spacing', () => {
+  it('gives every note in a sixteenth run room for a two-digit fret, at a short and a tall panel', () => {
+    const timeline = makeTimeline(eighths(0, 16, 0.125));
+    for (const height of [60, 200, 400]) {
+      const bar = buildStripLayout(timeline, 0, W, height).bars[0];
+      expect(bar.slots).toHaveLength(16);
+      for (let i = 1; i < bar.slots.length; i++) {
+        expect(bar.slots[i].offset - bar.slots[i - 1].offset).toBeGreaterThanOrEqual(MIN_SLOT_WIDTH);
+      }
+    }
+  });
+
+  it('keeps a whole note no wider than a bar of eight eighths', () => {
+    const timeline = makeTimeline([{ start: 0, end: 2, string: 2, fret: 5 }, ...eighths(2, 8)]);
+    const [whole, run] = buildStripLayout(timeline, 0, W, H).bars;
+    expect(whole.width).toBeLessThanOrEqual(run.width);
+  });
+
+  it('gives a bar with no notes the minimum bar width', () => {
+    const timeline = makeTimeline(eighths(0, 8));
+    const layout = buildStripLayout(timeline, 0, W, H);
+    expect(layout.bars[3].width).toBe(MIN_BAR_WIDTH);
+  });
+
+  it('lays bars out the same whatever the canvas size', () => {
+    const timeline = makeTimeline([...eighths(0, 8), ...eighths(2, 16, 0.125)]);
+    const small = buildStripLayout(timeline, 0, 1, 1);
+    const big = buildStripLayout(timeline, 0, W, H);
+    expect(small.bars.map((b) => [b.x, b.width])).toEqual(big.bars.map((b) => [b.x, b.width]));
+  });
+
+  it('puts the notes of a chord in one slot', () => {
+    const timeline = makeTimeline([
+      { start: 0, end: 0.5, string: 1, fret: 3 },
+      { start: 0, end: 0.5, string: 2, fret: 5 },
+      { start: 0, end: 0.5, string: 3, fret: 5 },
+    ]);
+    const bar = buildStripLayout(timeline, 0, W, H).bars[0];
+    expect(bar.slots).toHaveLength(1);
+    expect(bar.notes).toHaveLength(3);
+  });
+
+  it('puts three inner beat ticks in a 4/4 bar, in order and inside the bar', () => {
+    const timeline = makeTimeline(eighths(0, 8));
+    const bar = buildStripLayout(timeline, 0, W, H).bars[0];
+    const xs = bar.beatXs;
+    expect(xs).toHaveLength(3);
+    expect([...xs].sort((a, b) => a - b)).toEqual(xs);
+    expect(xs[0]).toBeGreaterThan(0);
+    expect(xs[2]).toBeLessThan(bar.width);
+  });
+});
+
+describe('cursor on uneven bars', () => {
+  // a note, a long gap, then a quick run: the bar's notes are far from evenly spaced in time
+  const gappy = () =>
+    makeTimeline([
+      { start: 0, end: 0.5, string: 2, fret: 5 },
+      { start: 1.5, end: 1.625, string: 2, fret: 7 },
+      { start: 1.625, end: 1.75, string: 2, fret: 8 },
+      { start: 1.75, end: 1.875, string: 2, fret: 10 },
+    ]);
+
+  it('sits on each note at the moment it starts', () => {
+    const timeline = gappy();
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const bar = layout.bars[0];
+    for (const slot of bar.slots) {
+      expect(playheadStripX(layout, timeline, slot.seconds)).toBeCloseTo(bar.x + slot.offset, 6);
+    }
+  });
+
+  it('moves faster over the gap than over the run', () => {
+    const timeline = gappy();
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const [a, b, c] = layout.bars[0].slots;
+    const gapSpeed = (b.offset - a.offset) / (b.seconds - a.seconds);
+    const runSpeed = (c.offset - b.offset) / (c.seconds - b.seconds);
+    expect(gapSpeed).not.toBeCloseTo(runSpeed, 1);
+    expect(runSpeed).toBeGreaterThan(gapSpeed);
+  });
+
+  it('keeps a bar-end playhead at the bar end and the next bar start continuous', () => {
+    const timeline = gappy();
+    const layout = buildStripLayout(timeline, 0, W, H);
+    expect(playheadStripX(layout, timeline, 1.9999)).toBeCloseTo(layout.bars[0].x + layout.bars[0].width, 0);
+    expect(playheadStripX(layout, timeline, 2)).toBeCloseTo(layout.bars[1].x, 6);
+  });
+
+  it('selects the bar under the pointer on widened bars', () => {
+    const timeline = makeTimeline([...eighths(0, 8), ...eighths(2, 16, 0.125)]);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const t = 3;
+    const scroll = stripScrollX(layout, timeline, t);
+    const second = layout.bars[1];
+    expect(scoreBarAtX(layout, timeline, t, second.x + second.width / 2 - scroll)).toBe(1);
+    const early = stripScrollX(layout, timeline, 0.1);
+    expect(scoreBarAtX(layout, timeline, 0.1, layout.bars[0].x + 1 - early)).toBe(0);
+  });
+});
+
+describe('bar line continuity and labels', () => {
+  it('keeps the cursor where it is across a bar line when the next bar opens on a note', () => {
+    const timeline = makeTimeline([...eighths(0, 8), ...eighths(2, 8)]);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const before = playheadStripX(layout, timeline, 1.9999);
+    const after = playheadStripX(layout, timeline, 2);
+    expect(Math.abs(after - before)).toBeLessThan(1);
+  });
+
+  it('draws every bar number in the small label font, not the bold fret font left over from the bar before', () => {
+    const timeline = makeTimeline(eighths(0, 8));
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, 0, W, H);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    let font = '';
+    let labels = 0;
+    for (const c of calls) {
+      if (c.name === 'set:font') font = String(c.args[0]);
+      if (c.name === 'fillText' && c.args[2] === layout.lineTop - 6) {
+        labels += 1;
+        expect(font).toBe('12px system-ui, sans-serif');
+      }
+    }
+    expect(labels).toBeGreaterThan(1);
+  });
+});
+
+describe('numerals', () => {
+  const fretSizes = (height: number): number[] => {
+    const timeline = makeTimeline([{ start: 0.2, end: 0.6, string: 2, fret: 5 }]);
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, 0, W, height);
+    return calls
+      .filter((c) => c.name === 'set:font')
+      .map((c) => /bold (\d+)px/.exec(String(c.args[0])))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => Number(m[1]));
+  };
+
+  it('draws bold fret numbers larger than the old 13px on a normal panel', () => {
+    expect(Math.max(...fretSizes(200))).toBeGreaterThan(13);
+  });
+
+  it('shrinks with a short panel but never below the floor', () => {
+    const short = Math.max(...fretSizes(60));
+    expect(short).toBeLessThan(Math.max(...fretSizes(200)));
+    expect(short).toBeGreaterThanOrEqual(FRET_FONT_MIN);
+  });
+});
+
+describe('clef gutter', () => {
+  const signed = (numerator: number, denominator: number, fromBar: number) => {
+    const base = makeTimeline([], 2, 4);
+    return {
+      ...base,
+      bars: base.bars.map((b) => (b.playbackIndex >= fromBar ? { ...b, timeSignature: { numerator, denominator } } : b)),
+    };
+  };
+  const texts = (timeline: ReturnType<typeof makeTimeline>, t: number) => {
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, t, W, H);
+    return calls.filter((c) => c.name === 'fillText').map((c) => String(c.args[0]));
+  };
+
+  it('draws the TAB clef and the signature of the bar being played, and changes at a signature change', () => {
+    // 7 and 8 never appear as bar numbers on this four-bar score, so they can only be the signature
+    const timeline = signed(7, 8, 2);
+    const before = texts(timeline, 1);
+    expect(before).toEqual(expect.arrayContaining(['T', 'A', 'B']));
+    expect(before).not.toContain('7');
+    expect(before).not.toContain('8');
+    const after = texts(timeline, 5);
+    expect(after).toContain('7');
+    expect(after).toContain('8');
+  });
+
+  it('draws after the fret numbers so notes scrolling under it are hidden', () => {
+    const timeline = makeTimeline([{ start: 0.2, end: 0.6, string: 2, fret: 5 }]);
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, 0, W, H);
+    const numberAt = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === '5');
+    const clefAt = calls.findIndex((c) => c.name === 'fillText' && c.args[0] === 'T');
+    expect(numberAt).toBeGreaterThanOrEqual(0);
+    expect(clefAt).toBeGreaterThan(numberAt);
+  });
+
+  it('keeps the cursor clear of the gutter on a narrow panel', () => {
+    const timeline = makeTimeline(eighths(0, 8));
+    expect(buildStripLayout(timeline, 0, 240, H).cursorX).toBeGreaterThan(GUTTER_WIDTH);
+  });
+
+  it('picks no bar inside the gutter and still picks the bar just right of it', () => {
+    const timeline = makeTimeline([...eighths(0, 8), ...eighths(2, 8)]);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    expect(scoreBarAtX(layout, timeline, 3, GUTTER_WIDTH - 1)).toBeNull();
+    expect(scoreBarAtX(layout, timeline, 3, GUTTER_WIDTH + 1)).not.toBeNull();
+  });
+
+  it('draws the clef on a one-bar score at time zero', () => {
+    const timeline = makeTimeline([], 2, 1);
+    expect(() => texts(timeline, 0)).not.toThrow();
+    expect(texts(timeline, 0)).toContain('T');
   });
 });

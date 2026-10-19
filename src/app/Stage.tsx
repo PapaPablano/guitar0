@@ -1,13 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { playbackBarIndexAt } from '../model/bars';
 import type { Timeline } from '../model/score';
 import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
-import { drawSurface, surfaceLabel, type SurfaceKind } from './panel-draw';
-import { needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
+import { NeckCalibration } from './NeckCalibration';
+import { drawSurface, surfaceLabel, type SurfaceKind, withMoment } from './panel-draw';
+import { isGuitarPanel, needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
+import { usePickPhoto } from './use-pick-photo';
 
 interface StageProps {
   timeline: Timeline;
@@ -48,6 +50,8 @@ export function Stage({
 }: StageProps) {
   const canvases = useRef<Partial<Record<SurfaceKind, HTMLCanvasElement | null>>>({});
   const photo = useNeckPhoto();
+  const pickPhoto = usePickPhoto();
+  const [calibrating, setCalibrating] = useState(false);
   const panels = panelsOf(layout);
   const bar = needsBarStrip(panels);
   const key = `${layout.top}/${layout.bottom}`;
@@ -61,7 +65,8 @@ export function Stage({
     const draw = () => {
       const t = clock.time();
       const live = liveRef.current;
-      const state = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current };
+      // One moment per frame, handed to every surface so they all agree on what is sounding.
+      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current });
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
@@ -76,7 +81,7 @@ export function Stage({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, onFrame, photo]);
+  }, [timeline, trackIndex, clock, onFrame, photo, pickPhoto]);
 
   function panel(id: PanelId) {
     const seekable = id === 'tab';
@@ -93,7 +98,7 @@ export function Stage({
           {...(seekable ? barSelect('tab') : {})}
         />
         <div className="panel-tools">
-          {id === 'neck' && (
+          {isGuitarPanel(id) && (
             <button
               type="button"
               aria-pressed={neckCues}
@@ -101,6 +106,11 @@ export function Stage({
               title="Show how each note is played: hammer-ons, slides, bends and more"
             >
               Techniques {neckCues ? 'on' : 'off'}
+            </button>
+          )}
+          {id === 'pick' && (
+            <button type="button" onClick={() => setCalibrating(true)} title="Use a photo of your own guitar">
+              Photo
             </button>
           )}
           <button type="button" onClick={() => onFullscreen(id)} aria-label={`Full screen ${PANEL_NAMES[id]}`} title={`Full screen ${PANEL_NAMES[id]}`}>
@@ -126,6 +136,7 @@ export function Stage({
           {...barSelect('bar')}
         />
       )}
+      {calibrating && <NeckCalibration onClose={() => setCalibrating(false)} />}
     </div>
   );
 }

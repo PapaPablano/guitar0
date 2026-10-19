@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bendSide, cuesAt, nextOnString, SHIVER_HERTZ } from '../../src/render/neck-cue-model';
 import { DEFAULT_LOOKAHEAD } from '../../src/render/fretboard-steps';
+import { pickPlan, pluckAt } from '../../src/render/pick-cues';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 
 const notesOf = (specs: NoteSpec[]) => makeTimeline(specs).notesForTrack(0);
@@ -134,19 +135,59 @@ describe('bend, vibrato and palm mute', () => {
   });
 });
 
+describe('technique finishes through a gap', () => {
+  it('covers AE4: a slide comet keeps drawing, fading, for 0.2 s after its note ends, with nothing playing', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 3, fret: 7, techniques: { slide: 'out-up' } },
+      { start: 4, end: 5, string: 3, fret: 5 },
+    ]);
+    const at = (t: number) => cuesAt(notes, t).comets;
+    expect(at(1.5)).toHaveLength(1);
+    expect(at(2.1)).toHaveLength(1);
+    expect(at(2.1)[0].strength).toBeGreaterThan(0);
+    expect(at(2.1)[0].strength).toBeLessThan(at(2)[0].strength);
+    expect(at(2.3)).toHaveLength(0);
+  });
+
+  it('a bend ends with its note and does not linger', () => {
+    const notes = notesOf([{ start: 1, end: 2, string: 3, fret: 7, techniques: { bend: 2 } }]);
+    expect(cuesAt(notes, 1.9).bends).toHaveLength(1);
+    expect(cuesAt(notes, 2).bends).toHaveLength(0);
+    expect(cuesAt(notes, 2.1).bends).toHaveLength(0);
+  });
+
+  it('gives a note held under a later step its cues while it sounds', () => {
+    const notes = notesOf([
+      { start: 0, end: 5, string: 3, fret: 7, techniques: { vibrato: true } },
+      { start: 1, end: 1.5, string: 2, fret: 5 },
+    ]);
+    // the short step has ended, so nothing is playing, but the held note is still shivering
+    expect(cuesAt(notes, 2).effects.get(notes[0].id)?.shiver).toBe(1);
+  });
+});
+
 describe('the pulse', () => {
   it('covers AE5: leaves the playing ring when its note starts and arrives on the next ring when the next note starts', () => {
     const notes = notesOf([
       { start: 1, end: 2, string: 2, fret: 3 },
-      { start: 3, end: 4, string: 4, fret: 7 },
+      { start: 2, end: 3, string: 4, fret: 7 },
     ]);
     const pulse = (t: number) => cuesAt(notes, t).pulse;
     expect(pulse(1)?.progress).toBeCloseTo(0, 9);
-    expect(pulse(2)?.progress).toBeCloseTo(0.5, 9);
-    expect(pulse(2.999)?.progress).toBeGreaterThan(0.99);
-    expect(pulse(2)?.from.fret).toBe(3);
-    expect(pulse(2)?.to.fret).toBe(7);
-    expect(pulse(1.5)!.progress).toBeLessThan(pulse(2.5)!.progress);
+    expect(pulse(1.5)?.progress).toBeCloseTo(0.5, 9);
+    expect(pulse(1.999)?.progress).toBeGreaterThan(0.99);
+    expect(pulse(1.5)?.from.fret).toBe(3);
+    expect(pulse(1.5)?.to.fret).toBe(7);
+    expect(pulse(1.2)!.progress).toBeLessThan(pulse(1.8)!.progress);
+  });
+
+  it('covers AE2: has none mid-rest, because nothing is playing then', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 2, fret: 3 },
+      { start: 3, end: 4, string: 4, fret: 7 },
+    ]);
+    expect(cuesAt(notes, 1.5).pulse).not.toBeNull();
+    expect(cuesAt(notes, 2.5).pulse).toBeNull();
   });
 
   it('has none when the next note is at the same position', () => {
@@ -346,5 +387,31 @@ describe('the sounding bends', () => {
 
   it('lists no bend for notes without one', () => {
     expect(cuesAt(notesOf([{ start: 1, end: 2, techniques: { vibrato: true } }]), 1.5).bends).toEqual([]);
+  });
+});
+
+describe('the pluck of a picked note', () => {
+  const picked = [{ start: 1, end: 1.6, string: 3, fret: 5 }, { start: 2, end: 2.5, string: 3, fret: 7, techniques: { hammerPull: 'destination' as const } }];
+  const notes = makeTimeline(picked).notesForTrack(0);
+  const plan = pickPlan(notes);
+
+  it('is absent without a pick plan, so the cues are as they were', () => {
+    expect(cuesAt(notes, 1.01).effects.get(notes[0].id)).toBeUndefined();
+  });
+
+  it('is set on a picked note from the pick plan and decays to nothing', () => {
+    expect(cuesAt(notes, 1.01, undefined, 6, plan).effects.get(notes[0].id)?.pluck).toBe(pluckAt(plan, notes[0], 1.01));
+    expect(cuesAt(notes, 1.5, undefined, 6, plan).effects.get(notes[0].id)?.pluck).toBeUndefined();
+  });
+
+  it('keeps the bend and vibrato of the note alongside it', () => {
+    const bent = makeTimeline([{ start: 1, end: 2, string: 3, fret: 5, techniques: { bend: 2, vibrato: true } }]).notesForTrack(0);
+    const effect = cuesAt(bent, 1.5, undefined, 6, pickPlan(bent)).effects.get(bent[0].id);
+    expect(effect?.bend).toBeGreaterThan(0);
+    expect(effect?.shiver).toBe(1);
+  });
+
+  it('is never set on a note the pick does not play', () => {
+    expect(cuesAt(notes, 2.01, undefined, 6, plan).effects.get(notes[1].id)).toBeUndefined();
   });
 });

@@ -164,7 +164,7 @@ pub fn export_open_folder(app: tauri::AppHandle) -> Result<(), String> {
     open_in_file_manager(&dir)
 }
 
-fn open_in_file_manager(dir: &Path) -> Result<(), String> {
+pub fn open_in_file_manager(dir: &Path) -> Result<(), String> {
     // Explorer reports a nonzero exit even when it opens the folder, so only a failure to start it is an error.
     std::process::Command::new("explorer").arg(dir).spawn().map(|_| ()).map_err(|e| format!("could not open the folder: {e}"))
 }

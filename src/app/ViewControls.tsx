@@ -1,6 +1,7 @@
 import { DEFAULT_LABEL_MODE, type LabelMode } from '../render/fretboard';
 import { clampLookahead, DEFAULT_LOOKAHEAD, MAX_LOOKAHEAD, MIN_LOOKAHEAD } from '../render/fretboard-steps';
 import { Menu } from './Menu';
+import { isProPanel, isPro, useTier, panelAllowed } from './tier';
 import {
   LAYOUT_PRESETS,
   loadLayout,
@@ -42,6 +43,7 @@ const LABEL_CHOICES: { mode: LabelMode; text: string }[] = [
 ];
 
 function PanelSelect({ label, value, allowNone, onChange }: { label: string; value: PanelId | null; allowNone: boolean; onChange: (id: PanelId | null) => void }) {
+  const tier = useTier();
   return (
     <label className="field">
       {label}
@@ -50,6 +52,7 @@ function PanelSelect({ label, value, allowNone, onChange }: { label: string; val
         {PANEL_IDS.map((id) => (
           <option key={id} value={id}>
             {PANEL_NAMES[id]}
+            {isProPanel(id) && !panelAllowed(id, tier) ? ' (Pro)' : ''}
           </option>
         ))}
       </select>
@@ -59,6 +62,7 @@ function PanelSelect({ label, value, allowNone, onChange }: { label: string; val
 
 /** Which two views are on the page, plus the dot labels and look-ahead when a view with dots is showing. */
 export function ViewControls({ layout, lookahead, labelMode, onLayoutChange, onLookaheadChange, onLabelModeChange }: ViewControlsProps) {
+  const tier = useTier();
   const dots = showsDots(layout);
   const summary = layout.bottom ? `${PANEL_NAMES[layout.top]} + ${PANEL_NAMES[layout.bottom]}` : PANEL_NAMES[layout.top];
   return (
@@ -73,6 +77,7 @@ export function ViewControls({ layout, lookahead, labelMode, onLayoutChange, onL
           {LAYOUT_PRESETS.map((p) => (
             <button key={p.name} type="button" onClick={() => onLayoutChange(p.layout)}>
               {p.name}
+              {!isPro(tier) && [p.layout.top, p.layout.bottom].some((id) => id !== null && isProPanel(id)) ? ' (Pro)' : ''}
             </button>
           ))}
         </div>

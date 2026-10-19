@@ -24,7 +24,7 @@ On desktop every export (video or audio) is saved by the shell into a `Tab Highw
 
 ## YouTube search
 
-The YouTube search is built but hidden unless the page is built with `VITE_ENABLE_YOUTUBE=true` (`scripts/package-windows.ps1` does not set it, so set it in the shell before running the script). The public web site is built without it.
+The YouTube search is shown by default. Build with `VITE_ENABLE_YOUTUBE=false` to hide it (set it in the shell before running `scripts/package-windows.ps1`, or before building the public web site). Its controls stay disabled until the stem engine is ready.
 
 ## Build
 

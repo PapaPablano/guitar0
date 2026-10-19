@@ -102,3 +102,30 @@ describe('saving the layout', () => {
     expect(loadLayout(store)).toEqual(DEFAULT_LAYOUT);
   });
 });
+
+describe('the pick view (R22)', () => {
+  it('covers AE16: can be chosen into either slot, alone or with another view, without a panel ever being on twice', () => {
+    expect(setPanel({ top: 'highway', bottom: 'tab' }, 'bottom', 'pick')).toEqual({ top: 'highway', bottom: 'pick' });
+    expect(setPanel({ top: 'highway', bottom: 'tab' }, 'top', 'pick')).toEqual({ top: 'pick', bottom: 'tab' });
+    expect(setPanel({ top: 'neck', bottom: 'pick' }, 'top', 'pick')).toEqual({ top: 'pick', bottom: 'neck' });
+    expect(normaliseLayout({ top: 'pick', bottom: null })).toEqual({ top: 'pick', bottom: null });
+    expect(normaliseLayout({ top: 'pick', bottom: 'pick' })).toEqual(DEFAULT_LAYOUT);
+  });
+
+  it('is a separate view from the Real guitar view, with its own name', () => {
+    expect(PANEL_IDS).toContain('neck');
+    expect(PANEL_IDS).toContain('pick');
+    expect(PANEL_NAMES.pick).not.toBe(PANEL_NAMES.neck);
+  });
+
+  it('treats the new view like the Real guitar view for the bar strip and the dot controls', () => {
+    expect(needsBarStrip(['highway', 'pick'])).toBe(true);
+    expect(showsDots({ top: 'highway', bottom: 'pick' })).toBe(true);
+  });
+
+  it('leaves a layout saved before it existed unchanged', () => {
+    const store = memory();
+    store.setItem('tab-highway.stage-layout', JSON.stringify({ top: 'highway', bottom: 'neck' }));
+    expect(loadLayout(store)).toEqual({ top: 'highway', bottom: 'neck' });
+  });
+});

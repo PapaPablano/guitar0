@@ -21,13 +21,18 @@ export interface EngineView {
   readonly needsSetup: boolean;
   readonly message: string;
   readonly progress: number | null;
+  /** Stems are part of Pro and this install is Free, so there is nothing to set up. */
+  readonly locked?: boolean;
 }
 
 const WEB: EngineView = { kind: 'web', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: '', progress: null };
 
+const LOCKED: EngineView = { kind: 'setup', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: 'Stem separation is part of Tab Highway Pro.', progress: null, locked: true };
+
 /** Turns the shell's status into what the page shows. `null` means the web build. */
-export function describeEngine(status: ShellEngineStatus | null): EngineView {
+export function describeEngine(status: ShellEngineStatus | null, proLocked = false): EngineView {
   if (!status) return WEB;
+  if (proLocked) return LOCKED;
   const message = status.message ?? '';
   const progress = typeof status.progress === 'number' ? Math.min(1, Math.max(0, status.progress)) : null;
   switch (status.phase) {

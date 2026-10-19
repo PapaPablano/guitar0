@@ -3,6 +3,9 @@
 
 export type SlideKind = 'none' | 'shift' | 'legato' | 'out-down' | 'out-up' | 'in-below' | 'in-above';
 
+/** How the picking hand plays a beat: down, up, or not marked in the file. */
+export type PickStroke = 'down' | 'up' | 'none';
+
 export interface Techniques {
   /** Largest bend in semitones; 0 when the note is not bent. */
   readonly bend: number;
@@ -36,6 +39,8 @@ export interface NoteEvent {
   /** Bar index in score order, for placing the tab cursor across repeats. */
   readonly scoreBar: number;
   readonly techniques: Techniques;
+  /** The pick stroke the file marks on the beat this note is in; every note of a chord shares it. Absent reads as `none`. */
+  readonly stroke?: PickStroke;
 }
 
 export interface BarEvent {
@@ -56,6 +61,8 @@ export interface TrackInfo {
   readonly stringCount: number;
   /** Open-string midi pitches, highest-pitched string first. */
   readonly tuning: readonly number[];
+  /** The fret the capo is on (0 when there is none): every string sounds this many semitones above its open pitch, and fret numbers count from the capo. */
+  readonly capo?: number;
   /** False when the track carries pitches only; frets were then assigned by the parser. */
   readonly hasTabData: boolean;
   readonly isPercussion: boolean;

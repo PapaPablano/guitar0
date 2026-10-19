@@ -27,6 +27,9 @@ function Read-Version {
 }
 
 $Version = Read-Version
+if ($env:TABHIGHWAY_DEV_PRO -eq "1") {
+  Write-Warning "TABHIGHWAY_DEV_PRO=1: this build treats every install as Pro. It is for pre-launch testing only and must never be released."
+}
 New-Item -ItemType Directory -Force $Cache | Out-Null
 
 # 1. Web build and shell.
@@ -69,6 +72,16 @@ if (Test-Path $Stage) {
 New-Item -ItemType Directory -Force $Stage | Out-Null
 Copy-Item -Recurse (Join-Path $Inner.FullName "python") (Join-Path $Stage "python")
 Copy-Item -Recurse (Join-Path $Inner.FullName "backend") (Join-Path $Stage "backend")
+
+# diffq-fixed is licensed CC BY-NC 4.0 (non-commercial). Demucs imports it only for quantized checkpoints, and the
+# htdemucs_6s model we use is not quantized, so it is removed rather than shipped.
+$SitePackages = Join-Path $Stage "python\Lib\site-packages"
+Get-ChildItem -LiteralPath $SitePackages -Force | Where-Object { $_.Name -eq "diffq" -or $_.Name -like "diffq_fixed-*.dist-info" } | Remove-Item -Recurse -Force
+
+# Fail the build on any non-commercial or unrecognised licence in the shipped runtime (see scripts/check-licences.py).
+& (Join-Path $Stage "python\base\python.exe") -I (Join-Path $Root "scripts\check-licences.py") $SitePackages
+if ($LASTEXITCODE -ne 0) { throw "licence check failed: see the FAIL lines above" }
+
 Copy-Item -Recurse (Join-Path $Root "engine\wrapper") (Join-Path $Stage "engine")
 $TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root "src-tauri\target" }
 $Exe = Join-Path $TargetDir "release\tab-highway.exe"
@@ -82,6 +95,10 @@ $StemDeckNotices = Join-Path $Inner.FullName "THIRD_PARTY_NOTICES.txt"
 if (Test-Path $StemDeckNotices) {
   Copy-Item $StemDeckNotices (Join-Path $Stage "THIRD_PARTY_NOTICES-stemdeck.txt")
 }
+# StemDeck ships each bundled package's licence text in licenses/. A paid release must carry them, so a release without them fails.
+$StemDeckLicences = Join-Path $Inner.FullName "licenses"
+if (-not (Test-Path $StemDeckLicences)) { throw "StemDeck $($Version.tag) has no licenses folder; the package would ship without its licence texts" }
+Copy-Item -Recurse $StemDeckLicences (Join-Path $Stage "licenses")
 New-Item -ItemType Directory -Force (Join-Path $Stage "data") | Out-Null
 
 Write-Host "Package : $Stage"

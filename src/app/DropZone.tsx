@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { openExternal } from './desktop';
 import { songsterrSearchUrl } from './songsterr';
 
 interface DropZoneProps {
@@ -6,9 +7,11 @@ interface DropZoneProps {
   onSample: () => void;
   error: string | null;
   loading: boolean;
+  /** Desktop only: opens the back up and restore dialog. */
+  onBackup?: () => void;
 }
 
-export function DropZone({ onFile, onSample, error, loading }: DropZoneProps) {
+export function DropZone({ onFile, onSample, error, loading, onBackup }: DropZoneProps) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [query, setQuery] = useState('');
@@ -39,12 +42,17 @@ export function DropZone({ onFile, onSample, error, loading }: DropZoneProps) {
         <button type="button" onClick={onSample} disabled={loading}>
           Try the sample riff
         </button>
+        {onBackup && (
+          <button type="button" onClick={onBackup}>
+            Back up and restore
+          </button>
+        )}
       </div>
       <form
         className="song-search"
         onSubmit={(e) => {
           e.preventDefault();
-          if (searchUrl) window.open(searchUrl, '_blank', 'noopener,noreferrer');
+          if (searchUrl) void openExternal(searchUrl).catch(() => {});
         }}
       >
         <label className="field">

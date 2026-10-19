@@ -1,15 +1,19 @@
 import { defaultProfileStorage, type ProfileStorage } from '../audio/profile-store-web';
 
 /** The views the main page can show, two at a time. */
-export type PanelId = 'highway' | 'tab' | 'fretboard' | 'neck';
+export type PanelId = 'highway' | 'tab' | 'fretboard' | 'neck' | 'pick';
 
-export const PANEL_IDS: readonly PanelId[] = ['highway', 'tab', 'fretboard', 'neck'];
+export const PANEL_IDS: readonly PanelId[] = ['highway', 'tab', 'fretboard', 'neck', 'pick'];
+
+/** The two views that draw the guitar photo with rings: the Real guitar view and the pick view. They share dots, technique cues and the neck drawing. */
+export const isGuitarPanel = (p: PanelId): boolean => p === 'neck' || p === 'pick';
 
 export const PANEL_NAMES: Record<PanelId, string> = {
   highway: 'Highway',
   tab: 'Tab strip',
   fretboard: 'Fretboard',
   neck: 'Real guitar',
+  pick: 'Real guitar + pick',
 };
 
 /** What is on the page: a top panel, and a bottom one unless the top fills the page alone. */
@@ -65,9 +69,9 @@ export function needsBarStrip(panels: readonly PanelId[]): boolean {
   return !panels.includes('tab');
 }
 
-/** Whether the label and look-ahead controls apply: the fretboard and the real guitar both show dots. */
+/** Whether the label and look-ahead controls apply: the fretboard and both real guitar views show dots. */
 export function showsDots(layout: StageLayout): boolean {
-  return panelsOf(layout).some((p) => p === 'fretboard' || p === 'neck');
+  return panelsOf(layout).some((p) => p === 'fretboard' || isGuitarPanel(p));
 }
 
 export const LAYOUT_KEY = 'tab-highway.stage-layout';

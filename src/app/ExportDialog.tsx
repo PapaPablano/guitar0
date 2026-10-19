@@ -5,10 +5,12 @@ import { audioFilename, encodeWav, planAudioExport, type TimeRange } from '../ex
 import { browserExportEnvironment, checkExportSupport, type ExportSupport } from '../export/capability';
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
+import { loadPickPhoto } from '../export/pick-photo';
 import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
-import { panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
+import { isGuitarPanel, panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
+import { isPro, useTier } from './tier';
 import type { Timeline } from '../model/score';
 
 type Phase =
@@ -50,6 +52,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
+  const tier = useTier();
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
   const job = useRef<ExportJob | null>(null);
@@ -119,8 +122,16 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
       const photo = panels.includes('neck') ? await loadNeckPhoto() : undefined;
+      let pick: Awaited<ReturnType<typeof loadPickPhoto>> | undefined;
+      try {
+        pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
+      } catch (e) {
+        photo?.close();
+        throw e;
+      }
       if (!current()) {
         photo?.close();
+        pick?.photo.close();
         return;
       }
       setPhase({ name: 'exporting', fraction: 0 });
@@ -132,7 +143,9 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
         panels,
         view,
         photo,
+        pickPhoto: pick,
         alignment,
+        watermark: !isPro(tier),
         onProgress: (fraction) => current() && setPhase({ name: 'exporting', fraction }),
       });
       job.current = running;
@@ -170,6 +183,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
 
         {phase.name === 'idle' && (
           <>
+            {!isPro(tier) && <p className="muted">Free exports carry a small "Made with Tab Highway" mark. Pro exports are clean.</p>}
             {support && !support.supported ? (
               <p role="alert" className="error">
                 {support.reason}
@@ -190,7 +204,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
                   Shows: {panels.map((p) => PANEL_NAMES[p]).join(' + ')}{' '}
                   <span className="muted">(change it under Views on the player)</span>
                 </p>
-                {panels.includes('neck') && onNeckCuesChange && (
+                {panels.some(isGuitarPanel) && onNeckCuesChange && (
                   <label className="field">
                     <input type="checkbox" checked={view.neckCues ?? true} onChange={(e) => onNeckCuesChange(e.target.checked)} /> Show
                     technique cues (hammer-ons, slides, bends)

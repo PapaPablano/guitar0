@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DesktopUnavailable, getShell, invokeShell, invokeShellRaw, isDesktop } from '../../src/app/desktop';
+import { DesktopUnavailable, getShell, invokeShell, invokeShellRaw, isDesktop, openExternal } from '../../src/app/desktop';
 
 describe('desktop bridge', () => {
   it('reports web when no shell global is present', () => {
@@ -31,5 +31,21 @@ describe('desktop bridge', () => {
     await invokeShellRaw('export_append', bytes, { 'x-save-id': '7' }, host);
     expect(invoke).toHaveBeenCalledWith('export_append', bytes, { headers: { 'x-save-id': '7' } });
     await expect(invokeShellRaw('export_append', bytes, {}, {})).rejects.toBeInstanceOf(DesktopUnavailable);
+  });
+});
+
+describe('openExternal', () => {
+  it('asks the shell to open the link in the desktop app', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const open = vi.fn();
+    await openExternal('https://www.songsterr.com/?pattern=x', { __TAURI__: { core: { invoke } }, open });
+    expect(invoke).toHaveBeenCalledWith('open_external', { url: 'https://www.songsterr.com/?pattern=x' });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('opens a new tab on the web', async () => {
+    const open = vi.fn();
+    await openExternal('https://www.songsterr.com/?pattern=x', { open });
+    expect(open).toHaveBeenCalledWith('https://www.songsterr.com/?pattern=x', '_blank', 'noopener,noreferrer');
   });
 });

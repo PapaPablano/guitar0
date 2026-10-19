@@ -147,6 +147,27 @@ export function onsetEnvelope(samples: Float32Array, rate: number = FEATURE_RATE
  * above the new Nyquist rate does not fold down into the pitch range.
  */
 export function downsampleMono(pcm: PcmAudio, targetRate: number = FEATURE_RATE): Float32Array {
+  const steps = downsampleSteps(pcm, targetRate, Infinity);
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+  }
+}
+
+/** How many output samples are worked out between pauses when the downsampling must not hold up the page. */
+const SLICE_OUTPUTS = 200_000;
+
+/** The same result as `downsampleMono`, worked out in slices with a pause between them so the page stays responsive on a long recording. */
+export async function downsampleMonoInSlices(pcm: PcmAudio, targetRate: number = FEATURE_RATE, sliceOutputs = SLICE_OUTPUTS): Promise<Float32Array> {
+  const steps = downsampleSteps(pcm, targetRate, sliceOutputs);
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function* downsampleSteps(pcm: PcmAudio, targetRate: number, sliceOutputs: number): Generator<void, Float32Array, void> {
   const length = Math.min(pcm.left.length, pcm.right.length);
   const mono = new Float32Array(length);
   for (let i = 0; i < length; i++) mono[i] = (pcm.left[i] + pcm.right[i]) / 2;
@@ -192,6 +213,7 @@ export function downsampleMono(pcm: PcmAudio, targetRate: number = FEATURE_RATE)
       if (at >= 0 && at < length) sum += mono[at] * kernel[t];
     }
     out[j] = sum;
+    if ((j + 1) % sliceOutputs === 0) yield;
   }
   return out;
 }

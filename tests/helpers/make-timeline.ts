@@ -1,4 +1,4 @@
-import type { BarEvent, NoteEvent, Techniques, Timeline, TrackInfo } from '../../src/model/score';
+import type { BarEvent, NoteEvent, PickStroke, Techniques, Timeline, TrackInfo } from '../../src/model/score';
 
 export const PLAIN: Techniques = {
   bend: 0,
@@ -19,6 +19,7 @@ export interface NoteSpec {
   string?: number;
   fret?: number;
   techniques?: Partial<Techniques>;
+  stroke?: PickStroke;
 }
 
 /** Builds a Timeline by hand, with no alphaTab involved, for renderer tests. */
@@ -36,6 +37,7 @@ export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4, string
       playbackBar: Math.floor(s.start / barSeconds),
       scoreBar: Math.floor(s.start / barSeconds),
       techniques: { ...PLAIN, ...s.techniques },
+      ...(s.stroke ? { stroke: s.stroke } : {}),
     }))
     .sort((a, b) => a.startSeconds - b.startSeconds);
   const barEvents: BarEvent[] = Array.from({ length: bars }, (_, i) => ({

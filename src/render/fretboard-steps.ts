@@ -1,4 +1,5 @@
 import type { NoteEvent } from '../model/score';
+import { isSounding } from './sounding';
 
 /** Notes that start together (a chord is one step), in playback order. */
 export interface Step {
@@ -8,11 +9,11 @@ export interface Step {
 }
 
 export interface FretboardSteps {
-  /** The latest step that has started; it stays until the next step starts. Null before the first note. */
+  /** The latest started step while any of its notes is sounding. Null before the first note and in any gap. */
   readonly playing: Step | null;
   /** The next steps, nearest first. */
   readonly upcoming: readonly Step[];
-  /** The steps just before the playing one, most recent first. */
+  /** The steps just before the playing one, most recent first. Empty while nothing is playing. */
   readonly trail: readonly Step[];
 }
 
@@ -67,10 +68,13 @@ export function stepsAt(notes: readonly NoteEvent[], t: number, lookahead: numbe
   const steps = groupSteps(notes);
   const count = clampLookahead(lookahead);
   const index = lastStartedStep(steps, t);
+  const latest = index >= 0 ? steps[index] : null;
+  // A gap has nothing playing and no trail: the step just played is neither lit nor kept as a trail.
+  const playing = latest && latest.notes.some((n) => isSounding(n, t)) ? latest : null;
   return {
-    playing: index >= 0 ? steps[index] : null,
+    playing,
     upcoming: steps.slice(index + 1, index + 1 + count),
-    trail: steps.slice(Math.max(0, index - TRAIL_STEPS), Math.max(0, index)).reverse(),
+    trail: playing ? steps.slice(Math.max(0, index - TRAIL_STEPS), Math.max(0, index)).reverse() : [],
   };
 }
 

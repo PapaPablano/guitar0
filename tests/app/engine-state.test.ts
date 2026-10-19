@@ -8,6 +8,19 @@ describe('describeEngine', () => {
     expect(describeEngine(null)).toEqual({ kind: 'web', stemsEnabled: false, canRetry: false, busy: false, needsSetup: false, message: '', progress: null });
   });
 
+  it('shows stems as part of Pro, with nothing to set up, on a Free install', () => {
+    for (const phase of ['ready', 'setup-needed', 'setting-up', 'engine-error'] as const) {
+      const d = describeEngine(status({ phase }), true);
+      expect(d.locked).toBe(true);
+      expect(d.stemsEnabled).toBe(false);
+      expect(d.canRetry).toBe(false);
+      expect(d.needsSetup).toBe(false);
+      expect(d.message).toContain('Pro');
+    }
+    expect(describeEngine(null, true).kind).toBe('web');
+    expect(describeEngine(status({ phase: 'ready' }), false).locked).toBeUndefined();
+  });
+
   it('covers AE1: setup unfinished disables stems with an explanation and a retry', () => {
     const d = describeEngine(status({ phase: 'setup-failed', message: 'No network' }));
     expect(d.kind).toBe('setup');

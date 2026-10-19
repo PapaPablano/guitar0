@@ -4,6 +4,8 @@ import { renderBarTimeline } from './bar-timeline';
 import { DEFAULT_LABEL_MODE, renderFretboard, type LabelMode } from './fretboard';
 import { DEFAULT_LOOKAHEAD } from './fretboard-steps';
 import { renderHighway } from './highway';
+import { momentAt } from './moment';
+import { PICK_PROFILE, type NeckProfile } from './neck-profile';
 import { renderNeckFrame, type PhotoContext } from './neck-view';
 import { renderTabStrip, type LoopBars } from './tab-strip';
 
@@ -54,11 +56,18 @@ export function renderStageFrame(
   width: number,
   height: number,
   panels: readonly PanelId[],
-  options: ExportViewOptions & { loop?: LoopBars | null; photo?: CanvasImageSource | null } = { lookahead: DEFAULT_LOOKAHEAD },
+  options: ExportViewOptions & {
+    loop?: LoopBars | null;
+    photo?: CanvasImageSource | null;
+    /** The pick view's photo and the profile it was measured with; its bundled profile with no photo when absent. */
+    pickPhoto?: { readonly photo: CanvasImageSource | null; readonly profile: NeckProfile } | null;
+  } = { lookahead: DEFAULT_LOOKAHEAD },
 ): void {
   const lookahead = options.lookahead;
   const labelMode = options.labelMode ?? DEFAULT_LABEL_MODE;
   const layout = frameLayout(height, panels.length, !panels.includes('tab'));
+  // One moment for the whole frame, so every panel agrees on what is sounding.
+  const moment = momentAt(timeline, trackIndex, t, { lookahead, loop: options.loop });
 
   ctx.save();
   ctx.fillStyle = '#101216';
@@ -69,13 +78,13 @@ export function renderStageFrame(
     region(ctx, top, width, h, () => {
       switch (panel) {
         case 'highway':
-          renderHighway(ctx, timeline, trackIndex, t, width, h);
+          renderHighway(ctx, timeline, trackIndex, t, width, h, { moment });
           break;
         case 'tab':
-          renderTabStrip(ctx, timeline, trackIndex, t, width, h, { loop: options.loop });
+          renderTabStrip(ctx, timeline, trackIndex, t, width, h, { loop: options.loop, moment });
           break;
         case 'fretboard':
-          renderFretboard(ctx, timeline, trackIndex, t, width, h, { lookahead, labelMode });
+          renderFretboard(ctx, timeline, trackIndex, t, width, h, { lookahead, labelMode, moment });
           break;
         case 'neck':
           renderNeckFrame(ctx, options.photo ?? null, timeline, trackIndex, t, width, h, {
@@ -83,6 +92,17 @@ export function renderStageFrame(
             lookahead,
             labelMode,
             techniqueCues: options.neckCues ?? true,
+            moment,
+          });
+          break;
+        case 'pick':
+          renderNeckFrame(ctx, options.pickPhoto?.photo ?? null, timeline, trackIndex, t, width, h, {
+            zoom: true,
+            lookahead,
+            labelMode,
+            techniqueCues: options.neckCues ?? true,
+            profile: options.pickPhoto?.profile ?? PICK_PROFILE,
+            moment,
           });
           break;
       }
@@ -90,7 +110,7 @@ export function renderStageFrame(
   });
   const bar = layout.bar;
   if (bar) {
-    region(ctx, bar.top, width, bar.height, () => renderBarTimeline(ctx, timeline, t, width, bar.height, { loop: options.loop }));
+    region(ctx, bar.top, width, bar.height, () => renderBarTimeline(ctx, timeline, t, width, bar.height, { loop: options.loop, moment }));
   }
 
   ctx.restore();

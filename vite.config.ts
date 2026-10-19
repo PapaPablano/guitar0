@@ -1,13 +1,32 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { alphaTab } from '@coderline/alphatab-vite';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Plugin } from 'vite';
+
+// alphaTab's plugin copies its bundled SoundFont into public/ on every build. The app plays MuseScore General instead, and
+// the Sonivox file's provenance is undocumented, so keep it out of the shipped build. Dev pages still read it from public/.
+function dropUnusedSoundfont(): Plugin {
+  let outDir = '';
+  return {
+    name: 'drop-unused-soundfont',
+    apply: 'build',
+    configResolved(config) { outDir = join(config.root, config.build.outDir); },
+    closeBundle() { rmSync(join(outDir, 'soundfont'), { recursive: true, force: true }); },
+  };
+}
 
 // Relative base keeps the bundle working under a GitHub Pages project path.
 export default defineConfig({
   base: './',
-  // YouTube search and import is built but hidden; build with VITE_ENABLE_YOUTUBE=true to show it.
-  define: { __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE === 'true') },
-  plugins: [react(), alphaTab()],
+  // YouTube search and import is shown by default; build with VITE_ENABLE_YOUTUBE=false to hide it.
+  // VITE_DEV_PRO=1 makes a local browser session behave as Pro (the web is otherwise Free-only). Never set it for a release build.
+  define: {
+    __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE !== 'false'),
+    __DEV_PRO__: JSON.stringify(process.env.VITE_DEV_PRO === '1'),
+  },
+  plugins: [react(), alphaTab(), dropUnusedSoundfont()],
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],

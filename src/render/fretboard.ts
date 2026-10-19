@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
-import { DEFAULT_LOOKAHEAD, maxFretUsed, stepsAt, type Step } from './fretboard-steps';
+import { maxFretUsed, type Step } from './fretboard-steps';
+import { momentAt, type Moment } from './moment';
 import { emphasisAt } from './emphasis';
 import { DEFAULT_THEME, stringColor, type HighwayTheme } from './theme';
 import { noteName, spellingForTuning, type NoteSpelling } from './note-names';
@@ -74,12 +75,16 @@ export interface FretboardOptions {
   readonly theme?: HighwayTheme;
   readonly lookahead?: number;
   readonly labelMode?: LabelMode;
+  /** The frame's shared moment; built from the timeline, time and `lookahead` when absent. */
+  readonly moment?: Moment;
 }
 
 /** What the labels need to name a note: the track's open-string pitches and how to spell them. */
 interface Naming {
   readonly mode: LabelMode;
   readonly tuning: readonly number[];
+  /** The capo fret: a fretted note sounds that many semitones above open pitch plus its fret. */
+  readonly capo?: number;
   readonly spelling: NoteSpelling;
 }
 
@@ -88,7 +93,7 @@ export function dotText(note: NoteEvent, naming: Naming): { main: string; badge:
   const open = naming.tuning[note.string - 1];
   if (naming.mode === 'fret' || open === undefined) return { main: fretLabel(note), badge: null };
   if (note.techniques.dead) return { main: 'x', badge: null };
-  const name = noteName(open + note.fret, naming.spelling);
+  const name = noteName(open + (naming.capo ?? 0) + note.fret, naming.spelling);
   const main = note.techniques.ghost ? `(${name})` : name;
   return { main, badge: naming.mode === 'both' ? String(note.fret) : null };
 }
@@ -116,11 +121,12 @@ export function renderFretboard(
   const notes = timeline.notesForTrack(trackIndex);
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
   const neck = computeNeck(width, height, stringCount, maxFretUsed(notes));
-  const steps = stepsAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD);
+  const moment = options.moment ?? momentAt(timeline, trackIndex, t, { lookahead: options.lookahead });
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = {
     mode: options.labelMode ?? DEFAULT_LABEL_MODE,
     tuning,
+    capo: timeline.tracks[trackIndex]?.capo ?? 0,
     spelling: spellingForTuning(tuning),
   };
 
@@ -128,18 +134,17 @@ export function renderFretboard(
   ctx.globalAlpha = 1;
   drawBackdrop(ctx, width, height);
   drawNeck(ctx, neck, theme, naming);
-  drawLitStrings(ctx, neck, steps.playing, steps.upcoming, theme, t);
+  drawLitStrings(ctx, neck, moment.soundingNotes, moment.upcoming, theme);
 
-  steps.trail.forEach((step, i) => {
+  moment.trail.forEach((step, i) => {
     for (const note of step.notes) drawDot(ctx, neck, note, neck.dotRadius * 0.8, theme, 0.35 - i * 0.1, 'solid', naming);
   });
 
-  drawPath(ctx, neck, steps.playing, steps.upcoming, theme);
+  drawPath(ctx, neck, moment.playing, moment.upcoming, theme);
 
-  const playing = steps.playing;
-  steps.upcoming.forEach((step, i) => {
+  moment.upcoming.forEach((step, i) => {
     for (const note of step.notes) {
-      const onPlaying = playing?.notes.some((p) => p.string === note.string && p.fret === note.fret) ?? false;
+      const onPlaying = moment.soundingNotes.some((p) => p.string === note.string && p.fret === note.fret);
       if (onPlaying) drawRing(ctx, neck, note, theme, 0.9 - i * 0.1);
       else {
         // The next marker swells as its moment nears.
@@ -149,14 +154,12 @@ export function renderFretboard(
     }
   });
 
-  if (playing) {
-    for (const note of playing.notes) {
-      // The note to play is drawn larger, popping on its beat, with a halo that flares then settles.
-      const e = emphasisAt(note.startSeconds, note.endSeconds, t);
-      const radius = neck.dotRadius * e.scale;
-      if (e.sounding) drawHalo(ctx, neck, note, radius, e.pop, theme);
-      drawDot(ctx, neck, note, radius, theme, 1, 'solid', naming);
-    }
+  for (const note of moment.soundingNotes) {
+    // A sounding note is drawn larger, popping on its beat, with a halo that flares then settles.
+    const e = emphasisAt(note.startSeconds, note.endSeconds, t);
+    const radius = neck.dotRadius * e.scale;
+    drawHalo(ctx, neck, note, radius, e.pop, theme);
+    drawDot(ctx, neck, note, radius, theme, 1, 'solid', naming);
   }
   ctx.restore();
 }
@@ -291,10 +294,9 @@ function drawNeck(ctx: DrawContext, neck: NeckLayout, theme: HighwayTheme, namin
 function drawLitStrings(
   ctx: DrawContext,
   neck: NeckLayout,
-  playing: Step | null,
+  sounding: readonly NoteEvent[],
   upcoming: readonly Step[],
   theme: HighwayTheme,
-  t: number,
 ): void {
   const light = (note: NoteEvent, strength: number) => {
     const x = noteDotX(neck, note.fret);
@@ -313,9 +315,7 @@ function drawLitStrings(
   upcoming.forEach((step, i) => {
     for (const note of step.notes) light(note, Math.max(0, 0.3 - i * 0.07));
   });
-  if (playing) {
-    for (const note of playing.notes) light(note, emphasisAt(note.startSeconds, note.endSeconds, t).sounding ? 1 : 0.5);
-  }
+  for (const note of sounding) light(note, 1);
 }
 
 function dot(ctx: DrawContext, x: number, y: number, r: number): void {

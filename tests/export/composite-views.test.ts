@@ -7,6 +7,8 @@ import type { PanelId } from '../../src/app/stage-layout';
 import { computeNeck, renderFretboard } from '../../src/render/fretboard';
 import { maxFretUsed } from '../../src/render/fretboard-steps';
 import { frameLayout, renderStageFrame, type ExportViewOptions, type FrameContext } from '../../src/render/stage-frame';
+import { NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
+import { renderNeckFrame, type PhotoContext } from '../../src/render/neck-view';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
 
@@ -270,5 +272,100 @@ describe('export start message', () => {
       }
       expect((posted[0] as StartMessage).view.neckCues).toBe(neckCues);
     }
+  });
+});
+
+describe('the pick view in a frame', () => {
+  const image = { width: 10, height: 10 };
+  const pickFrame = (t: number, panels: PanelId[], view: ExportViewOptions, pickPhoto: { photo: unknown; profile: NeckProfile } | null) => {
+    const { ctx, calls } = createRecordingContext();
+    renderStageFrame(ctx as unknown as FrameContext, timeline, 0, t, W, H, panels, { ...view, pickPhoto: pickPhoto as never });
+    return calls;
+  };
+
+  it('covers AE16: draws the pick view with its own photo, like any other panel', () => {
+    expect(pickFrame(2.2, ['highway', 'pick'], { lookahead: 4 }, { photo: image, profile: PICK_PROFILE }).some((c) => c.name === 'drawImage')).toBe(true);
+    // laid out like the Real guitar view: the same regions, the bar strip included
+    const neckFrame = frame(2.2, ['highway', 'neck'], { lookahead: 4 }, W, H, image);
+    expect(translates(pickFrame(2.2, ['highway', 'pick'], { lookahead: 4 }, { photo: image, profile: PICK_PROFILE }))).toHaveLength(translates(neckFrame).length);
+  });
+
+  it('covers AE6, AE10: draws each of the two guitar views against its own photo and profile', () => {
+    const real = { width: 11, height: 11 };
+    const pick = { width: 22, height: 22 };
+    const { ctx, calls } = createRecordingContext();
+    renderStageFrame(ctx as unknown as FrameContext, timeline, 0, 2.2, W, H, ['neck', 'pick'], {
+      lookahead: 4,
+      photo: real as unknown as CanvasImageSource,
+      pickPhoto: { photo: pick as unknown as CanvasImageSource, profile: PICK_PROFILE },
+    });
+    const images = calls.filter((c) => c.name === 'drawImage');
+    expect(images.map((c) => c.args[0])).toEqual([real, pick]);
+    // the Real guitar view is drawn at its own photo size, the pick view at its own
+    expect(images[0].args.slice(3)).toEqual([NECK_PROFILE.photoWidth, NECK_PROFILE.photoHeight]);
+    expect(images[1].args.slice(3)).toEqual([PICK_PROFILE.photoWidth, PICK_PROFILE.photoHeight]);
+  });
+
+  it('covers AE7: draws the same calls through the page path and the export path for the same song, photo, profile and time', () => {
+    const panelHeight = frameLayout(H / 2, 1, true).panels[0].height;
+    const live = createRecordingContext();
+    renderNeckFrame(live.ctx as unknown as PhotoContext, image as unknown as CanvasImageSource, timeline, 0, 2.2, W / 2, panelHeight, {
+      zoom: true,
+      lookahead: 4,
+      techniqueCues: true,
+      profile: PICK_PROFILE,
+    });
+    const exported = createRecordingContext();
+    renderStageFrame(exported.ctx as unknown as FrameContext, timeline, 0, 2.2, W / 2, H / 2, ['pick'], {
+      lookahead: 4,
+      photo: null,
+      pickPhoto: { photo: image as unknown as CanvasImageSource, profile: PICK_PROFILE },
+    });
+    // the export draws exactly the page's neck calls, as one run inside its panel region
+    const run = JSON.stringify(live.calls).slice(1, -1);
+    expect(live.calls.length).toBeGreaterThan(50);
+    expect(JSON.stringify(exported.calls)).toContain(run);
+  });
+
+  it('shows the pick effects with technique cues on and none with them off', () => {
+    const quads = (cues: boolean) => pickFrame(2.2, ['pick'], { lookahead: 4, neckCues: cues }, { photo: image, profile: PICK_PROFILE }).filter((c) => c.name === 'quadraticCurveTo').length;
+    expect(quads(true)).toBeGreaterThan(quads(false));
+  });
+});
+
+describe('a start message for the pick view', () => {
+  it('posts the profile together with the photo, and hands the photo over to the worker', () => {
+    const posted: { message: unknown; transfer: unknown[] }[] = [];
+    class FakeWorker {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(message: unknown, transfer: unknown[] = []) {
+        posted.push({ message, transfer });
+      }
+      terminate() {}
+    }
+    const original = (globalThis as { Worker?: unknown }).Worker;
+    (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+    const photo = { width: 4, height: 4 } as unknown as ImageBitmap;
+    const calibrated: NeckProfile = { ...PICK_PROFILE, nutX: PICK_PROFILE.nutX + 3 };
+    try {
+      void startExport({
+        timeline,
+        trackIndex: 0,
+        preset: presetById('landscape'),
+        audio: { left: new Float32Array(48000), right: new Float32Array(48000), sampleRate: 48000 },
+        panels: ['highway', 'pick'],
+        view: { lookahead: 6 },
+        pickPhoto: { photo, profile: calibrated },
+        onProgress: () => {},
+      }).result.catch(() => {});
+    } finally {
+      (globalThis as { Worker?: unknown }).Worker = original;
+    }
+    const start = posted[0].message as StartMessage;
+    expect(start.pickPhoto?.profile).toEqual(calibrated);
+    expect(start.pickPhoto?.photo).toBe(photo);
+    expect(posted[0].transfer).toContain(photo);
+    expect(start.photo).toBeUndefined();
   });
 });

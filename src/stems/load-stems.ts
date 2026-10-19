@@ -1,3 +1,4 @@
+import { contextLatency, useLatencyContext } from '../audio/output-latency';
 import { createWebAudioChannel, StemMixClock, type StemChannel } from '../audio/stem-mix';
 import type { StemSources } from '../export/stem-audio';
 import { EngineClient, STEM_NAMES } from './engine-client';
@@ -6,7 +7,10 @@ let sharedContext: AudioContext | null = null;
 
 /** One audio context for the page's lifetime, so repeated separations do not leak contexts. */
 export function audioContext(): AudioContext {
-  sharedContext ??= new AudioContext();
+  if (!sharedContext) {
+    sharedContext = new AudioContext();
+    useLatencyContext(sharedContext);
+  }
   return sharedContext;
 }
 
@@ -41,5 +45,5 @@ export async function loadStems(client: EngineClient, jobId: string, durationSec
     for (const c of channels) c.dispose();
     throw failure instanceof Error ? failure : new Error('The stems could not be loaded.');
   }
-  return { clock: new StemMixClock(channels, durationSeconds), sources };
+  return { clock: new StemMixClock(channels, durationSeconds, undefined, () => contextLatency(context)), sources };
 }

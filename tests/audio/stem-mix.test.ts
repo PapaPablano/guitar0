@@ -40,6 +40,50 @@ function channels() {
   return { list, gains, el: (name: StemName) => list.find((c) => c.name === name)!.element as FakeAudio };
 }
 
+describe('StemMixClock output latency', () => {
+  it('reports the position that is heard, one output latency behind the element, while playing', () => {
+    const { list, el } = channels();
+    let latency = 0.08;
+    const clock = new StemMixClock(list, 60, undefined, () => latency);
+    el('vocals').currentTime = 10;
+    clock.play();
+    expect(clock.time()).toBeCloseTo(10 - 0.08, 6);
+    // read each time, so a device change or a context that has just started is picked up
+    latency = 0.12;
+    expect(clock.time()).toBeCloseTo(10 - 0.12, 6);
+  });
+
+  it('scales the latency by the playback rate, as the synth clock does', () => {
+    const { list, el } = channels();
+    const clock = new StemMixClock(list, 60, undefined, () => 0.08);
+    clock.setRate(0.5);
+    el('vocals').currentTime = 10;
+    clock.play();
+    expect(clock.time()).toBeCloseTo(10 - 0.04, 6);
+  });
+
+  it('does not move a paused clock, and a clock with no latency source reports the element position', () => {
+    const { list, el } = channels();
+    const withLatency = new StemMixClock(list, 60, undefined, () => 0.08);
+    el('vocals').currentTime = 10;
+    expect(withLatency.time()).toBeCloseTo(10, 6);
+    const plain = channels();
+    const clock = new StemMixClock(plain.list, 60);
+    plain.el('vocals').currentTime = 10;
+    clock.play();
+    expect(clock.time()).toBeCloseTo(10, 6);
+  });
+
+  it('places the heard position through the alignment, so an offset take lands where it is heard', () => {
+    const { list, el } = channels();
+    const clock = new StemMixClock(list, 60, undefined, () => 0.05);
+    clock.setAlignment(AlignmentMap.fromOffset(2));
+    el('vocals').currentTime = 12;
+    clock.play();
+    expect(clock.time()).toBeCloseTo(12 - 0.05 - 2, 6);
+  });
+});
+
 describe('StemMixClock', () => {
   it('reports the length of the stems own audio, which can differ from the tab length', () => {
     const { list, el } = channels();
@@ -90,6 +134,23 @@ describe('StemMixClock', () => {
     clock.resync();
     expect(el('drums').currentTime).toBe(20);
     expect(el('bass').currentTime).toBe(20.01);
+  });
+
+  it('sets a follower to the leader once it is running, since its start takes time and the leader moves on meanwhile', async () => {
+    const { list, el } = channels();
+    const leader = list[0].element as FakeAudio;
+    leader.currentTime = 5;
+    const drums = el('drums');
+    drums.play = async function (this: FakeAudio) {
+      this.paused = false;
+      leader.currentTime = 5.06; // the leader ran on while the follower was starting
+    };
+    const clock = new StemMixClock(list, 60);
+    clock.play();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(drums.currentTime).toBeCloseTo(5.06, 9);
+    clock.dispose();
   });
 
   it('applies mix changes immediately through each stem gain stage', () => {

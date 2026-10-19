@@ -1,5 +1,5 @@
 import * as alphaTab from '@coderline/alphatab';
-import type { BarEvent, NoteEvent, SlideKind, TempoPoint, Techniques, Timeline, TrackInfo } from './score';
+import type { BarEvent, NoteEvent, PickStroke, SlideKind, TempoPoint, Techniques, Timeline, TrackInfo } from './score';
 
 const TICKS_PER_QUARTER = 960;
 /** Standard guitar tuning, highest string first (E4 B3 G3 D3 A2 E2). */
@@ -70,6 +70,12 @@ function maxBendSemitones(note: alphaTab.model.Note): number {
   return max / 2;
 }
 
+function strokeOf(beat: alphaTab.model.Beat): PickStroke {
+  if (beat.pickStroke === alphaTab.model.PickStroke.Down) return 'down';
+  if (beat.pickStroke === alphaTab.model.PickStroke.Up) return 'up';
+  return 'none';
+}
+
 function techniquesOf(note: alphaTab.model.Note): Techniques {
   return Object.freeze({
     bend: maxBendSemitones(note),
@@ -96,6 +102,7 @@ function trackInfo(track: alphaTab.model.Track, hasTabData: boolean): TrackInfo 
     name: track.name,
     stringCount: tuning.length,
     tuning: Object.freeze(tuning),
+    capo: staff && staff.capo > 0 ? staff.capo : 0,
     hasTabData,
     isPercussion: track.isPercussion,
     program: track.playbackInfo.program,
@@ -126,11 +133,15 @@ const MAX_FRET = 24;
  * Places a pitch on the guitar when the file gives no string and fret: the string that needs the
  * lowest fret, preferring the higher string on a tie. Returns null when no string reaches the pitch.
  */
-export function assignFret(tuning: readonly number[], pitch: number): { string: number; fret: number } | null {
+export function assignFret(
+  tuning: readonly number[],
+  pitch: number,
+  taken: ReadonlySet<number> = new Set(),
+): { string: number; fret: number } | null {
   let best: { string: number; fret: number } | null = null;
   tuning.forEach((open, i) => {
     const fret = pitch - open;
-    if (fret < 0 || fret > MAX_FRET) return;
+    if (fret < 0 || fret > MAX_FRET || taken.has(i + 1)) return;
     if (!best || fret < best.fret) best = { string: i + 1, fret };
   });
   return best;
@@ -192,6 +203,11 @@ export function buildTimeline(score: alphaTab.model.Score): Timeline {
         const durationTicks = beat.playbackDuration;
         const startSeconds = ticksToSeconds(tempoMap, tick);
         const endSeconds = ticksToSeconds(tempoMap, tick + durationTicks);
+        // A chord's notes sit on different strings: the ones the file fixes are taken first, then the rest are placed around them.
+        const used = new Set<number>();
+        for (const fixed of beat.notes) {
+          if (fixed.string >= 1 && fixed.fret >= 0) used.add(info.stringCount - fixed.string + 1);
+        }
         for (const note of beat.notes) {
           let string: number;
           let fret: number;
@@ -200,9 +216,11 @@ export function buildTimeline(score: alphaTab.model.Score): Timeline {
             string = info.stringCount - note.string + 1;
             fret = note.fret;
           } else {
-            const placed = assignFret(info.tuning, note.realValue);
+            // Fall back to a shared string only when every string that reaches the pitch is already used.
+            const placed = assignFret(info.tuning, note.realValue, used) ?? assignFret(info.tuning, note.realValue);
             if (!placed) continue;
             ({ string, fret } = placed);
+            used.add(string);
           }
           list.push(
             Object.freeze({
@@ -217,6 +235,7 @@ export function buildTimeline(score: alphaTab.model.Score): Timeline {
               playbackBar: playbackIndex,
               scoreBar: masterBar.index,
               techniques: techniquesOf(note),
+              stroke: strokeOf(beat),
             }),
           );
         }
