@@ -77,6 +77,16 @@ describe('renderTabStrip', () => {
     expect(labels).toContain('7');
   });
 
+  it('names the open strings in the gutter, top string first', () => {
+    const timeline = makeTimeline([{ start: 0.5, end: 1, string: 2, fret: 5 }]);
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, 0, W, H);
+    const names = calls
+      .filter((c) => c.name === 'fillText' && ['E', 'B', 'G', 'D', 'A'].includes(String(c.args[0])) && Number(c.args[1]) < 30)
+      .map((c) => c.args[0]);
+    expect(names).toEqual(['E', 'B', 'G', 'D', 'A', 'E']);
+  });
+
   it('renders the same calls twice for the same time', () => {
     const timeline = buildTimeline(loadAlphaTex(REPEAT_AND_TEMPO));
     const a = createRecordingContext();

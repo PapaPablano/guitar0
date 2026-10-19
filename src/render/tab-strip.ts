@@ -4,6 +4,7 @@ import type { Moment } from './moment';
 import { beatTicksFor, flagCount, isDotted, isTriplet, planBeams, TICKS_PER_QUARTER, type BeamPlan } from './tab-beams';
 import { labelBoxWidth, planMarks, type MarkPlacement } from './strip-marks';
 import { drawStripTechniques } from './strip-techniques';
+import { noteName, spellingForTuning } from './note-names';
 import { fretLabel } from './techniques';
 import { playbackBarIndexAt } from '../model/bars';
 import { DEFAULT_THEME, type HighwayTheme } from './theme';
@@ -19,9 +20,10 @@ export const MIN_BAR_WIDTH = 90;
 export const GUTTER_WIDTH = 96;
 export const FRET_FONT_MAX = 16;
 export const FRET_FONT_MIN = 11;
-/** X of the stacked TAB letters and of the time-signature digits inside the gutter. */
-const CLEF_X = 24;
-const SIGNATURE_X = 64;
+/** X of the open-string names, the stacked TAB letters and the time-signature digits inside the gutter. */
+const TUNING_X = 13;
+const CLEF_X = 40;
+const SIGNATURE_X = 70;
 
 /** Space before a bar's first note, so its fret number clears the bar line. */
 const LEAD_PAD = MIN_SLOT_WIDTH / 2 + 2;
@@ -372,7 +374,7 @@ export function renderTabStrip(
     drawBarNotes(ctx, bar, layout, theme, x, bottom);
   }
 
-  drawGutter(ctx, layout, timeline, options.moment?.playbackBar ?? playbackBarIndexAt(timeline, t), theme);
+  drawGutter(ctx, layout, timeline, trackIndex, options.moment?.playbackBar ?? playbackBarIndexAt(timeline, t), theme);
   ctx.restore();
 }
 
@@ -521,7 +523,7 @@ function beam(ctx: DrawContext, fromX: number, toX: number, y: number): void {
 }
 
 /** The fixed clef and time-signature area: an opaque panel that notes scroll under. */
-function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, playbackBar: number, theme: HighwayTheme): void {
+function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, trackIndex: number, playbackBar: number, theme: HighwayTheme): void {
   const bottom = staffBottom(layout);
   const middle = (layout.lineTop + bottom) / 2;
   ctx.fillStyle = STRIP_BACKGROUND;
@@ -537,6 +539,14 @@ function drawGutter(ctx: DrawContext, layout: StripLayout, timeline: Timeline, p
   ctx.fillText('T', CLEF_X, middle - step);
   ctx.fillText('A', CLEF_X, middle);
   ctx.fillText('B', CLEF_X, middle + step);
+
+  // open-string names beside their lines, top string first, as printed tab shows the tuning
+  const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
+  const spelling = spellingForTuning(tuning);
+  ctx.font = `600 ${Math.min(12, Math.max(9, Math.round(layout.lineGap * 0.8)))}px system-ui, sans-serif`;
+  tuning.forEach((open, i) => {
+    if (i < layout.stringCount) ctx.fillText(noteName(open, spelling), TUNING_X, layout.lineTop + i * layout.lineGap);
+  });
 
   const signature = timeline.bars[playbackBar]?.timeSignature;
   if (signature) {
