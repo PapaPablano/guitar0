@@ -28,9 +28,24 @@ export interface BeamPlan {
   readonly flagged: readonly number[];
 }
 
-/** Flags or beams a note of this length carries: none from a quarter up, one per halving below it. */
+/** Plain note values from a quarter down, then the scalings that give a dotted note and a triplet note. */
+const NOTE_VALUES = [TICKS_PER_QUARTER, TICKS_PER_QUARTER / 2, TICKS_PER_QUARTER / 4, TICKS_PER_QUARTER / 8, TICKS_PER_QUARTER / 16];
+const NOTE_SCALINGS = [1, 1.5, 2 / 3];
+/** How close a duration must be to a note value, as a share of it, to count as that value. */
+const VALUE_TOLERANCE = 0.02;
+
+/**
+ * Flags or beams a note of this length carries: none from a quarter up, one per halving below it. A dotted or triplet
+ * note carries the flags of the plain note it is made from, so an eighth triplet has one flag, not two.
+ */
 export function flagCount(durationTicks: number): number {
   if (durationTicks >= TICKS_PER_QUARTER) return 0;
+  for (let k = 0; k < NOTE_VALUES.length; k++) {
+    for (const scaling of NOTE_SCALINGS) {
+      const length = NOTE_VALUES[k] * scaling;
+      if (Math.abs(durationTicks - length) <= length * VALUE_TOLERANCE) return Math.min(MAX_FLAGS, k);
+    }
+  }
   const halvings = Math.round(Math.log2(TICKS_PER_QUARTER / Math.max(1, durationTicks)));
   return Math.min(MAX_FLAGS, Math.max(1, halvings));
 }

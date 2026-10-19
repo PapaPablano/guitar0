@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  barBeatXs,
   buildStripLayout,
   FRET_FONT_MIN,
   GUTTER_WIDTH,
@@ -155,7 +154,7 @@ describe('note-value spacing', () => {
   it('puts three inner beat ticks in a 4/4 bar, in order and inside the bar', () => {
     const timeline = makeTimeline(eighths(0, 8));
     const bar = buildStripLayout(timeline, 0, W, H).bars[0];
-    const xs = barBeatXs(bar);
+    const xs = bar.beatXs;
     expect(xs).toHaveLength(3);
     expect([...xs].sort((a, b) => a - b)).toEqual(xs);
     expect(xs[0]).toBeGreaterThan(0);
@@ -208,6 +207,33 @@ describe('cursor on uneven bars', () => {
     expect(scoreBarAtX(layout, timeline, t, second.x + second.width / 2 - scroll)).toBe(1);
     const early = stripScrollX(layout, timeline, 0.1);
     expect(scoreBarAtX(layout, timeline, 0.1, layout.bars[0].x + 1 - early)).toBe(0);
+  });
+});
+
+describe('bar line continuity and labels', () => {
+  it('keeps the cursor where it is across a bar line when the next bar opens on a note', () => {
+    const timeline = makeTimeline([...eighths(0, 8), ...eighths(2, 8)]);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    const before = playheadStripX(layout, timeline, 1.9999);
+    const after = playheadStripX(layout, timeline, 2);
+    expect(Math.abs(after - before)).toBeLessThan(1);
+  });
+
+  it('draws every bar number in the small label font, not the bold fret font left over from the bar before', () => {
+    const timeline = makeTimeline(eighths(0, 8));
+    const { ctx, calls } = createRecordingContext();
+    renderTabStrip(ctx, timeline, 0, 0, W, H);
+    const layout = buildStripLayout(timeline, 0, W, H);
+    let font = '';
+    let labels = 0;
+    for (const c of calls) {
+      if (c.name === 'set:font') font = String(c.args[0]);
+      if (c.name === 'fillText' && c.args[2] === layout.lineTop - 6) {
+        labels += 1;
+        expect(font).toBe('12px system-ui, sans-serif');
+      }
+    }
+    expect(labels).toBeGreaterThan(1);
   });
 });
 

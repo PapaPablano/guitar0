@@ -18,6 +18,14 @@ describe('flagCount', () => {
   it('rounds a dotted eighth to one flag', () => {
     expect(flagCount(720)).toBe(1);
   });
+
+  it('gives a dotted or triplet note the flags of the plain note it is made from', () => {
+    expect(flagCount(640)).toBe(0); // quarter triplet
+    expect(flagCount(320)).toBe(1); // eighth triplet
+    expect(flagCount(160)).toBe(2); // sixteenth triplet
+    expect(flagCount(360)).toBe(2); // dotted sixteenth
+    expect(flagCount(30)).toBe(3); // nothing shorter than three flags
+  });
 });
 
 describe('beatTicksFor', () => {
@@ -81,6 +89,30 @@ describe('planBeams', () => {
       [0, 1, 2],
       [3, 4, 5],
     ]);
+  });
+
+  it('stubs a lone sixteenth beside a dotted eighth, and breaks the second beam around a plain eighth', () => {
+    const stub = planBeams([on(0, 720), on(720, 240)], 0, FOUR_FOUR);
+    expect(stub.groups[0].segments).toEqual([{ level: 2, from: 1, to: 1 }]);
+    const split = planBeams([on(0, 240), on(240, 480), on(720, 240)], 0, FOUR_FOUR);
+    expect(split.groups[0].segments).toEqual([
+      { level: 2, from: 0, to: 0 },
+      { level: 2, from: 2, to: 2 },
+    ]);
+  });
+
+  it('adds a third beam over thirty-seconds', () => {
+    const plan = planBeams([on(0, 120), on(120, 120), on(240, 120), on(360, 120)], 0, FOUR_FOUR);
+    expect(plan.groups[0].segments).toEqual([
+      { level: 2, from: 0, to: 3 },
+      { level: 3, from: 0, to: 3 },
+    ]);
+  });
+
+  it('beams eighth triplets as eighths', () => {
+    const plan = planBeams([on(0, 320), on(320, 320), on(640, 320)], 0, FOUR_FOUR);
+    expect(plan.groups.map((g) => g.members)).toEqual([[0, 1, 2]]);
+    expect(plan.groups[0].segments).toEqual([]);
   });
 
   it('does not let a quarter note join the eighths around it', () => {

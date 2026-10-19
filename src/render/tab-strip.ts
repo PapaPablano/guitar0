@@ -145,11 +145,17 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
     notesByPlaybackBar.set(n.playbackBar, list);
   }
 
+  const spans = barSpans(timeline).map((span) => {
+    const barNotes = notesByPlaybackBar.get(span.playback.playbackIndex) ?? [];
+    return { ...span, barNotes, ...buildSlots(span.playback, barNotes) };
+  });
+
   const bars: StripBar[] = [];
   let x = 0;
-  for (const { scoreBar, playback, repeatStart, repeatEnd } of barSpans(timeline)) {
-    const barNotes = notesByPlaybackBar.get(playback.playbackIndex) ?? [];
-    const { slots, width: barWidth } = buildSlots(playback, barNotes);
+  spans.forEach(({ scoreBar, playback, repeatStart, repeatEnd, barNotes, slots, width: barWidth }, i) => {
+    // The next bar opens on a note a lead pad in from its bar line, so the cursor runs on to that note and does not jump at the line.
+    const next = spans[i + 1];
+    const endExtra = next && next.slots.length > 0 && next.slots[0].tick === next.playback.startTick ? LEAD_PAD : 0;
     bars.push({
       scoreBar,
       x,
@@ -159,12 +165,12 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
       repeatEnd,
       notes: barNotes,
       slots,
-      secondsAnchors: barAnchors(playback, slots, barWidth, 'seconds'),
+      secondsAnchors: barAnchors(playback, slots, barWidth, 'seconds', endExtra),
       beatXs: beatXsFor(playback, barAnchors(playback, slots, barWidth, 'tick')),
       beams: planBeams(slots, playback.startTick, playback.timeSignature),
     });
     x += barWidth;
-  }
+  });
 
   return {
     bars,
@@ -198,10 +204,10 @@ function interpolate(anchors: readonly Anchor[], key: number): number {
 }
 
 /** The bar's start, each note's slot and the bar's end, keyed by seconds or by ticks. */
-function barAnchors(playback: BarEvent, slots: readonly StripSlot[], width: number, key: 'seconds' | 'tick'): Anchor[] {
+function barAnchors(playback: BarEvent, slots: readonly StripSlot[], width: number, key: 'seconds' | 'tick', endExtra = 0): Anchor[] {
   const start = key === 'seconds' ? playback.startSeconds : playback.startTick;
   const end = key === 'seconds' ? playback.endSeconds : playback.endTick;
-  return [{ key: start, x: 0 }, ...slots.map((s) => ({ key: s[key], x: s.offset })), { key: end, x: width }];
+  return [{ key: start, x: 0 }, ...slots.map((s) => ({ key: s[key], x: s.offset })), { key: end, x: width + endExtra }];
 }
 
 function beatXsFor(playback: BarEvent, tickAnchors: readonly Anchor[]): number[] {
@@ -211,11 +217,6 @@ function beatXsFor(playback: BarEvent, tickAnchors: readonly Anchor[]): number[]
     xs.push(interpolate(tickAnchors, tick));
   }
   return xs;
-}
-
-/** X of each inner beat line within the bar, left to right; the bar line itself is not one. */
-export function barBeatXs(bar: StripBar): readonly number[] {
-  return bar.beatXs;
 }
 
 /** X of the playhead in strip space. Across a repeat this jumps back to the repeated bar. */
@@ -307,7 +308,6 @@ export function renderTabStrip(
   ctx.lineTo(layout.cursorX, bottom + 30);
   ctx.stroke();
 
-  ctx.font = '12px system-ui, sans-serif';
   for (const bar of visible) {
     const x = bar.x - scroll;
     ctx.strokeStyle = bar.repeatStart ? theme.strikeline : theme.laneLine;
@@ -325,6 +325,7 @@ export function renderTabStrip(
       ctx.stroke();
     }
     ctx.fillStyle = theme.barLabel;
+    ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     ctx.fillText(String(bar.scoreBar + 1), x + 4, layout.lineTop - 6);
@@ -365,7 +366,7 @@ function drawBarNotes(
   layout: StripLayout,
   theme: HighwayTheme,
   barX: number,
-  staffBottom: number,
+  bottom: number,
 ): void {
   const fontSize = fretFontSize(layout.lineGap);
   const fretFont = `bold ${fontSize}px system-ui, sans-serif`;
@@ -392,7 +393,7 @@ function drawBarNotes(
       }
     }
   }
-  drawRhythm(ctx, bar, layout, theme, barX, staffBottom);
+  drawRhythm(ctx, bar, layout, theme, barX, bottom);
 }
 
 /** Stems under the staff, joined by beams per beat; a lone short note keeps its flags. */
@@ -402,10 +403,10 @@ function drawRhythm(
   layout: StripLayout,
   theme: HighwayTheme,
   barX: number,
-  staffBottom: number,
+  bottom: number,
 ): void {
-  const stemTop = staffBottom + 8;
-  const stemLength = Math.min(22, Math.max(8, layout.height - staffBottom - 14));
+  const stemTop = bottom + 8;
+  const stemLength = Math.min(22, Math.max(8, layout.height - bottom - 14));
   const stemBottom = stemTop + stemLength;
   const plan = bar.beams;
   const xOf = (i: number) => barX + bar.slots[i].offset;
