@@ -1,4 +1,5 @@
 import type { NoteEvent } from '../model/score';
+import { isSounding } from './sounding';
 
 // Pure geometry for the highway. Strings run horizontally, notes travel right to left and
 // reach the strikeline at the moment they sound.
@@ -56,7 +57,7 @@ export function laneY(layout: HighwayLayout, string: number): number {
 
 /** True while the note is sounding at playhead time `t`. */
 export function isActive(note: NoteEvent, t: number): boolean {
-  return note.startSeconds <= t && t < note.endSeconds;
+  return isSounding(note, t);
 }
 
 /** X of a note's head: pinned to the strikeline while it sounds, scrolling otherwise. */

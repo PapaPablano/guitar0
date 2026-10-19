@@ -135,19 +135,59 @@ describe('bend, vibrato and palm mute', () => {
   });
 });
 
+describe('technique finishes through a gap', () => {
+  it('covers AE4: a slide comet keeps drawing, fading, for 0.2 s after its note ends, with nothing playing', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 3, fret: 7, techniques: { slide: 'out-up' } },
+      { start: 4, end: 5, string: 3, fret: 5 },
+    ]);
+    const at = (t: number) => cuesAt(notes, t).comets;
+    expect(at(1.5)).toHaveLength(1);
+    expect(at(2.1)).toHaveLength(1);
+    expect(at(2.1)[0].strength).toBeGreaterThan(0);
+    expect(at(2.1)[0].strength).toBeLessThan(at(2)[0].strength);
+    expect(at(2.3)).toHaveLength(0);
+  });
+
+  it('a bend ends with its note and does not linger', () => {
+    const notes = notesOf([{ start: 1, end: 2, string: 3, fret: 7, techniques: { bend: 2 } }]);
+    expect(cuesAt(notes, 1.9).bends).toHaveLength(1);
+    expect(cuesAt(notes, 2).bends).toHaveLength(0);
+    expect(cuesAt(notes, 2.1).bends).toHaveLength(0);
+  });
+
+  it('gives a note held under a later step its cues while it sounds', () => {
+    const notes = notesOf([
+      { start: 0, end: 5, string: 3, fret: 7, techniques: { vibrato: true } },
+      { start: 1, end: 1.5, string: 2, fret: 5 },
+    ]);
+    // the short step has ended, so nothing is playing, but the held note is still shivering
+    expect(cuesAt(notes, 2).effects.get(notes[0].id)?.shiver).toBe(1);
+  });
+});
+
 describe('the pulse', () => {
   it('covers AE5: leaves the playing ring when its note starts and arrives on the next ring when the next note starts', () => {
     const notes = notesOf([
       { start: 1, end: 2, string: 2, fret: 3 },
-      { start: 3, end: 4, string: 4, fret: 7 },
+      { start: 2, end: 3, string: 4, fret: 7 },
     ]);
     const pulse = (t: number) => cuesAt(notes, t).pulse;
     expect(pulse(1)?.progress).toBeCloseTo(0, 9);
-    expect(pulse(2)?.progress).toBeCloseTo(0.5, 9);
-    expect(pulse(2.999)?.progress).toBeGreaterThan(0.99);
-    expect(pulse(2)?.from.fret).toBe(3);
-    expect(pulse(2)?.to.fret).toBe(7);
-    expect(pulse(1.5)!.progress).toBeLessThan(pulse(2.5)!.progress);
+    expect(pulse(1.5)?.progress).toBeCloseTo(0.5, 9);
+    expect(pulse(1.999)?.progress).toBeGreaterThan(0.99);
+    expect(pulse(1.5)?.from.fret).toBe(3);
+    expect(pulse(1.5)?.to.fret).toBe(7);
+    expect(pulse(1.2)!.progress).toBeLessThan(pulse(1.8)!.progress);
+  });
+
+  it('covers AE2: has none mid-rest, because nothing is playing then', () => {
+    const notes = notesOf([
+      { start: 1, end: 2, string: 2, fret: 3 },
+      { start: 3, end: 4, string: 4, fret: 7 },
+    ]);
+    expect(cuesAt(notes, 1.5).pulse).not.toBeNull();
+    expect(cuesAt(notes, 2.5).pulse).toBeNull();
   });
 
   it('has none when the next note is at the same position', () => {

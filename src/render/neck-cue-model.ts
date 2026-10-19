@@ -1,6 +1,8 @@
 import type { NoteEvent } from '../model/score';
 import { DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
+import { notesActiveWithin, type Moment } from './moment';
 import { pluckAt, type PickPlan } from './pick-cues';
+import { isSounding } from './sounding';
 
 /** A bend of this many semitones or more deflects the string as far as it goes. */
 export const FULL_BEND_SEMITONES = 2;
@@ -132,7 +134,7 @@ function anchorOf(step: Step): NoteEvent {
 
 function effectOf(note: NoteEvent, t: number): NoteEffect | null {
   const tech = note.techniques;
-  const sounding = t >= note.startSeconds && t <= note.endSeconds;
+  const sounding = isSounding(note, t);
   const length = Math.max(1e-6, note.endSeconds - note.startSeconds);
   const bend = tech.bend > 0 && sounding ? clamp01(tech.bend / FULL_BEND_SEMITONES) * smooth((t - note.startSeconds) / (length * BEND_EASE_SHARE)) : 0;
   const shiver = tech.vibrato && sounding ? 1 : 0;
@@ -166,12 +168,16 @@ function cometsOf(notes: readonly NoteEvent[], note: NoteEvent, t: number): Come
 }
 
 /**
- * The technique cues to draw on the neck at time `t`, for the notes in the window the neck view shows (the playing step, the
- * trail behind it and the steps ahead). A pure function of its arguments: the same notes and time give the same cues.
+ * The technique cues to draw on the neck at time `t`, for the notes in the window the neck view shows: the playing step, the
+ * trail behind it and the steps ahead, plus every sounding note and every note that ended within the comet linger, so a slide
+ * comet finishes through a gap. A pure function of its arguments: the same notes and time give the same cues. A frame's
+ * shared `moment` supplies the steps when given.
  */
-export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number = DEFAULT_LOOKAHEAD, stringCount = 6, plan?: PickPlan): NeckCues {
-  const steps = stepsAt(notes, t, lookahead);
-  const window = [...steps.trail, ...(steps.playing ? [steps.playing] : []), ...steps.upcoming].flatMap((s) => s.notes);
+export function cuesAt(notes: readonly NoteEvent[], t: number, lookahead: number = DEFAULT_LOOKAHEAD, stringCount = 6, plan?: PickPlan, moment?: Moment): NeckCues {
+  const steps = moment ?? stepsAt(notes, t, lookahead);
+  const fromSteps = [...steps.trail, ...(steps.playing ? [steps.playing] : []), ...steps.upcoming].flatMap((s) => s.notes);
+  const seen = new Set(fromSteps.map((n) => n.id));
+  const window = [...fromSteps, ...notesActiveWithin(notes, t, COMET_LINGER_SECONDS).filter((n) => !seen.has(n.id))];
   if (window.length === 0) return NONE;
 
   const arcs: ArcCue[] = [];

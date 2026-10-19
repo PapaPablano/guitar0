@@ -39,8 +39,11 @@ describe('stepsAt', () => {
     expect(at.trail.map((s) => s.notes[0].fret)).toEqual([5, 3]);
   });
 
-  it('keeps the playing step until the next one starts, through a rest', () => {
-    expect(stepsAt(line, 2.9, 1).playing?.notes[0].fret).toBe(7);
+  it('has nothing playing through a rest, and the next step is upcoming', () => {
+    const rest = stepsAt(line, 2.9, 1);
+    expect(rest.playing).toBeNull();
+    expect(rest.trail).toEqual([]);
+    expect(rest.upcoming.map((s) => s.notes[0].fret)).toEqual([9]);
     expect(stepsAt(line, 3, 1).playing?.notes[0].fret).toBe(9);
   });
 
@@ -60,11 +63,17 @@ describe('stepsAt', () => {
     expect(at.trail).toEqual([]);
   });
 
-  it('has no upcoming steps after the last note, and the trail still shows earlier notes', () => {
+  it('has no upcoming steps after the last note, and nothing playing or trailing once it has ended', () => {
     const at = stepsAt(line, 9, 4);
-    expect(at.playing?.notes[0].fret).toBe(0);
+    expect(at.playing).toBeNull();
     expect(at.upcoming).toEqual([]);
-    expect(at.trail).toHaveLength(TRAIL_STEPS);
+    expect(at.trail).toEqual([]);
+  });
+
+  it('shows the trail only while a step is playing', () => {
+    const during = stepsAt(line, 5.2, 4);
+    expect(during.playing?.notes[0].fret).toBe(0);
+    expect(during.trail).toHaveLength(TRAIL_STEPS);
   });
 
   it('treats a newer step as playing while an earlier note still sustains', () => {

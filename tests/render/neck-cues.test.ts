@@ -159,8 +159,8 @@ describe('the pulse', () => {
     const place = photoPlacement(W, H);
     const a = photoToScreen(place, photoNoteX(5), photoStringY(3, 6, photoNoteX(5)));
     const b = photoToScreen(place, photoNoteX(12), photoStringY(3, 6, photoNoteX(12)));
-    const early = extra(1.5);
-    const late = extra(2.7);
+    const early = extra(1.2);
+    const late = extra(1.8);
     expect(early.length).toBeGreaterThan(0);
     const headEarly = early[early.length - 2];
     const headLate = late[late.length - 2];
@@ -183,8 +183,8 @@ describe('the pulse', () => {
     const place = photoPlacement(w, h);
     const a = photoToScreen(place, photoNoteX(5), photoStringY(3, 6, photoNoteX(5)));
     const b = photoToScreen(place, photoNoteX(12), photoStringY(3, 6, photoNoteX(12)));
-    const on = arcs(draw(specs, 2.4, true, w, h));
-    const off = arcs(draw(specs, 2.4, false, w, h));
+    const on = arcs(draw(specs, 1.6, true, w, h));
+    const off = arcs(draw(specs, 1.6, false, w, h));
     const dot = on.filter((p) => !off.some((o) => o.x === p.x && o.y === p.y && o.r === p.r))[0];
     const cross = (b.x - a.x) * (dot.y - a.y) - (b.y - a.y) * (dot.x - a.x);
     expect(Math.abs(cross) / Math.hypot(b.x - a.x, b.y - a.y)).toBeLessThan(1e-6);
@@ -309,7 +309,11 @@ describe('the ring as the finger', () => {
     const down = ring(draw(note, t + 1 / 14, true)).y;
     expect(up).not.toBeCloseTo(down, 3);
     expect(Math.abs(up - rest(3, 7).y)).toBeGreaterThan(0.5);
-    expect(ring(draw(note, 3.3, true)).y).toBeCloseTo(rest(3, 7).y, 6);
+    // the note goes dark at its end, so no ring is drawn for it and the vibrato is over
+    const notes = makeTimeline(note).notesForTrack(0);
+    expect(cuesAt(notes, 2.9).effects.size).toBe(1);
+    expect(cuesAt(notes, 3.05).effects.size).toBe(0);
+    expect(arcs(draw(note, 3.3, true))).toEqual(arcs(draw(note, 3.3, false)));
   });
 
   it('covers AE4: carries the ring along a slide', () => {

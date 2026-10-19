@@ -1,6 +1,6 @@
 import type { DrawContext } from './draw-context';
 import { NECK_PROFILE, type NeckProfile } from './neck-profile';
-import { DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
+import { momentAt, type Moment } from './moment';
 import { emphasisAt } from './emphasis';
 import { BEND_REACH, bendSide, cuesAt, SHIVER_HERTZ, SHIVER_REACH, type FingerPose, type NeckCues, type NoteEffect } from './neck-cue-model';
 import { drawNeckCues, type NeckSpace } from './neck-cues';
@@ -361,6 +361,8 @@ export interface NeckViewOptions {
   readonly zoom?: boolean;
   /** The photo's profile; the Real guitar view's when absent. */
   readonly profile?: NeckProfile;
+  /** The frame's shared moment; built from the timeline, time and `lookahead` when absent. */
+  readonly moment?: Moment;
 }
 
 /** Strength of the ring and string of a note a hammer-on or pull-off ends on, which is not picked. */
@@ -390,14 +392,15 @@ export function renderNeckView(
   const theme = options.theme ?? DEFAULT_THEME;
   const notes = timeline.notesForTrack(trackIndex);
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
-  const steps = stepsAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD);
+  const moment = options.moment ?? momentAt(timeline, trackIndex, t, { lookahead: options.lookahead });
+  const steps = moment;
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, capo: timeline.tracks[trackIndex]?.capo ?? 0, spelling: spellingForTuning(tuning) };
   const profile = options.profile ?? NECK_PROFILE;
   const place = options.zoom ? zoomedPlacement(width, height, notes, t, stringCount, profile) : photoPlacement(width, height, undefined, profile);
   const pickX = options.techniqueCues ? profile.pickX : undefined;
   const pick = pickX !== undefined ? pickPlan(notes, timeline.bars) : null;
-  const cues = options.techniqueCues ? cuesAt(notes, t, options.lookahead ?? DEFAULT_LOOKAHEAD, stringCount, pick ?? undefined) : null;
+  const cues = options.techniqueCues ? cuesAt(notes, t, moment.lookahead, stringCount, pick ?? undefined, moment) : null;
   const poseOf = (note: NoteEvent) => cues?.poses.get(note.id);
   /** A note a hammer-on or pull-off ends on: a softer ring, with no pop. */
   const unpicked = (note: NoteEvent) => cues?.unpicked.has(note.id) ?? false;
@@ -406,7 +409,7 @@ export function renderNeckView(
   ctx.save();
   drawDigitalNeck(ctx, place, stringCount);
 
-  drawLitStrings(ctx, place, stringCount, steps.playing, steps.upcoming, theme, t, cues, pickX ?? profile.endX);
+  drawLitStrings(ctx, place, stringCount, moment.soundingNotes, steps.upcoming, theme, t, cues, pickX ?? profile.endX);
   steps.trail.forEach((step, i) => {
     for (const note of step.notes) {
       drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
@@ -419,20 +422,18 @@ export function renderNeckView(
       drawRing(ctx, place, stringCount, note, 0.8 * grow, (0.9 - i * 0.1) * (soft ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
     }
   });
-  if (steps.playing) {
-    for (const note of steps.playing.notes) {
-      const e = emphasisAt(note.startSeconds, note.endSeconds, t);
-      if (unpicked(note)) {
-        drawRing(ctx, place, stringCount, note, 1.1, UNPICKED_STRENGTH, theme, naming, false, ringWidth(note), poseOf(note));
-        continue;
-      }
-      if (e.sounding) drawHalo(ctx, place, stringCount, note, e.scale, e.pop, theme, poseOf(note));
-      drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true, ringWidth(note), poseOf(note));
+  for (const note of moment.soundingNotes) {
+    const e = emphasisAt(note.startSeconds, note.endSeconds, t);
+    if (unpicked(note)) {
+      drawRing(ctx, place, stringCount, note, 1.1, UNPICKED_STRENGTH, theme, naming, false, ringWidth(note), poseOf(note));
+      continue;
     }
+    drawHalo(ctx, place, stringCount, note, e.scale, e.pop, theme, poseOf(note));
+    drawRing(ctx, place, stringCount, note, e.scale, 1, theme, naming, true, ringWidth(note), poseOf(note));
   }
   if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, width, height, cues.poses), cues, theme);
   if (pick) drawPick(ctx, place, stringCount, pickAt(pick, t), theme);
-  drawOpenAndMuted(ctx, width, stringCount, steps.playing, steps.upcoming[0], t, theme);
+  drawOpenAndMuted(ctx, width, stringCount, moment.soundingNotes, steps.upcoming[0], theme);
   ctx.restore();
 }
 
@@ -440,7 +441,7 @@ export function renderNeckView(
  * Open strings (an O) and muted strings (an X) are shown as symbols in a row along the top of the screen, one slot per string,
  * rather than by moving the camera to the nut or off to a muted fret. A note sounding now is bright; the next step's are faint.
  */
-function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, playing: Step | null, next: Step | undefined, t: number, theme: HighwayTheme): void {
+function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, sounding: readonly NoteEvent[], next: { readonly notes: readonly NoteEvent[] } | undefined, theme: HighwayTheme): void {
   const slot = Math.min(width / (stringCount + 1), 72);
   const size = Math.max(12, Math.round(slot * 0.5));
   const left = width / 2 - (slot * (stringCount - 1)) / 2;
@@ -457,7 +458,7 @@ function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const note of next?.notes ?? []) mark(note, 0.4);
-  for (const note of playing?.notes ?? []) mark(note, emphasisAt(note.startSeconds, note.endSeconds, t).sounding ? 1 : 0.55);
+  for (const note of sounding) mark(note, 1);
   ctx.restore();
 }
 
@@ -590,8 +591,8 @@ function drawLitStrings(
   ctx: DrawContext,
   place: PhotoPlacement,
   stringCount: number,
-  playing: Step | null,
-  upcoming: readonly Step[],
+  sounding: readonly NoteEvent[],
+  upcoming: readonly { readonly notes: readonly NoteEvent[] }[],
   theme: HighwayTheme,
   t: number,
   cues: NeckCues | null,
@@ -623,9 +624,7 @@ function drawLitStrings(
   upcoming.forEach((step, i) => {
     for (const note of step.notes) light(note, Math.max(0, 0.3 - i * 0.07));
   });
-  if (playing) {
-    for (const note of playing.notes) light(note, emphasisAt(note.startSeconds, note.endSeconds, t).sounding ? 1 : 0.5);
-  }
+  for (const note of sounding) light(note, 1);
 }
 
 /** A lit string drawn at half strength for a palm-muted note. */
