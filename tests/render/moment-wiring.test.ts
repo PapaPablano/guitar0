@@ -97,12 +97,27 @@ describe('the tab strip and bar timeline take the loop from the moment', () => {
 });
 
 describe('across a repeat', () => {
-  it('covers AE5: just after the jump back the moment is in the repeated bar, and the strip shows that bar signature', () => {
+  it('covers AE5: just after the jump back the moment is in the repeated bar', () => {
     const timeline = buildTimeline(loadAlphaTex(REPEAT_AND_TEMPO));
-    const moment = momentAt(timeline, 0, 6.01);
-    expect(timeline.bars[moment.playbackBar].scoreBar).toBe(0);
-    const { ctx } = createRecordingContext();
-    expect(() => renderTabStrip(ctx, timeline, 0, 6.01, W, 200, { moment })).not.toThrow();
+    const before = momentAt(timeline, 0, 5.99);
+    const after = momentAt(timeline, 0, 6.01);
+    expect(timeline.bars[before.playbackBar].scoreBar).toBe(2);
+    expect(timeline.bars[after.playbackBar].scoreBar).toBe(0);
+  });
+
+  it('draws the strip time signature from the moment bar, not from the time', () => {
+    // bars 2 and 3 are 7/8, the first two 4/4; no bar number on this score reads 7 or 8
+    const base = makeTimeline([], 2, 4);
+    const timeline = { ...base, bars: base.bars.map((b) => (b.playbackIndex >= 2 ? { ...b, timeSignature: { numerator: 7, denominator: 8 } } : b)) };
+    const digits = (moment: ReturnType<typeof momentAt>) => {
+      const { ctx, calls } = createRecordingContext();
+      renderTabStrip(ctx, timeline, 0, 1, W, 200, { moment });
+      return calls.filter((c) => c.name === 'fillText').map((c) => String(c.args[0]));
+    };
+    const early = momentAt(timeline, 0, 1);
+    expect(digits(early)).not.toContain('7');
+    // the same time, but a moment in a 7/8 bar: the signature follows the moment
+    expect(digits({ ...early, playbackBar: 2 })).toEqual(expect.arrayContaining(['7', '8']));
   });
 });
 

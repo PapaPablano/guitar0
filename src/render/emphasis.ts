@@ -16,13 +16,11 @@ const POP_GROWTH = 0.3;
 export interface Emphasis {
   /** Size multiplier: 1 when the note is far off or done. */
   readonly scale: number;
-  /** True from the note's start until it ends: the shared sounding rule, with no minimum hold. */
-  readonly sounding: boolean;
   /** 1 at the instant the note starts, decaying to 0; drives the glow. */
   readonly pop: number;
 }
 
-const IDLE: Emphasis = { scale: 1, sounding: false, pop: 0 };
+const IDLE: Emphasis = { scale: 1, pop: 0 };
 
 /**
  * Eases up over the last half second before the note, jumps at its start, settles while it
@@ -32,10 +30,10 @@ export function emphasisAt(startSeconds: number, endSeconds: number, t: number):
   const until = startSeconds - t;
   if (until > 0) {
     if (until >= APPROACH_SECONDS) return IDLE;
-    return { scale: 1 + APPROACH_GROWTH * (1 - until / APPROACH_SECONDS), sounding: false, pop: 0 };
+    return { scale: 1 + APPROACH_GROWTH * (1 - until / APPROACH_SECONDS), pop: 0 };
   }
   const since = -until;
   if (!isSounding({ startSeconds, endSeconds }, t)) return IDLE;
   const pop = Math.exp(-since / POP_SECONDS);
-  return { scale: 1 + SOUNDING_GROWTH + POP_GROWTH * pop, sounding: true, pop };
+  return { scale: 1 + SOUNDING_GROWTH + POP_GROWTH * pop, pop };
 }
