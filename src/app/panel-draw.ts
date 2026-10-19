@@ -33,6 +33,11 @@ export function frameMoment(s: Omit<PanelDrawState, 'moment'>): Moment {
   return momentAt(s.timeline, s.trackIndex, s.t, { lookahead: s.lookahead, loop: s.loop });
 }
 
+/** A frame's draw state with its moment built once, for the loops that draw every surface of a frame. */
+export function withMoment(s: Omit<PanelDrawState, 'moment'>): PanelDrawState {
+  return { ...s, moment: frameMoment(s) };
+}
+
 export const SURFACE_NAMES: Record<SurfaceKind, string> = { ...PANEL_NAMES, bar: 'Bar timeline' };
 
 /** Draws one surface into its canvas, sized to its box. The page and the full-screen view both draw through this. */

@@ -1,6 +1,7 @@
 import { playbackBarIndexAt } from '../model/bars';
 import type { NoteEvent, Timeline } from '../model/score';
 import { clampLookahead, DEFAULT_LOOKAHEAD, stepsAt, type Step } from './fretboard-steps';
+import { visibleNotes } from './note-window';
 import type { LoopBars } from './tab-strip';
 
 export { isSounding } from './sounding';
@@ -36,47 +37,12 @@ export interface MomentOptions {
   readonly loop?: LoopBars | null;
 }
 
-/** The longest note of each track, so the sounding scan knows how far back a held note can start. */
-const longestNote = new WeakMap<readonly NoteEvent[], number>();
-
-function longestOf(notes: readonly NoteEvent[]): number {
-  let longest = longestNote.get(notes);
-  if (longest === undefined) {
-    longest = 0;
-    for (const n of notes) longest = Math.max(longest, n.endSeconds - n.startSeconds);
-    longestNote.set(notes, longest);
-  }
-  return longest;
-}
-
-/** Index of the last note starting at or before `t`, or -1. Notes come ordered by start. */
-function lastStartedNote(notes: readonly NoteEvent[], t: number): number {
-  let lo = 0;
-  let hi = notes.length - 1;
-  let found = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (notes[mid].startSeconds <= t) {
-      found = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return found;
-}
-
 /**
  * The notes that started at or before `t` and have not ended more than `graceSeconds` ago: the sounding notes for a
  * grace of 0, and those plus the ones that just ended for a longer one (the neck's slide comets use 0.2 s).
  */
 export function notesActiveWithin(notes: readonly NoteEvent[], t: number, graceSeconds: number): NoteEvent[] {
-  const found: NoteEvent[] = [];
-  const earliest = t - longestOf(notes) - graceSeconds;
-  for (let i = lastStartedNote(notes, t); i >= 0 && notes[i].startSeconds >= earliest; i--) {
-    if (t < notes[i].endSeconds + graceSeconds) found.push(notes[i]);
-  }
-  return found.reverse();
+  return visibleNotes(notes, t - graceSeconds, t).filter((n) => t < n.endSeconds + graceSeconds);
 }
 
 /** The moment at playback time `t` for one track. A pure function of the timeline, the track and the time. */

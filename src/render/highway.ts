@@ -2,10 +2,13 @@ import type { DrawContext } from './draw-context';
 import { emphasisAt } from './emphasis';
 import { computeLayout, laneY, noteX, timeToX, type HighwayLayout } from './layout';
 import { momentAt, type Moment } from './moment';
+import { visibleNotes } from './note-window';
 import { noteName, spellingForTuning } from './note-names';
 import { drawTechniques, fretLabel } from './techniques';
 import { DEFAULT_THEME, stringColor, stringShade, type HighwayTheme } from './theme';
 import type { NoteEvent, Timeline } from '../model/score';
+
+export { visibleNotes } from './note-window';
 
 /** How long the ring at the strikeline expands after a note is struck. */
 export const HIT_EFFECT_SECONDS = 0.25;
@@ -15,45 +18,6 @@ export interface HighwayOptions {
   readonly lookaheadSeconds?: number;
   /** The frame's shared moment; built from the timeline and time when absent. */
   readonly moment?: Moment;
-}
-
-const maxDurationCache = new WeakMap<readonly NoteEvent[], number>();
-
-function maxDuration(notes: readonly NoteEvent[]): number {
-  let cached = maxDurationCache.get(notes);
-  if (cached === undefined) {
-    cached = 0;
-    for (const n of notes) cached = Math.max(cached, n.endSeconds - n.startSeconds);
-    maxDurationCache.set(notes, cached);
-  }
-  return cached;
-}
-
-/** First index whose start is at or after `time`; notes are sorted by start. */
-function lowerBound(notes: readonly NoteEvent[], time: number): number {
-  let lo = 0;
-  let hi = notes.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (notes[mid].startSeconds < time) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
-/** Notes whose body overlaps the visible time window. */
-export function visibleNotes(
-  notes: readonly NoteEvent[],
-  from: number,
-  to: number,
-): NoteEvent[] {
-  const out: NoteEvent[] = [];
-  for (let i = lowerBound(notes, from - maxDuration(notes)); i < notes.length; i++) {
-    const n = notes[i];
-    if (n.startSeconds > to) break;
-    if (n.endSeconds >= from) out.push(n);
-  }
-  return out;
 }
 
 /** Box of a note gem; `x` and `y` are its top-left corner. */

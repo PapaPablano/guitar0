@@ -122,7 +122,6 @@ export function renderFretboard(
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
   const neck = computeNeck(width, height, stringCount, maxFretUsed(notes));
   const moment = options.moment ?? momentAt(timeline, trackIndex, t, { lookahead: options.lookahead });
-  const steps = moment;
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = {
     mode: options.labelMode ?? DEFAULT_LABEL_MODE,
@@ -135,15 +134,15 @@ export function renderFretboard(
   ctx.globalAlpha = 1;
   drawBackdrop(ctx, width, height);
   drawNeck(ctx, neck, theme, naming);
-  drawLitStrings(ctx, neck, moment.soundingNotes, steps.upcoming, theme);
+  drawLitStrings(ctx, neck, moment.soundingNotes, moment.upcoming, theme);
 
-  steps.trail.forEach((step, i) => {
+  moment.trail.forEach((step, i) => {
     for (const note of step.notes) drawDot(ctx, neck, note, neck.dotRadius * 0.8, theme, 0.35 - i * 0.1, 'solid', naming);
   });
 
-  drawPath(ctx, neck, steps.playing, steps.upcoming, theme);
+  drawPath(ctx, neck, moment.playing, moment.upcoming, theme);
 
-  steps.upcoming.forEach((step, i) => {
+  moment.upcoming.forEach((step, i) => {
     for (const note of step.notes) {
       const onPlaying = moment.soundingNotes.some((p) => p.string === note.string && p.fret === note.fret);
       if (onPlaying) drawRing(ctx, neck, note, theme, 0.9 - i * 0.1);

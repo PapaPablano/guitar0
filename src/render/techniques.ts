@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
-import { isActive, laneY, noteX, timeToX, type HighwayLayout } from './layout';
+import { laneY, noteX, timeToX, type HighwayLayout } from './layout';
+import { isSounding } from './sounding';
 import { stringColor, type HighwayTheme } from './theme';
 import type { NoteEvent } from '../model/score';
 
@@ -53,7 +54,7 @@ export function drawTechniques(
   for (let i = 0; i < visible.length; i++) {
     const note = visible[i];
     const tech = note.techniques;
-    const active = isActive(note, t);
+    const active = isSounding(note, t);
     const x = noteX(layout, note, t);
     const y = laneY(layout, note.string);
     const r = layout.noteRadius;

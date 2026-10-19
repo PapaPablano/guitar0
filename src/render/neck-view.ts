@@ -1,5 +1,6 @@
 import type { DrawContext } from './draw-context';
 import { NECK_PROFILE, type NeckProfile } from './neck-profile';
+import { type Step } from './fretboard-steps';
 import { momentAt, type Moment } from './moment';
 import { emphasisAt } from './emphasis';
 import { BEND_REACH, bendSide, cuesAt, SHIVER_HERTZ, SHIVER_REACH, type FingerPose, type NeckCues, type NoteEffect } from './neck-cue-model';
@@ -393,7 +394,6 @@ export function renderNeckView(
   const notes = timeline.notesForTrack(trackIndex);
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
   const moment = options.moment ?? momentAt(timeline, trackIndex, t, { lookahead: options.lookahead });
-  const steps = moment;
   const tuning = timeline.tracks[trackIndex]?.tuning ?? [];
   const naming: Naming = { mode: options.labelMode ?? DEFAULT_LABEL_MODE, tuning, capo: timeline.tracks[trackIndex]?.capo ?? 0, spelling: spellingForTuning(tuning) };
   const profile = options.profile ?? NECK_PROFILE;
@@ -409,13 +409,13 @@ export function renderNeckView(
   ctx.save();
   drawDigitalNeck(ctx, place, stringCount);
 
-  drawLitStrings(ctx, place, stringCount, moment.soundingNotes, steps.upcoming, theme, t, cues, pickX ?? profile.endX);
-  steps.trail.forEach((step, i) => {
+  drawLitStrings(ctx, place, stringCount, moment.soundingNotes, moment.upcoming, theme, t, cues, pickX ?? profile.endX);
+  moment.trail.forEach((step, i) => {
     for (const note of step.notes) {
       drawRing(ctx, place, stringCount, note, 0.85, (0.3 - i * 0.08) * (unpicked(note) ? UNPICKED_STRENGTH : 1), theme, naming, false, ringWidth(note), poseOf(note));
     }
   });
-  steps.upcoming.forEach((step, i) => {
+  moment.upcoming.forEach((step, i) => {
     for (const note of step.notes) {
       const soft = unpicked(note);
       const grow = soft ? 1 : emphasisAt(note.startSeconds, note.endSeconds, t).scale;
@@ -433,7 +433,7 @@ export function renderNeckView(
   }
   if (cues) drawNeckCues(ctx, neckSpace(place, stringCount, width, height, cues.poses), cues, theme);
   if (pick) drawPick(ctx, place, stringCount, pickAt(pick, t), theme);
-  drawOpenAndMuted(ctx, width, stringCount, moment.soundingNotes, steps.upcoming[0], theme);
+  drawOpenAndMuted(ctx, width, stringCount, moment.soundingNotes, moment.upcoming[0], theme);
   ctx.restore();
 }
 
@@ -441,7 +441,7 @@ export function renderNeckView(
  * Open strings (an O) and muted strings (an X) are shown as symbols in a row along the top of the screen, one slot per string,
  * rather than by moving the camera to the nut or off to a muted fret. A note sounding now is bright; the next step's are faint.
  */
-function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, sounding: readonly NoteEvent[], next: { readonly notes: readonly NoteEvent[] } | undefined, theme: HighwayTheme): void {
+function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, sounding: readonly NoteEvent[], next: Step | undefined, theme: HighwayTheme): void {
   const slot = Math.min(width / (stringCount + 1), 72);
   const size = Math.max(12, Math.round(slot * 0.5));
   const left = width / 2 - (slot * (stringCount - 1)) / 2;
@@ -592,7 +592,7 @@ function drawLitStrings(
   place: PhotoPlacement,
   stringCount: number,
   sounding: readonly NoteEvent[],
-  upcoming: readonly { readonly notes: readonly NoteEvent[] }[],
+  upcoming: readonly Step[],
   theme: HighwayTheme,
   t: number,
   cues: NeckCues | null,

@@ -55,14 +55,9 @@ export function laneY(layout: HighwayLayout, string: number): number {
   return layout.laneTop + (string - 0.5) * layout.laneHeight;
 }
 
-/** True while the note is sounding at playhead time `t`. */
-export function isActive(note: NoteEvent, t: number): boolean {
-  return isSounding(note, t);
-}
-
 /** X of a note's head: pinned to the strikeline while it sounds, scrolling otherwise. */
 export function noteX(layout: HighwayLayout, note: NoteEvent, t: number): number {
-  return isActive(note, t) ? layout.strikeX : timeToX(layout, note.startSeconds, t);
+  return isSounding(note, t) ? layout.strikeX : timeToX(layout, note.startSeconds, t);
 }
 
 /** X position of a point in time when the playhead is at `t`. */
