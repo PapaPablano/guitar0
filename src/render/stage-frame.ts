@@ -4,10 +4,11 @@ import { renderBarTimeline } from './bar-timeline';
 import { DEFAULT_LABEL_MODE, renderFretboard, type LabelMode } from './fretboard';
 import { DEFAULT_LOOKAHEAD } from './fretboard-steps';
 import { renderHighway } from './highway';
-import { momentAt } from './moment';
+import { momentAt, type Moment } from './moment';
 import { PICK_PROFILE, type NeckProfile } from './neck-profile';
 import { renderNeckFrame, type PhotoContext } from './neck-view';
 import { renderTabStrip, type LoopBars } from './tab-strip';
+import { drawTurned, WATERFALL_STRIKE_FRACTION } from './upright';
 
 /** What the video shows besides which panels: the look-ahead, the dot labels and the technique cues. */
 export interface ExportViewOptions {
@@ -44,6 +45,38 @@ export function frameLayout(height: number, panelCount: number, withBar: boolean
   return { panels, bar: withBar ? { top: last.top + last.height + gap, height: barHeight } : null };
 }
 
+export interface WaterfallColumn {
+  readonly panel: 'highway' | 'tab';
+  readonly left: number;
+  readonly width: number;
+}
+
+export interface WaterfallLayout {
+  /** The columns share this band: from `top`, `height` tall, with the bar strip (when shown) under it. */
+  readonly top: number;
+  readonly height: number;
+  readonly columns: readonly WaterfallColumn[];
+  readonly bar: FrameLayout['bar'];
+}
+
+/** A portrait frame whose views can all be drawn upright (the highway and the tab strip) lays them out as waterfall columns. */
+export function usesWaterfallColumns(panels: readonly PanelId[], width: number, height: number): boolean {
+  return height > width && panels.length > 0 && panels.every((p) => p === 'highway' || p === 'tab');
+}
+
+/** Side-by-side columns above the bar strip: the highway on the left and the tab strip on the right, whichever was chosen first. */
+export function waterfallColumns(width: number, height: number, panels: readonly PanelId[]): WaterfallLayout {
+  const rows = frameLayout(height, 1, !panels.includes('tab'));
+  const shown = (['highway', 'tab'] as const).filter((p) => panels.includes(p));
+  const gap = Math.round(width * 0.01);
+  const each = Math.floor((width - gap * (shown.length - 1)) / shown.length);
+  const columns = shown.map((panel, i) => {
+    const left = i * (each + gap);
+    return { panel, left, width: i === shown.length - 1 ? width - left : each };
+  });
+  return { top: rows.panels[0].top, height: rows.panels[0].height, columns, bar: rows.bar };
+}
+
 /**
  * Draws the whole video frame for time `t`: the chosen panels, one over the other, as the page shows them.
  * The video export draws every frame through this function, so a frame matches what the page shows at that time.
@@ -65,7 +98,8 @@ export function renderStageFrame(
 ): void {
   const lookahead = options.lookahead;
   const labelMode = options.labelMode ?? DEFAULT_LABEL_MODE;
-  const layout = frameLayout(height, panels.length, !panels.includes('tab'));
+  const columns = usesWaterfallColumns(panels, width, height);
+  const layout = frameLayout(height, columns ? 1 : panels.length, !panels.includes('tab'));
   // One moment for the whole frame, so every panel agrees on what is sounding.
   const moment = momentAt(timeline, trackIndex, t, { lookahead, loop: options.loop });
 
@@ -73,7 +107,9 @@ export function renderStageFrame(
   ctx.fillStyle = '#101216';
   ctx.fillRect(0, 0, width, height);
 
-  panels.forEach((panel, i) => {
+  if (columns) drawWaterfallColumns(ctx, timeline, trackIndex, t, width, height, panels, moment, options.loop);
+
+  if (!columns) panels.forEach((panel, i) => {
     const { top, height: h } = layout.panels[i];
     region(ctx, top, width, h, () => {
       switch (panel) {
@@ -114,6 +150,35 @@ export function renderStageFrame(
   }
 
   ctx.restore();
+}
+
+/** Draws the highway and the tab strip as upright waterfalls, each clipped to its column and sharing one strike position. */
+function drawWaterfallColumns(
+  ctx: FrameContext,
+  timeline: Timeline,
+  trackIndex: number,
+  t: number,
+  width: number,
+  height: number,
+  panels: readonly PanelId[],
+  moment: Moment,
+  loop: LoopBars | null | undefined,
+): void {
+  const layout = waterfallColumns(width, height, panels);
+  for (const column of layout.columns) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(column.left, layout.top, column.width, layout.height);
+    ctx.clip();
+    drawTurned(ctx, { left: column.left, top: layout.top, width: column.width, height: layout.height }, (turned, w, h) => {
+      if (column.panel === 'highway') {
+        renderHighway(turned, timeline, trackIndex, t, w, h, { moment, strikeFraction: WATERFALL_STRIKE_FRACTION });
+      } else {
+        renderTabStrip(turned, timeline, trackIndex, t, w, h, { loop, moment, strikeFraction: WATERFALL_STRIKE_FRACTION });
+      }
+    });
+    ctx.restore();
+  }
 }
 
 /** Runs `draw` inside a clipped rectangle that starts at `top`, with its own origin there (none to move for the top region). */
