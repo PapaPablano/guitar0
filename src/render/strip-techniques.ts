@@ -73,7 +73,11 @@ function drawText(ctx: DrawContext, text: string, x: number, y: number, colour: 
   ctx.font = MARK_FONT;
   ctx.textAlign = align;
   ctx.textBaseline = 'middle';
+  // The mark planner spaces these labels along the time axis, so in a turned column they stay turned with the strip.
+  const turnable = 'textTurned' in ctx;
+  if (turnable) ctx.textTurned = true;
   ctx.fillText(text, x, y);
+  if (turnable) ctx.textTurned = false;
 }
 
 function drawLine(ctx: DrawContext, x1: number, y1: number, x2: number, y2: number, colour: string): void {
