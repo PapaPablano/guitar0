@@ -171,11 +171,11 @@ function drawWaterfallColumns(
 ): void {
   const layout = waterfallColumns(width, height, panels);
   for (const column of layout.columns) {
+    const rect = { left: column.left, top: layout.top, width: column.width, height: layout.height };
     ctx.save();
     ctx.beginPath();
-    ctx.rect(column.left, layout.top, column.width, layout.height);
+    ctx.rect(rect.left, rect.top, rect.width, rect.height);
     ctx.clip();
-    const rect = { left: column.left, top: layout.top, width: column.width, height: layout.height };
     if (column.panel === 'highway') {
       drawTurned(ctx, rect, (turned, w, h) =>
         renderHighway(turned, timeline, trackIndex, t, w, h, { moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
