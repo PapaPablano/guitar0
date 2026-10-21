@@ -34,6 +34,25 @@ describe('drawTurned', () => {
     expect(size).toEqual([COLUMN.height, COLUMN.width]);
   });
 
+  it('scales the drawing and shrinks the canvas it is given by the same factor when zoomed', () => {
+    const { host: h, calls } = host();
+    let size: [number, number] = [0, 0];
+    drawTurned(
+      h,
+      COLUMN,
+      (_ctx, width, height) => {
+        size = [width, height];
+      },
+      2,
+    );
+    expect(calls.find((c) => c.name === 'scale')?.args).toEqual([2, 2]);
+    expect(size).toEqual([COLUMN.height / 2, COLUMN.width / 2]);
+    // no scale call at all when not zoomed
+    const plain = host();
+    drawTurned(plain.host, COLUMN, () => {});
+    expect(plain.calls.some((c) => c.name === 'scale')).toBe(false);
+  });
+
   it('draws text upright: save, translate to the anchor, quarter turn clockwise, text at the origin, restore', () => {
     const { host: h, calls } = host();
     drawTurned(h, COLUMN, (ctx) => ctx.fillText('7', 40, 12));

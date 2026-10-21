@@ -7,6 +7,7 @@ export const WATERFALL_STRIKE_FRACTION = 0.25;
 export interface TurnHost extends DrawContext {
   translate(x: number, y: number): void;
   rotate(angle: number): void;
+  scale(x: number, y: number): void;
 }
 
 /** What a renderer draws into when its landscape drawing is laid onto a column. */
@@ -27,13 +28,20 @@ const QUARTER_TURN = Math.PI / 2;
 /**
  * Lays a landscape drawing onto a column turned a quarter turn counter-clockwise: the drawing's x axis (time, past at 0)
  * runs up from the column's bottom edge and its y axis runs left to right. `draw` gets a canvas as wide as the column
- * is tall and as tall as the column is wide. Text comes out upright unless `textTurned` is set.
- * The caller clips to the column; this only moves and turns the origin, and puts it back.
+ * is tall and as tall as the column is wide, each divided by `zoom` when the drawing is to come out larger (its type most of all).
+ * Text comes out upright unless `textTurned` is set.
+ * The caller clips to the column; this only moves, turns and scales the origin, and puts it back.
  */
-export function drawTurned(host: TurnHost, column: Column, draw: (ctx: TurnedContext, width: number, height: number) => void): void {
+export function drawTurned(
+  host: TurnHost,
+  column: Column,
+  draw: (ctx: TurnedContext, width: number, height: number) => void,
+  zoom = 1,
+): void {
   host.save();
   host.translate(column.left, column.top + column.height);
   host.rotate(-QUARTER_TURN);
+  if (zoom !== 1) host.scale(zoom, zoom);
 
   let textTurned = false;
   const fillText = (text: string, x: number, y: number): void => {
@@ -65,6 +73,6 @@ export function drawTurned(host: TurnHost, column: Column, draw: (ctx: TurnedCon
     },
   });
 
-  draw(turned, column.height, column.width);
+  draw(turned, column.height / zoom, column.width / zoom);
   host.restore();
 }

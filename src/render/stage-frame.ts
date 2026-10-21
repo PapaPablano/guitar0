@@ -152,6 +152,11 @@ export function renderStageFrame(
   ctx.restore();
 }
 
+/** The tab strip's type is sized for a landscape panel, so a column draws it larger: about 300 px across the strings per 1080 px frame width, up to 2.5 times. */
+export function tabColumnZoom(columnWidth: number): number {
+  return Math.min(2.5, Math.max(1, columnWidth / 300));
+}
+
 /** Draws the highway and the tab strip as upright waterfalls, each clipped to its column and sharing one strike position. */
 function drawWaterfallColumns(
   ctx: FrameContext,
@@ -170,13 +175,19 @@ function drawWaterfallColumns(
     ctx.beginPath();
     ctx.rect(column.left, layout.top, column.width, layout.height);
     ctx.clip();
-    drawTurned(ctx, { left: column.left, top: layout.top, width: column.width, height: layout.height }, (turned, w, h) => {
-      if (column.panel === 'highway') {
-        renderHighway(turned, timeline, trackIndex, t, w, h, { moment, strikeFraction: WATERFALL_STRIKE_FRACTION });
-      } else {
-        renderTabStrip(turned, timeline, trackIndex, t, w, h, { loop, moment, strikeFraction: WATERFALL_STRIKE_FRACTION });
-      }
-    });
+    const rect = { left: column.left, top: layout.top, width: column.width, height: layout.height };
+    if (column.panel === 'highway') {
+      drawTurned(ctx, rect, (turned, w, h) =>
+        renderHighway(turned, timeline, trackIndex, t, w, h, { moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
+      );
+    } else {
+      drawTurned(
+        ctx,
+        rect,
+        (turned, w, h) => renderTabStrip(turned, timeline, trackIndex, t, w, h, { loop, moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
+        tabColumnZoom(column.width),
+      );
+    }
     ctx.restore();
   }
 }

@@ -4,7 +4,7 @@ import { computeLayout, timeToX } from '../../src/render/layout';
 import { momentAt } from '../../src/render/moment';
 import { renderHighway } from '../../src/render/highway';
 import { renderTabStrip } from '../../src/render/tab-strip';
-import { frameLayout, renderStageFrame, usesWaterfallColumns, waterfallColumns, type FrameContext } from '../../src/render/stage-frame';
+import { frameLayout, renderStageFrame, tabColumnZoom, usesWaterfallColumns, waterfallColumns, type FrameContext } from '../../src/render/stage-frame';
 import { drawTurned, WATERFALL_STRIKE_FRACTION, type TurnHost } from '../../src/render/upright';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -86,6 +86,21 @@ describe('column layout', () => {
   });
 });
 
+describe('tab column type size', () => {
+  it('draws the tab larger in a column than in a landscape panel, up to a limit, and never smaller', () => {
+    expect(tabColumnZoom(100)).toBe(1);
+    expect(tabColumnZoom(535)).toBeCloseTo(535 / 300, 9);
+    expect(tabColumnZoom(1080)).toBe(2.5);
+  });
+
+  it('scales the tab drawing in its column but not the highway', () => {
+    const calls = frame(['highway', 'tab']);
+    const scales = calls.filter((c) => c.name === 'scale');
+    expect(scales).toHaveLength(1);
+    expect(scales[0].args[0]).toBeCloseTo(tabColumnZoom(waterfallColumns(W, H, ['highway', 'tab']).columns[1].width), 9);
+  });
+});
+
 describe('a portrait frame with waterfall columns', () => {
   it('draws the highway alone as one full-width column above the bar strip', () => {
     const calls = frame(['highway']);
@@ -118,8 +133,11 @@ describe('a portrait frame with waterfall columns', () => {
       renderHighway(c, timeline, 0, t, w, h, { moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
     );
     const tabRun = createRecordingContext();
-    drawTurned(tabRun.ctx as unknown as TurnHost, column(right), (c, w, h) =>
-      renderTabStrip(c, timeline, 0, t, w, h, { loop: null, moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
+    drawTurned(
+      tabRun.ctx as unknown as TurnHost,
+      column(right),
+      (c, w, h) => renderTabStrip(c, timeline, 0, t, w, h, { loop: null, moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
+      tabColumnZoom(right.width),
     );
 
     const calls = frame(['highway', 'tab'], t);
