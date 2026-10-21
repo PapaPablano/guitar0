@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStripLayout,
+  getStripLayout,
   FRET_FONT_MIN,
   GUTTER_WIDTH,
   MIN_BAR_WIDTH,
@@ -52,6 +53,27 @@ describe('tab strip layout', () => {
     const layout = buildStripLayout(timeline, 0, W, H);
     const t = 3;
     expect(playheadStripX(layout, timeline, t) - stripScrollX(layout, timeline, t)).toBeCloseTo(layout.cursorX, 9);
+  });
+
+  it('keeps the cursor at 30% of the width, or just clear of the gutter, when no position is given', () => {
+    const timeline = makeTimeline([{ start: 0, end: 1 }]);
+    expect(buildStripLayout(timeline, 0, 1920, 540).cursorX).toBe(576);
+    expect(buildStripLayout(timeline, 0, 300, 540).cursorX).toBe(GUTTER_WIDTH + 40);
+  });
+
+  it('puts the cursor a quarter in from the past edge when asked, with the gutter minimum still winning on a narrow strip', () => {
+    const timeline = makeTimeline([{ start: 0, end: 1 }]);
+    expect(buildStripLayout(timeline, 0, 1920, 540, 0.25).cursorX).toBe(480);
+    expect(buildStripLayout(timeline, 0, 400, 540, 0.25).cursorX).toBe(GUTTER_WIDTH + 40);
+  });
+
+  it('does not hand one strike position the layout cached for another', () => {
+    const timeline = makeTimeline([{ start: 0, end: 1 }]);
+    const a = getStripLayout(timeline, 0, 1920, 540);
+    const b = getStripLayout(timeline, 0, 1920, 540, 0.25);
+    expect(a.cursorX).toBe(576);
+    expect(b.cursorX).toBe(480);
+    expect(getStripLayout(timeline, 0, 1920, 540)).toBe(a);
   });
 
   it('finds the bar under a canvas position and the start time of a bar', () => {

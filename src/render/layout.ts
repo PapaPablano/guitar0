@@ -23,15 +23,18 @@ export interface HighwayLayout {
 }
 
 export const DEFAULT_LOOKAHEAD_SECONDS = 3;
+/** How far in from the past edge the strikeline sits, as a fraction of the width. */
+export const DEFAULT_STRIKE_FRACTION = 0.18;
 
 export function computeLayout(
   width: number,
   height: number,
   stringCount: number,
   lookaheadSeconds: number = DEFAULT_LOOKAHEAD_SECONDS,
+  strikeFraction: number = DEFAULT_STRIKE_FRACTION,
 ): HighwayLayout {
   const strings = Math.max(1, stringCount);
-  const strikeX = Math.round(width * 0.18);
+  const strikeX = Math.round(width * strikeFraction);
   const laneTop = height * 0.12;
   const laneHeight = (height * 0.8) / strings;
   const rightMargin = Math.min(24, width * 0.02);

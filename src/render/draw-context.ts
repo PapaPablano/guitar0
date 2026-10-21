@@ -10,6 +10,8 @@ export interface DrawContext {
   font: string;
   textAlign: CanvasTextAlign;
   textBaseline: CanvasTextBaseline;
+  /** Present only on the turned context a waterfall column draws into; plain canvases do not have it. */
+  textTurned?: boolean;
   save(): void;
   restore(): void;
   fillRect(x: number, y: number, w: number, h: number): void;
