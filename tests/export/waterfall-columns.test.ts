@@ -16,9 +16,9 @@ const LOOKAHEAD = 4;
 const specs: NoteSpec[] = [1, 2, 3, 4, 5, 6, 7].map((s, i) => ({ start: s, end: s + 0.5, string: 1 + (i % 6), fret: 2 + i }));
 const timeline = makeTimeline(specs, 2, 6);
 
-function frame(panels: PanelId[], t = 2.2, tl = timeline, w = W, h = H): Call[] {
+function frame(panels: PanelId[], t = 2.2, tl = timeline, w = W, h = H, loop: { startBar: number; endBar: number } | null = null): Call[] {
   const { ctx, calls } = createRecordingContext();
-  renderStageFrame(ctx as unknown as FrameContext, tl, 0, t, w, h, panels, { lookahead: LOOKAHEAD, photo: null });
+  renderStageFrame(ctx as unknown as FrameContext, tl, 0, t, w, h, panels, { lookahead: LOOKAHEAD, photo: null, loop });
   return calls;
 }
 
@@ -174,6 +174,22 @@ describe('a portrait frame with waterfall columns', () => {
     expect(tints).toHaveLength(4);
   });
 
+  it('draws the tab strip alone as one full-width column with no bar strip', () => {
+    const calls = frame(['tab']);
+    expect(columnOrigins(calls)).toEqual([[0, H]]);
+    const rows = frameLayout(H, 1, true);
+    expect(calls.some((c) => c.name === 'translate' && c.args[0] === 0 && c.args[1] === rows.bar!.top)).toBe(false);
+  });
+
+  it('passes the loop through to the tab column', () => {
+    const plain = frame(['highway', 'tab'], 2.2);
+    const looped = frame(['highway', 'tab'], 2.2, timeline, W, H, { startBar: 0, endBar: 1 });
+    expect(looped).not.toEqual(plain);
+    // the loop wash is a translucent blue fill drawn in the tab column
+    expect(looped.some((c) => c.name === 'set:fillStyle' && c.args[0] === 'rgba(77, 171, 247, 0.22)')).toBe(true);
+    expect(plain.some((c) => c.name === 'set:fillStyle' && c.args[0] === 'rgba(77, 171, 247, 0.22)')).toBe(false);
+  });
+
   it('draws a timeline with no notes without error', () => {
     const empty = makeTimeline([], 2, 4);
     expect(() => frame(['highway', 'tab'], 0.5, empty)).not.toThrow();
@@ -197,7 +213,8 @@ describe('technique-mark labels in a tab column', () => {
     const counterTurned = texts.filter(({ c, i }) => c.args[1] === 0 && c.args[2] === 0 && calls[i - 1]?.name === 'rotate');
     const turned = texts.filter(({ c, i }) => !(c.args[1] === 0 && c.args[2] === 0 && calls[i - 1]?.name === 'rotate'));
     expect(counterTurned.some(({ c }) => c.args[0] === '7')).toBe(true);
-    expect(turned.length).toBeGreaterThan(0);
+    // one label for each of the three marked notes, none of them a fret number
+    expect(turned.length).toBeGreaterThanOrEqual(3);
     expect(turned.every(({ c }) => c.args[0] !== '7')).toBe(true);
   });
 });
