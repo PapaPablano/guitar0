@@ -35,6 +35,27 @@ describe('layout', () => {
   });
 });
 
+describe('strike position', () => {
+  it('keeps the strikeline 18% in from the past edge when no position is given', () => {
+    const layout = computeLayout(1920, 1080, 6);
+    expect(layout.strikeX).toBe(Math.round(1920 * 0.18));
+  });
+
+  it('puts the strikeline a quarter in from the past edge when asked, and the look-behind follows it', () => {
+    const layout = computeLayout(1920, 1080, 6, undefined, 0.25);
+    expect(layout.strikeX).toBe(480);
+    expect(layout.lookbehindSeconds).toBeCloseTo(480 / layout.pxPerSecond, 9);
+  });
+
+  it('draws a sounding note on the strikeline it was given', () => {
+    const timeline = makeTimeline([{ start: 2, end: 2.5, string: 3, fret: FRET }]);
+    const { ctx, calls } = createRecordingContext();
+    renderHighway(ctx, timeline, 0, 2.1, 1920, 1080, { strikeFraction: 0.25 });
+    const label = gemLabels(calls)[0];
+    expect(label.args[1]).toBeCloseTo(480, 6);
+  });
+});
+
 describe('renderHighway', () => {
   it('renders the same drawing calls twice for the same time', () => {
     const timeline = makeTimeline([

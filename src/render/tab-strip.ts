@@ -86,22 +86,30 @@ export interface LoopBars {
 export interface TabStripOptions {
   readonly theme?: HighwayTheme;
   readonly loop?: LoopBars | null;
+  /** How far in from the past edge the cursor sits, as a fraction of the width; today's position when absent. */
+  readonly strikeFraction?: number;
   /** The frame's shared moment; its loop and playback bar win over `loop` and the time when given. */
   readonly moment?: Moment;
 }
 
 const layoutCache = new WeakMap<Timeline, Map<string, StripLayout>>();
 
-export function getStripLayout(timeline: Timeline, trackIndex: number, width: number, height: number): StripLayout {
+export function getStripLayout(
+  timeline: Timeline,
+  trackIndex: number,
+  width: number,
+  height: number,
+  cursorFraction: number = CURSOR_FRACTION,
+): StripLayout {
   let byKey = layoutCache.get(timeline);
   if (!byKey) {
     byKey = new Map();
     layoutCache.set(timeline, byKey);
   }
-  const key = `${trackIndex}:${width}:${height}`;
+  const key = `${trackIndex}:${width}:${height}:${cursorFraction}`;
   let layout = byKey.get(key);
   if (!layout) {
-    layout = buildStripLayout(timeline, trackIndex, width, height);
+    layout = buildStripLayout(timeline, trackIndex, width, height, cursorFraction);
     byKey.set(key, layout);
   }
   return layout;
@@ -172,7 +180,13 @@ function buildSlots(playback: BarEvent, notes: readonly NoteEvent[]): { slots: S
   return { slots, width: slots.length ? Math.max(MIN_BAR_WIDTH, laid.end, markReach) : MIN_BAR_WIDTH, marks: [...plan.marks] };
 }
 
-export function buildStripLayout(timeline: Timeline, trackIndex: number, width: number, height: number): StripLayout {
+export function buildStripLayout(
+  timeline: Timeline,
+  trackIndex: number,
+  width: number,
+  height: number,
+  cursorFraction: number = CURSOR_FRACTION,
+): StripLayout {
   const stringCount = timeline.tracks[trackIndex]?.stringCount ?? 6;
   const lineTop = height * 0.22;
   const lineGap = (height * 0.42) / Math.max(1, stringCount - 1);
@@ -221,7 +235,7 @@ export function buildStripLayout(timeline: Timeline, trackIndex: number, width: 
     stringCount,
     lineTop,
     lineGap,
-    cursorX: Math.max(width * CURSOR_FRACTION, GUTTER_WIDTH + CURSOR_GUTTER_MARGIN),
+    cursorX: Math.max(width * cursorFraction, GUTTER_WIDTH + CURSOR_GUTTER_MARGIN),
   };
 }
 
@@ -318,7 +332,7 @@ export function renderTabStrip(
   options: TabStripOptions = {},
 ): void {
   const theme = options.theme ?? DEFAULT_THEME;
-  const layout = getStripLayout(timeline, trackIndex, width, height);
+  const layout = getStripLayout(timeline, trackIndex, width, height, options.strikeFraction);
   const scroll = stripScrollX(layout, timeline, t);
   const bottom = staffBottom(layout);
 

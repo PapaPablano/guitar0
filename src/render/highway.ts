@@ -16,6 +16,8 @@ export const HIT_EFFECT_SECONDS = 0.25;
 export interface HighwayOptions {
   readonly theme?: HighwayTheme;
   readonly lookaheadSeconds?: number;
+  /** How far in from the past edge the strikeline sits, as a fraction of the width; today's position when absent. */
+  readonly strikeFraction?: number;
   /** The frame's shared moment; built from the timeline and time when absent. */
   readonly moment?: Moment;
 }
@@ -60,7 +62,7 @@ export function renderHighway(
   const theme = options.theme ?? DEFAULT_THEME;
   const track = timeline.tracks[trackIndex];
   const stringCount = track?.stringCount ?? 6;
-  const layout = computeLayout(width, height, stringCount, options.lookaheadSeconds);
+  const layout = computeLayout(width, height, stringCount, options.lookaheadSeconds, options.strikeFraction);
   const notes = timeline.notesForTrack(trackIndex);
   const moment = options.moment ?? momentAt(timeline, trackIndex, t);
   const sounding = (n: NoteEvent) => moment.sounding.has(n.id);
