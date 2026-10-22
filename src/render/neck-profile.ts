@@ -97,6 +97,12 @@ export const BASS_PROFILE: NeckProfile = {
   inlayFrets: [3, 5, 7, 9, 12, 15, 17, 19],
 };
 
+/**
+ * The bass photo with a pick point, for the pick view: the same measurements, plus the point between the two pickups where the
+ * picking hand lands. A bass track's pick view draws on this photo instead of the guitar's, so it carries pick effects too.
+ */
+export const BASS_PICK_PROFILE: NeckProfile = { ...BASS_PROFILE, pickX: 1160 };
+
 /** Which of the bundled photos a track's neck is drawn on: the bass photo for exactly four strings, the guitar photo for any other count. */
 export type NeckPhotoKind = 'guitar' | 'bass';
 
@@ -107,6 +113,11 @@ export function neckPhotoKind(stringCount: number): NeckPhotoKind {
 /** The profile of the photo the Real guitar view draws a track with `stringCount` strings on. */
 export function neckProfileFor(stringCount: number): NeckProfile {
   return neckPhotoKind(stringCount) === 'bass' ? BASS_PROFILE : NECK_PROFILE;
+}
+
+/** The profile the pick view draws a track with `stringCount` strings on, when the track is not on the pick view's own guitar photo. */
+export function bassPickProfileFor(stringCount: number): NeckProfile | null {
+  return neckPhotoKind(stringCount) === 'bass' ? BASS_PICK_PROFILE : null;
 }
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);

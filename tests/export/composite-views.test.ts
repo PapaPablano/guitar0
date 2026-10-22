@@ -7,7 +7,7 @@ import type { PanelId } from '../../src/app/stage-layout';
 import { computeNeck, renderFretboard } from '../../src/render/fretboard';
 import { maxFretUsed } from '../../src/render/fretboard-steps';
 import { frameLayout, renderStageFrame, type ExportViewOptions, type FrameContext } from '../../src/render/stage-frame';
-import { BASS_PROFILE, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
+import { BASS_PICK_PROFILE, BASS_PROFILE, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
 import { renderNeckFrame, type PhotoContext } from '../../src/render/neck-view';
 import { makeTimeline, type NoteSpec } from '../helpers/make-timeline';
 import { createRecordingContext, type Call } from '../helpers/recording-context';
@@ -395,5 +395,30 @@ describe('the Real guitar view on a bass', () => {
 
   it('draws the same calls twice for the same time', () => {
     expect(neckCalls(bassTimeline)).toEqual(neckCalls(bassTimeline));
+  });
+
+  describe('in the pick view', () => {
+    const guitarPhoto = { tag: 'pick-guitar' } as unknown as CanvasImageSource;
+    function pickCalls(line: typeof bassTimeline): Call[] {
+      const { ctx, calls } = createRecordingContext();
+      renderStageFrame(ctx as unknown as FrameContext, line, 0, 1.2, W, H, ['pick'], {
+        lookahead: 4,
+        photo: image,
+        pickPhoto: { photo: guitarPhoto, profile: PICK_PROFILE },
+      });
+      return calls;
+    }
+
+    it('draws a 4-string track on the bass photo, sized to the bass profile', () => {
+      const drawn = pickCalls(bassTimeline).find((c) => c.name === 'drawImage');
+      expect(drawn?.args[0]).toBe(image);
+      expect(drawn?.args[3]).toBe(BASS_PICK_PROFILE.photoWidth);
+    });
+
+    it('keeps any other track on the pick photo', () => {
+      const drawn = pickCalls(guitarTimeline).find((c) => c.name === 'drawImage');
+      expect(drawn?.args[0]).toBe(guitarPhoto);
+      expect(drawn?.args[3]).toBe(PICK_PROFILE.photoWidth);
+    });
   });
 });

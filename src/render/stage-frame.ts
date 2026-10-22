@@ -5,7 +5,7 @@ import { DEFAULT_LABEL_MODE, renderFretboard, type LabelMode } from './fretboard
 import { DEFAULT_LOOKAHEAD } from './fretboard-steps';
 import { renderHighway } from './highway';
 import { momentAt, type Moment } from './moment';
-import { neckProfileFor, PICK_PROFILE, type NeckProfile } from './neck-profile';
+import { bassPickProfileFor, neckProfileFor, PICK_PROFILE, type NeckProfile } from './neck-profile';
 import { renderNeckFrame, type PhotoContext } from './neck-view';
 import { renderTabStrip, type LoopBars } from './tab-strip';
 import { drawTurned, WATERFALL_STRIKE_FRACTION } from './upright';
@@ -133,16 +133,19 @@ export function renderStageFrame(
             moment,
           });
           break;
-        case 'pick':
-          renderNeckFrame(ctx, options.pickPhoto?.photo ?? null, timeline, trackIndex, t, width, h, {
+        case 'pick': {
+          // a 4-string track's pick view is drawn on the bass photo, which travels with the neck view's photo
+          const bassProfile = bassPickProfileFor(timeline.tracks[trackIndex]?.stringCount ?? 6);
+          renderNeckFrame(ctx, bassProfile ? options.photo ?? null : options.pickPhoto?.photo ?? null, timeline, trackIndex, t, width, h, {
             zoom: true,
             lookahead,
             labelMode,
             techniqueCues: options.neckCues ?? true,
-            profile: options.pickPhoto?.profile ?? PICK_PROFILE,
+            profile: bassProfile ?? options.pickPhoto?.profile ?? PICK_PROFILE,
             moment,
           });
           break;
+        }
       }
     });
   });

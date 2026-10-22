@@ -3,7 +3,7 @@ import { renderFretboard, type LabelMode } from '../render/fretboard';
 import { renderHighway } from '../render/highway';
 import { momentAt, type Moment } from '../render/moment';
 import { renderNeckFrame } from '../render/neck-view';
-import { neckPhotoKind, neckProfileFor, PICK_PROFILE } from '../render/neck-profile';
+import { bassPickProfileFor, neckPhotoKind, neckProfileFor, PICK_PROFILE } from '../render/neck-profile';
 import { getStripLayout, renderTabStrip, scoreBarAtX, type LoopBars } from '../render/tab-strip';
 import type { Timeline } from '../model/score';
 import { fitCanvas } from './canvas-fit';
@@ -70,16 +70,19 @@ export function drawSurface(kind: SurfaceKind, canvas: HTMLCanvasElement, s: Pan
       });
       break;
     }
-    case 'pick':
-      renderNeckFrame(ctx, s.pickPhoto?.image ?? null, s.timeline, s.trackIndex, s.t, width, height, {
+    case 'pick': {
+      // a 4-string track's pick view is drawn on the bass photo, which the user's calibrated guitar photo does not apply to
+      const bassProfile = bassPickProfileFor(s.timeline.tracks[s.trackIndex]?.stringCount ?? 6);
+      renderNeckFrame(ctx, bassProfile ? s.bassPhoto ?? null : s.pickPhoto?.image ?? null, s.timeline, s.trackIndex, s.t, width, height, {
         zoom: true,
         lookahead: s.lookahead,
         labelMode: s.labelMode,
         techniqueCues: s.neckCues,
-        profile: s.pickPhoto?.profile ?? PICK_PROFILE,
+        profile: bassProfile ?? s.pickPhoto?.profile ?? PICK_PROFILE,
         moment,
       });
       break;
+    }
     case 'bar':
       renderBarTimeline(ctx, s.timeline, s.t, width, height, { loop: s.loop, moment });
       break;

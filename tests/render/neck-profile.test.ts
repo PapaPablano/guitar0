@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BASS_PROFILE, isNeckProfile, neckPhotoKind, neckProfileFor, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
+import { BASS_PICK_PROFILE, bassPickProfileFor, BASS_PROFILE, isNeckProfile, neckPhotoKind, neckProfileFor, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
 import { PHOTO_FRET_COUNT, photoNoteX, photoNoteXAt, photoPlacement, photoRingRadius, photoStringY, photoToScreen, renderNeckView } from '../../src/render/neck-view';
 import { makeTimeline } from '../helpers/make-timeline';
 import { createRecordingContext } from '../helpers/recording-context';
@@ -55,6 +55,7 @@ describe('neck profiles', () => {
   sane('NECK_PROFILE', NECK_PROFILE);
   sane('PICK_PROFILE', PICK_PROFILE);
   sane('BASS_PROFILE', BASS_PROFILE);
+  sane('BASS_PICK_PROFILE', BASS_PICK_PROFILE);
 
   it('gives the Real guitar view no pick point', () => {
     expect(NECK_PROFILE.pickX).toBeUndefined();
@@ -138,5 +139,18 @@ describe('which photo a track gets', () => {
     for (const count of [0, 1, 3, 5, 6, 7, 8]) expect(neckProfileFor(count)).toBe(NECK_PROFILE);
     expect(neckPhotoKind(4)).toBe('bass');
     expect([5, 6, 7].map(neckPhotoKind)).toEqual(['guitar', 'guitar', 'guitar']);
+  });
+});
+
+describe('the pick view on a bass', () => {
+  it('puts the pick point past the last fret and before the bridge', () => {
+    const x = BASS_PICK_PROFILE.pickX ?? 0;
+    expect(x).toBeGreaterThan(BASS_PROFILE.fretX[BASS_PROFILE.fretX.length - 1]);
+    expect(x).toBeLessThan(BASS_PROFILE.endX);
+  });
+
+  it('gives exactly four strings the bass pick profile and nothing for any other count', () => {
+    expect(bassPickProfileFor(4)).toBe(BASS_PICK_PROFILE);
+    for (const count of [0, 5, 6]) expect(bassPickProfileFor(count)).toBeNull();
   });
 });

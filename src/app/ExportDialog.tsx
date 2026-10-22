@@ -6,7 +6,7 @@ import { browserExportEnvironment, checkExportSupport, type ExportSupport } from
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
 import { loadPickPhoto } from '../export/pick-photo';
-import { neckPhotoKind } from '../render/neck-profile';
+import { bassPickProfileFor, neckPhotoKind } from '../render/neck-profile';
 import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
@@ -122,7 +122,9 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
     try {
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
-      const photo = panels.includes('neck') ? await loadNeckPhoto(neckPhotoKind(timeline.tracks[trackIndex]?.stringCount ?? 6)) : undefined;
+      const strings = timeline.tracks[trackIndex]?.stringCount ?? 6;
+      // a bass track's pick view draws on the bass photo too, so it needs the neck photo even when the neck view is not exported
+      const photo = panels.includes('neck') || (panels.includes('pick') && bassPickProfileFor(strings)) ? await loadNeckPhoto(neckPhotoKind(strings)) : undefined;
       let pick: Awaited<ReturnType<typeof loadPickPhoto>> | undefined;
       try {
         pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
