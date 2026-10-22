@@ -467,8 +467,8 @@ function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, 
 const boardTop = (x: number, profile: NeckProfile) => photoStringY(1, 2, x, profile) - 6;
 const boardBottom = (x: number, profile: NeckProfile) => photoStringY(2, 2, x, profile) + 7;
 const FAR = 5000;
-/** How much the body is dimmed when the photo shows it. */
-const BODY_DIM = 0.22;
+/** How much everything but the fretboard is dimmed: one level over the table, the headstock and the body, so no edge shows where the board ends. */
+const OUTSIDE_DIM = 0.62;
 const GLASS = '#9fe8ff';
 
 /** Fills a polygon given in photo coordinates. */
@@ -498,12 +498,11 @@ function drawDigitalNeck(ctx: DrawContext, place: PhotoPlacement, stringCount: n
 
   // dim the table, the headstock and the body
   ctx.fillStyle = '#020b0f';
-  ctx.globalAlpha = 0.62;
+  ctx.globalAlpha = OUTSIDE_DIM;
   fillPhotoPolygon(ctx, place, [[-FAR, -FAR], [BOARD_LEFT, -FAR], [BOARD_LEFT, FAR], [-FAR, FAR]]);
-  // a photo with a pick point shows the body past the neck, which is dimmed less so the pickup and the pick read on the guitar
-  ctx.globalAlpha = profile.pickX !== undefined ? BODY_DIM : 0.62;
+  ctx.globalAlpha = OUTSIDE_DIM;
   fillPhotoPolygon(ctx, place, [[BOARD_RIGHT, -FAR], [FAR, -FAR], [FAR, FAR], [BOARD_RIGHT, FAR]]);
-  ctx.globalAlpha = 0.62;
+  ctx.globalAlpha = OUTSIDE_DIM;
   fillPhotoPolygon(ctx, place, [[BOARD_LEFT, -FAR], [BOARD_RIGHT, -FAR], ...[...topEdge].reverse()]);
   fillPhotoPolygon(ctx, place, [[BOARD_LEFT, FAR], [BOARD_RIGHT, FAR], ...[...bottomEdge].reverse()]);
   // the board itself: a slight cool tint and a little shade so the lit strings stand out

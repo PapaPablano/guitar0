@@ -156,9 +156,9 @@ describe('the framing', () => {
 describe('the dimming', () => {
   const dimmed = (profile: NeckProfile) => draw(picked, 1.5, profile).filter((c) => c.name === 'fill' && Math.abs(c.alpha - 0.62) < 1e-9).length;
 
-  it('dims the body less when the photo shows it, and everything else as before', () => {
+  it('dims the body as much as the table, so no edge shows where the board ends', () => {
     expect(dimmed(NECK_PROFILE)).toBe(4);
-    expect(dimmed(PICK_PROFILE)).toBe(3);
+    expect(dimmed(PICK_PROFILE)).toBe(4);
   });
 });
 

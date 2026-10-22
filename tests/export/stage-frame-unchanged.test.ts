@@ -103,11 +103,11 @@ const PINNED: Record<string, string> = {
   '1080x1920:tab+neck@1.3': '01006c53',
   '1080x1920:tab+neck@3': 'cda35af3',
   '1080x1920:tab+neck@1.3:loop': 'd268ad42',
-  '1080x1920:neck+pick@0.5': '65277bad',
-  '1080x1920:neck+pick@1.1': '84c909f8',
-  '1080x1920:neck+pick@1.3': '6e152bdb',
-  '1080x1920:neck+pick@3': '6cc9f531',
-  '1080x1920:neck+pick@1.3:loop': '06335927',
+  '1080x1920:neck+pick@0.5': '031eebf9',
+  '1080x1920:neck+pick@1.1': 'e537f3f4',
+  '1080x1920:neck+pick@1.3': '6c24fdaf',
+  '1080x1920:neck+pick@3': 'f4d68c45',
+  '1080x1920:neck+pick@1.3:loop': 'bf90ed1b',
 };
 
 describe('frames that must not change', () => {
