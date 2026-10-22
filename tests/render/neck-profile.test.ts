@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNeckProfile, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
+import { BASS_PROFILE, isNeckProfile, neckPhotoKind, neckProfileFor, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
 import { PHOTO_FRET_COUNT, photoNoteX, photoNoteXAt, photoPlacement, photoRingRadius, photoStringY, photoToScreen, renderNeckView } from '../../src/render/neck-view';
 import { makeTimeline } from '../helpers/make-timeline';
 import { createRecordingContext } from '../helpers/recording-context';
@@ -54,9 +54,21 @@ describe('neck profiles', () => {
   };
   sane('NECK_PROFILE', NECK_PROFILE);
   sane('PICK_PROFILE', PICK_PROFILE);
+  sane('BASS_PROFILE', BASS_PROFILE);
 
   it('gives the Real guitar view no pick point', () => {
     expect(NECK_PROFILE.pickX).toBeUndefined();
+  });
+
+  it('gives the bass photo four strings, twenty frets and no pick point', () => {
+    expect(BASS_PROFILE.stringKnotsY).toHaveLength(4);
+    expect(BASS_PROFILE.fretX).toHaveLength(20);
+    expect(BASS_PROFILE.pickX).toBeUndefined();
+    expect(isNeckProfile(BASS_PROFILE)).toBe(true);
+  });
+
+  it('keeps the bass photo the same shape as its image (1024 by 572)', () => {
+    expect(BASS_PROFILE.photoWidth / BASS_PROFILE.photoHeight).toBeCloseTo(1024 / 572, 2);
   });
 
   it('puts the new view pick point beyond its last fret and inside its photo', () => {
@@ -117,5 +129,14 @@ describe('a profile with four string rows', () => {
     const left = four.nutX - 2;
     const topEdge = photoToScreen(place, left, photoStringY(1, 4, left, four) - 6).y;
     expect(ys.some((y) => Math.abs(y - topEdge) < 1e-6)).toBe(true);
+  });
+});
+
+describe('which photo a track gets', () => {
+  it('gives exactly four strings the bass photo and everything else the guitar photo', () => {
+    expect(neckProfileFor(4)).toBe(BASS_PROFILE);
+    for (const count of [0, 1, 3, 5, 6, 7, 8]) expect(neckProfileFor(count)).toBe(NECK_PROFILE);
+    expect(neckPhotoKind(4)).toBe('bass');
+    expect([5, 6, 7].map(neckPhotoKind)).toEqual(['guitar', 'guitar', 'guitar']);
   });
 });
