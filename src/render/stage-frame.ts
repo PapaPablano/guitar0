@@ -5,7 +5,7 @@ import { DEFAULT_LABEL_MODE, renderFretboard, type LabelMode } from './fretboard
 import { DEFAULT_LOOKAHEAD } from './fretboard-steps';
 import { renderHighway } from './highway';
 import { momentAt, type Moment } from './moment';
-import { PICK_PROFILE, type NeckProfile } from './neck-profile';
+import { neckProfileFor, PICK_PROFILE, type NeckProfile } from './neck-profile';
 import { renderNeckFrame, type PhotoContext } from './neck-view';
 import { renderTabStrip, type LoopBars } from './tab-strip';
 import { drawTurned, WATERFALL_STRIKE_FRACTION } from './upright';
@@ -91,6 +91,7 @@ export function renderStageFrame(
   panels: readonly PanelId[],
   options: ExportViewOptions & {
     loop?: LoopBars | null;
+    /** The Real guitar view's photo: the bass photo for a 4-string track, the guitar photo for any other. */
     photo?: CanvasImageSource | null;
     /** The pick view's photo and the profile it was measured with; its bundled profile with no photo when absent. */
     pickPhoto?: { readonly photo: CanvasImageSource | null; readonly profile: NeckProfile } | null;
@@ -128,6 +129,7 @@ export function renderStageFrame(
             lookahead,
             labelMode,
             techniqueCues: options.neckCues ?? true,
+            profile: neckProfileFor(timeline.tracks[trackIndex]?.stringCount ?? 6),
             moment,
           });
           break;

@@ -3,7 +3,7 @@ import { renderFretboard, type LabelMode } from '../render/fretboard';
 import { renderHighway } from '../render/highway';
 import { momentAt, type Moment } from '../render/moment';
 import { renderNeckFrame } from '../render/neck-view';
-import { PICK_PROFILE } from '../render/neck-profile';
+import { neckPhotoKind, neckProfileFor, PICK_PROFILE } from '../render/neck-profile';
 import { getStripLayout, renderTabStrip, scoreBarAtX, type LoopBars } from '../render/tab-strip';
 import type { Timeline } from '../model/score';
 import { fitCanvas } from './canvas-fit';
@@ -22,6 +22,8 @@ export interface PanelDrawState {
   readonly labelMode: LabelMode;
   readonly neckCues: boolean;
   readonly photo: HTMLImageElement | null;
+  /** The bass photo the Real guitar view draws a 4-string track on; none until it has loaded when absent. */
+  readonly bassPhoto?: HTMLImageElement | null;
   /** The pick view's photo and profile; its bundled profile with no photo until it has loaded when absent. */
   readonly pickPhoto?: PickPhoto | null;
   /** The frame's shared moment, built once per frame; each surface builds its own from the other fields when absent. */
@@ -56,15 +58,18 @@ export function drawSurface(kind: SurfaceKind, canvas: HTMLCanvasElement, s: Pan
     case 'fretboard':
       renderFretboard(ctx, s.timeline, s.trackIndex, s.t, width, height, { lookahead: s.lookahead, labelMode: s.labelMode, moment });
       break;
-    case 'neck':
-      renderNeckFrame(ctx, s.photo, s.timeline, s.trackIndex, s.t, width, height, {
+    case 'neck': {
+      const strings = s.timeline.tracks[s.trackIndex]?.stringCount ?? 6;
+      renderNeckFrame(ctx, neckPhotoKind(strings) === 'bass' ? s.bassPhoto ?? null : s.photo, s.timeline, s.trackIndex, s.t, width, height, {
         zoom: true,
         lookahead: s.lookahead,
         labelMode: s.labelMode,
         techniqueCues: s.neckCues,
+        profile: neckProfileFor(strings),
         moment,
       });
       break;
+    }
     case 'pick':
       renderNeckFrame(ctx, s.pickPhoto?.image ?? null, s.timeline, s.trackIndex, s.t, width, height, {
         zoom: true,

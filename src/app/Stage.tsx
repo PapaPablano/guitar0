@@ -50,6 +50,7 @@ export function Stage({
 }: StageProps) {
   const canvases = useRef<Partial<Record<SurfaceKind, HTMLCanvasElement | null>>>({});
   const photo = useNeckPhoto();
+  const bassPhoto = useNeckPhoto('bass');
   const pickPhoto = usePickPhoto();
   const [calibrating, setCalibrating] = useState(false);
   const panels = panelsOf(layout);
@@ -66,7 +67,7 @@ export function Stage({
       const t = clock.time();
       const live = liveRef.current;
       // One moment per frame, handed to every surface so they all agree on what is sounding.
-      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current });
+      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, bassPhoto: bassPhoto.current, pickPhoto: pickPhoto.current });
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
@@ -81,7 +82,7 @@ export function Stage({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, onFrame, photo, pickPhoto]);
+  }, [timeline, trackIndex, clock, onFrame, photo, bassPhoto, pickPhoto]);
 
   function panel(id: PanelId) {
     const seekable = id === 'tab';

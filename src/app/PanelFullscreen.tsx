@@ -57,6 +57,7 @@ export function PanelFullscreen({
   const mainRef = useRef<HTMLCanvasElement>(null);
   const barRef = useRef<HTMLCanvasElement>(null);
   const photo = useNeckPhoto();
+  const bassPhoto = useNeckPhoto('bass');
   const pickPhoto = usePickPhoto();
   const [calibrating, setCalibrating] = useState(false);
   const liveRef = useRef({ loop, lookahead, labelMode, neckCues });
@@ -101,7 +102,7 @@ export function PanelFullscreen({
       const t = clock.time();
       const live = liveRef.current;
       // One moment per frame, handed to every surface so they all agree on what is sounding.
-      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current });
+      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, bassPhoto: bassPhoto.current, pickPhoto: pickPhoto.current });
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
@@ -114,7 +115,7 @@ export function PanelFullscreen({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, panel, photo, pickPhoto]);
+  }, [timeline, trackIndex, clock, panel, photo, bassPhoto, pickPhoto]);
 
   const name = PANEL_NAMES[panel];
   return (
