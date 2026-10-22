@@ -12,7 +12,7 @@ export interface NeckProfile {
   readonly fretX: readonly number[];
   /** X where the strings end in the photo (the bridge, or the photo's edge). */
   readonly endX: number;
-  /** Y of each of the six strings (high e first) at the X positions in `stringKnotsX`; between them the strings run straight. */
+  /** Y of each string (high one first; six on the guitar photos, four on the bass photo) at the X positions in `stringKnotsX`; between them the strings run straight. */
   readonly stringKnotsX: readonly number[];
   readonly stringKnotsY: readonly (readonly number[])[];
   /** The stretch of the photo the view shows, and the row the neck runs along. */
@@ -86,7 +86,7 @@ export function isNeckProfile(value: unknown): value is NeckProfile {
   if (!finiteList(p.fretX, 1) || !increasing([p.nutX as number, ...p.fretX])) return false;
   if (!finiteList(p.stringKnotsX, 2) || !increasing(p.stringKnotsX)) return false;
   const knots = p.stringKnotsX.length;
-  if (!Array.isArray(p.stringKnotsY) || p.stringKnotsY.length !== 6) return false;
+  if (!Array.isArray(p.stringKnotsY) || p.stringKnotsY.length < 2) return false;
   if (!p.stringKnotsY.every((row) => finiteList(row, knots) && row.length === knots)) return false;
   if (!finiteList(p.inlayFrets, 0)) return false;
   return p.pickX === undefined || finite(p.pickX);

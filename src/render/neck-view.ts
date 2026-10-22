@@ -252,10 +252,11 @@ export function photoToScreen(place: PhotoPlacement, px: number, py: number): { 
     : { x: place.width / 2 + along, y: place.height / 2 + across };
 }
 
-/** Y of a string in the photo at photo-X `x`; strings beyond the six are spread between the outer two. */
+/** Y of a string in the photo at photo-X `x`; a track with more or fewer strings than the photo shows is spread between the outer two. */
 export function photoStringY(string: number, stringCount: number, x: number, profile: NeckProfile = NECK_PROFILE): number {
-  const at = stringCount > 1 ? ((string - 1) / (stringCount - 1)) * 5 : 2.5;
-  const low = Math.min(4, Math.floor(at));
+  const gaps = profile.stringKnotsY.length - 1;
+  const at = stringCount > 1 ? ((string - 1) / (stringCount - 1)) * gaps : gaps / 2;
+  const low = Math.min(gaps - 1, Math.floor(at));
   const mix = at - low;
   return lineAt(profile.stringKnotsY[low], profile.stringKnotsX, x) * (1 - mix) + lineAt(profile.stringKnotsY[low + 1], profile.stringKnotsX, x) * mix;
 }
@@ -463,8 +464,8 @@ function drawOpenAndMuted(ctx: DrawContext, width: number, stringCount: number, 
 }
 
 /** Photo-Y of the board's top and bottom edges at photo-X `x`, a little outside the outer strings. */
-const boardTop = (x: number, profile: NeckProfile) => photoStringY(1, 6, x, profile) - 6;
-const boardBottom = (x: number, profile: NeckProfile) => photoStringY(6, 6, x, profile) + 7;
+const boardTop = (x: number, profile: NeckProfile) => photoStringY(1, 2, x, profile) - 6;
+const boardBottom = (x: number, profile: NeckProfile) => photoStringY(2, 2, x, profile) + 7;
 const FAR = 5000;
 /** How much the body is dimmed when the photo shows it. */
 const BODY_DIM = 0.22;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
-import { PHOTO_FRET_COUNT, photoNoteX, photoNoteXAt, photoPlacement, photoRingRadius, photoStringY } from '../../src/render/neck-view';
+import { isNeckProfile, NECK_PROFILE, PICK_PROFILE, type NeckProfile } from '../../src/render/neck-profile';
+import { PHOTO_FRET_COUNT, photoNoteX, photoNoteXAt, photoPlacement, photoRingRadius, photoStringY, photoToScreen, renderNeckView } from '../../src/render/neck-view';
+import { makeTimeline } from '../helpers/make-timeline';
+import { createRecordingContext } from '../helpers/recording-context';
 
 describe('the Real guitar view keeps its numbers (characterization)', () => {
   it('places rings at the same photo X', () => {
@@ -36,10 +38,10 @@ describe('neck profiles', () => {
         for (let i = 1; i < p.fretX.length; i++) expect(p.fretX[i]).toBeGreaterThan(p.fretX[i - 1]);
       });
 
-      it('has six strings that are strictly ordered from the high one to the low one at every knot', () => {
-        expect(p.stringKnotsY).toHaveLength(6);
+      it('has its strings strictly ordered from the high one to the low one at every knot', () => {
+        expect(p.stringKnotsY.length).toBeGreaterThanOrEqual(2);
         p.stringKnotsX.forEach((_, k) => {
-          for (let s = 1; s < 6; s++) expect(p.stringKnotsY[s][k]).toBeGreaterThan(p.stringKnotsY[s - 1][k]);
+          for (let s = 1; s < p.stringKnotsY.length; s++) expect(p.stringKnotsY[s][k]).toBeGreaterThan(p.stringKnotsY[s - 1][k]);
         });
       });
 
@@ -75,5 +77,45 @@ describe('neck profiles', () => {
     const shifted: NeckProfile = { ...NECK_PROFILE, nutX: NECK_PROFILE.nutX + 50, fretX: NECK_PROFILE.fretX.map((x) => x + 50) };
     expect(photoNoteX(5, shifted)).toBe(photoNoteX(5) + 50);
     expect(photoPlacement(1000, 500, undefined, shifted).profile).toBe(shifted);
+  });
+});
+
+describe('a profile with four string rows', () => {
+  const four: NeckProfile = {
+    ...NECK_PROFILE,
+    stringKnotsX: [100, 400, 800],
+    stringKnotsY: [
+      [200, 198, 196],
+      [230, 232, 234],
+      [260, 266, 272],
+      [290, 300, 310],
+    ],
+  };
+
+  it('puts the outer strings on its first and last rows', () => {
+    expect(photoStringY(1, 4, 100, four)).toBe(200);
+    expect(photoStringY(4, 4, 100, four)).toBe(290);
+    expect(photoStringY(4, 4, 800, four)).toBe(310);
+  });
+
+  it('keeps the middle strings between the outer two, in order, between knots', () => {
+    const ys = [1, 2, 3, 4].map((s) => photoStringY(s, 4, 250, four));
+    for (let i = 1; i < 4; i++) expect(ys[i]).toBeGreaterThan(ys[i - 1]);
+  });
+
+  it('is accepted as a profile, but not with one row or ragged rows', () => {
+    expect(isNeckProfile(four)).toBe(true);
+    expect(isNeckProfile({ ...four, stringKnotsY: [four.stringKnotsY[0]] })).toBe(false);
+    expect(isNeckProfile({ ...four, stringKnotsY: [...four.stringKnotsY.slice(0, 3), [1, 2]] })).toBe(false);
+  });
+
+  it('draws the board edges just outside its own outer strings', () => {
+    const { ctx, calls } = createRecordingContext();
+    renderNeckView(ctx, makeTimeline([], 2, 4, 4), 0, 0, 1920, 1080, { profile: four });
+    const place = photoPlacement(1920, 1080, undefined, four);
+    const ys = calls.filter((c) => c.name === 'lineTo').map((c) => c.args[1] as number);
+    const left = four.nutX - 2;
+    const topEdge = photoToScreen(place, left, photoStringY(1, 4, left, four) - 6).y;
+    expect(ys.some((y) => Math.abs(y - topEdge) < 1e-6)).toBe(true);
   });
 });
