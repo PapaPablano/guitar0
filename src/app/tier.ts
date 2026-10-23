@@ -32,7 +32,9 @@ export const FEATURE_NAMES: Record<ProFeature, string> = {
   'clean-export': 'Exports without a watermark',
 };
 
-export const isPro = (state: TierState): boolean => state.tier === 'pro';
+// Pro gating is switched off for now: everything is unlocked. Restore the line below (and delete the one under it) to bring the Free/Pro limits back.
+// export const isPro = (state: TierState): boolean => state.tier === 'pro';
+export const isPro = (_state: TierState): boolean => true;
 
 /** Reads the shell's answer defensively: anything that is not clearly Pro is Free. */
 export function parseTier(raw: unknown): TierState {
