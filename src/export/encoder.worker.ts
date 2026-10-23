@@ -88,7 +88,7 @@ async function run(msg: StartMessage): Promise<void> {
   const tracks = msg.panelTracks ?? msg.panels.map(() => msg.trackIndex);
   const needed = photosNeeded(msg.panels, tracks, timeline);
   if (needed.guitar && !msg.photo) throw new Error('The guitar photo was not loaded for the real guitar view.');
-  if (needed.bass && !msg.bassPhoto && !msg.photo) throw new Error('The bass photo was not loaded for a 4-string track.');
+  if (needed.bass && !msg.bassPhoto) throw new Error('The bass photo was not loaded for a 4-string track.');
   if (needed.pick && !msg.pickPhoto) throw new Error('The guitar photo and its profile were not loaded for the pick view.');
 
   // Audio first: it is already rendered, so it goes in as one-second blocks.

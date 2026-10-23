@@ -29,11 +29,17 @@ function withBottomTrack(top: PanelId, bottom: PanelId | null, track: number | u
   return track === undefined || bottom === null ? { top, bottom } : { top, bottom, bottomTrack: track };
 }
 
-/** The track each shown panel draws, top first: the top follows the picker, the bottom has its own when it names a track the song has. */
-export function trackForSlot(layout: StageLayout, slot: 'top' | 'bottom', pickerTrack: number, trackCount: number): number {
+/** The track each shown panel draws, top first: the top follows the picker, the bottom has its own when it names a playable track the song has. */
+export function trackForSlot(
+  layout: StageLayout,
+  slot: 'top' | 'bottom',
+  pickerTrack: number,
+  tracks: readonly { readonly isPercussion: boolean }[],
+): number {
   if (slot === 'top') return pickerTrack;
   const own = layout.bottomTrack;
-  return own !== undefined && Number.isInteger(own) && own >= 0 && own < trackCount ? own : pickerTrack;
+  // the chooser lists playable tracks only, so a drum track is never a panel's own
+  return own !== undefined && Number.isInteger(own) && own >= 0 && own < tracks.length && !tracks[own].isPercussion ? own : pickerTrack;
 }
 
 export const DEFAULT_LAYOUT: StageLayout = { top: 'highway', bottom: 'tab' };

@@ -1267,7 +1267,7 @@ export function App() {
             onLoopChange={setLoopRange}
             onSeekBar={seekToBar}
             timeline={timeline}
-            trackIndex={trackForSlot(layout, fullscreenPanel === layout.bottom ? 'bottom' : 'top', trackIndex, timeline.tracks.length)}
+            trackIndex={trackForSlot(layout, fullscreenPanel === layout.bottom ? 'bottom' : 'top', trackIndex, timeline.tracks)}
             clock={clock}
             lookahead={lookahead}
             labelMode={labelMode}

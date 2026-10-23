@@ -61,7 +61,7 @@ export function Stage({
   const bar = needsBarStrip(panels);
   const key = `${layout.top}/${layout.bottom}`;
   /** The track each panel draws: the top follows the track picker, the bottom has its own when it names one. */
-  const panelTracks = panels.map((_, i) => trackForSlot(layout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks.length));
+  const panelTracks = panels.map((_, i) => trackForSlot(layout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks));
   const shownRef = useRef<PanelId[]>(panels);
   shownRef.current = panels;
   const tracksRef = useRef(panelTracks);

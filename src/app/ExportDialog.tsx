@@ -54,7 +54,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
   /** The track each panel draws, top first, as on the page. */
-  const panelTracks = panels.map((_, i) => trackForSlot(stageLayout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks.length));
+  const panelTracks = panels.map((_, i) => trackForSlot(stageLayout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks));
   const tier = useTier();
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });

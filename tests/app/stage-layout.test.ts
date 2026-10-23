@@ -133,16 +133,21 @@ describe('the pick view (R22)', () => {
 });
 
 describe('a track for the bottom slot', () => {
+  const song = (count: number, drums: number[] = []) => Array.from({ length: count }, (_, i) => ({ isPercussion: drums.includes(i) }));
   const layout = { top: 'neck', bottom: 'pick', bottomTrack: 2 } as const;
 
   it('follows the picker unless the bottom slot names a track the song has', () => {
-    expect(trackForSlot({ top: 'neck', bottom: 'pick' }, 'bottom', 1, 3)).toBe(1);
-    expect(trackForSlot(layout, 'bottom', 1, 3)).toBe(2);
-    expect(trackForSlot(layout, 'top', 1, 3)).toBe(1);
+    expect(trackForSlot({ top: 'neck', bottom: 'pick' }, 'bottom', 1, song(3))).toBe(1);
+    expect(trackForSlot(layout, 'bottom', 1, song(3))).toBe(2);
+    expect(trackForSlot(layout, 'top', 1, song(3))).toBe(1);
   });
 
   it('covers AE3: falls back to the picker when the song has no such track', () => {
-    expect(trackForSlot(layout, 'bottom', 0, 2)).toBe(0);
+    expect(trackForSlot(layout, 'bottom', 0, song(2))).toBe(0);
+  });
+
+  it('never draws a drum track as the bottom slot own track', () => {
+    expect(trackForSlot(layout, 'bottom', 1, song(3, [2]))).toBe(1);
   });
 
   it('is read from an old layout without the field, and bad values are dropped', () => {
