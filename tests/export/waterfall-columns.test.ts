@@ -55,10 +55,15 @@ describe('when a frame uses waterfall columns', () => {
   it('is not for a landscape frame, or when any view cannot run upright', () => {
     expect(usesWaterfallColumns(['highway', 'tab'], 1920, 1080)).toBe(false);
     expect(usesWaterfallColumns(['highway'], 1920, 1080)).toBe(false);
-    expect(usesWaterfallColumns(['highway', 'neck'], W, H)).toBe(false);
+    expect(usesWaterfallColumns(['highway', 'fretboard'], W, H)).toBe(false);
     expect(usesWaterfallColumns(['tab', 'fretboard'], W, H)).toBe(false);
-    expect(usesWaterfallColumns(['neck'], W, H)).toBe(false);
-    expect(usesWaterfallColumns(['pick', 'tab'], W, H)).toBe(false);
+  });
+
+  it('includes the Real guitar and pick views, which run upright on a tall surface', () => {
+    expect(usesWaterfallColumns(['highway', 'neck'], W, H)).toBe(true);
+    expect(usesWaterfallColumns(['neck'], W, H)).toBe(true);
+    expect(usesWaterfallColumns(['pick', 'tab'], W, H)).toBe(true);
+    expect(usesWaterfallColumns(['highway', 'neck'], 1920, 1080)).toBe(false);
   });
 });
 
@@ -95,7 +100,8 @@ describe('tab column type size', () => {
 
   it('scales the tab drawing in its column but not the highway', () => {
     const calls = frame(['highway', 'tab']);
-    const scales = calls.filter((c) => c.name === 'scale');
+    // the mirror and its text counter-mirrors are scale(1, -1); only a zoom scales both ways
+    const scales = calls.filter((c) => c.name === 'scale' && c.args[0] !== 1);
     expect(scales).toHaveLength(1);
     expect(scales[0].args[0]).toBeCloseTo(tabColumnZoom(waterfallColumns(W, H, ['highway', 'tab']).columns[1].width), 9);
   });
@@ -219,9 +225,39 @@ describe('technique-mark labels in a tab column', () => {
   });
 });
 
-describe('frames that keep today\'s layout', () => {
-  it('stack a portrait highway plus Real guitar in rows, with no quarter-turn column', () => {
-    expect(columnOrigins(frame(['highway', 'neck']))).toEqual([]);
+describe('a guitar column beside a waterfall', () => {
+  it('puts the waterfall on the left and the guitar on the right whichever was chosen first', () => {
+    for (const panels of [['highway', 'neck'], ['neck', 'highway']] as PanelId[][]) {
+      const layout = waterfallColumns(W, H, panels);
+      expect(layout.columns.map((c) => c.panel)).toEqual(['highway', 'neck']);
+      expect(layout.columns[1].left + layout.columns[1].width).toBe(W);
+      expect(layout.bar).not.toBeNull();
+    }
+    expect(waterfallColumns(W, H, ['tab', 'pick']).columns.map((c) => c.panel)).toEqual(['tab', 'pick']);
+  });
+
+  it('turns only the waterfall: the guitar column is drawn at its own origin with no quarter turn', () => {
+    const layout = waterfallColumns(W, H, ['highway', 'neck']);
+    const calls = frame(['highway', 'neck']);
+    expect(columnOrigins(calls)).toEqual([[layout.columns[0].left, layout.top + layout.height]]);
+    expect(calls.some((c) => c.name === 'translate' && c.args[0] === layout.columns[1].left && c.args[1] === layout.top)).toBe(true);
+  });
+
+  it('draws the guitar alone as a full-width column', () => {
+    expect(columnOrigins(frame(['neck']))).toEqual([]);
+    expect(waterfallColumns(W, H, ['neck']).columns).toEqual([{ panel: 'neck', left: 0, width: W }]);
+  });
+
+  it('draws each column from its own track', () => {
+    const { ctx, calls } = createRecordingContext();
+    expect(() => renderStageFrame(ctx as unknown as FrameContext, timeline, [0, 0], 2.2, W, H, ['highway', 'pick'], { lookahead: LOOKAHEAD, photo: null })).not.toThrow();
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("frames that keep today's layout", () => {
+  it('stack a portrait highway plus fretboard in rows, with no quarter-turn column', () => {
+    expect(columnOrigins(frame(['highway', 'fretboard']))).toEqual([]);
   });
 
   it('stack a landscape highway plus tab strip in rows, with no quarter-turn column', () => {

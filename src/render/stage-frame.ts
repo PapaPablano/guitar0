@@ -18,6 +18,16 @@ export interface ExportViewOptions {
   readonly neckCues?: boolean;
 }
 
+export type FrameOptions = ExportViewOptions & {
+  loop?: LoopBars | null;
+  /** The Real guitar view's photo: the guitar photo, or the bass photo when that is the only one given and the track has 4 strings. */
+  photo?: CanvasImageSource | null;
+  /** The bass photo, for a panel whose track has 4 strings; `photo` stands in when absent. */
+  bassPhoto?: CanvasImageSource | null;
+  /** The pick view's photo and the profile it was measured with; its bundled profile with no photo when absent. */
+  pickPhoto?: { readonly photo: CanvasImageSource | null; readonly profile: NeckProfile } | null;
+};
+
 /** Extra drawing calls a frame needs to place a sub-region; canvases provide these. */
 export interface FrameContext extends PhotoContext {
   rect(x: number, y: number, w: number, h: number): void;
@@ -45,8 +55,12 @@ export function frameLayout(height: number, panelCount: number, withBar: boolean
   return { panels, bar: withBar ? { top: last.top + last.height + gap, height: barHeight } : null };
 }
 
+/** The views that can run top to bottom as a column: the highway and tab strip turned, the two guitar views already upright on a tall screen. */
+type ColumnPanel = 'highway' | 'tab' | 'neck' | 'pick';
+const COLUMN_PANELS: readonly ColumnPanel[] = ['highway', 'tab', 'neck', 'pick'];
+
 export interface WaterfallColumn {
-  readonly panel: 'highway' | 'tab';
+  readonly panel: ColumnPanel;
   readonly left: number;
   readonly width: number;
 }
@@ -59,15 +73,15 @@ export interface WaterfallLayout {
   readonly bar: FrameLayout['bar'];
 }
 
-/** A portrait frame whose views can all be drawn upright (the highway and the tab strip) lays them out as waterfall columns. */
+/** A portrait frame whose views can all be drawn upright (the highway, the tab strip and the two guitar views) lays them out as columns. */
 export function usesWaterfallColumns(panels: readonly PanelId[], width: number, height: number): boolean {
-  return height > width && panels.length > 0 && panels.every((p) => p === 'highway' || p === 'tab');
+  return height > width && panels.length > 0 && panels.every((p) => (COLUMN_PANELS as readonly string[]).includes(p));
 }
 
-/** Side-by-side columns above the bar strip: the highway on the left and the tab strip on the right, whichever was chosen first. */
+/** Side-by-side columns above the bar strip: the waterfalls on the left (highway, then tab strip) and the guitar on the right, whichever was chosen first. */
 export function waterfallColumns(width: number, height: number, panels: readonly PanelId[]): WaterfallLayout {
   const rows = frameLayout(height, 1, !panels.includes('tab'));
-  const shown = (['highway', 'tab'] as const).filter((p) => panels.includes(p));
+  const shown = COLUMN_PANELS.filter((p) => panels.includes(p));
   const gap = Math.round(width * 0.01);
   const each = Math.floor((width - gap * (shown.length - 1)) / shown.length);
   const columns = shown.map((panel, i) => {
@@ -89,15 +103,7 @@ export function renderStageFrame(
   width: number,
   height: number,
   panels: readonly PanelId[],
-  options: ExportViewOptions & {
-    loop?: LoopBars | null;
-    /** The Real guitar view's photo: the guitar photo, or the bass photo when that is the only one given and the track has 4 strings. */
-    photo?: CanvasImageSource | null;
-    /** The bass photo, for a panel whose track has 4 strings; `photo` stands in when absent. */
-    bassPhoto?: CanvasImageSource | null;
-    /** The pick view's photo and the profile it was measured with; its bundled profile with no photo when absent. */
-    pickPhoto?: { readonly photo: CanvasImageSource | null; readonly profile: NeckProfile } | null;
-  } = { lookahead: DEFAULT_LOOKAHEAD },
+  options: FrameOptions = { lookahead: DEFAULT_LOOKAHEAD },
 ): void {
   const lookahead = options.lookahead;
   const labelMode = options.labelMode ?? DEFAULT_LABEL_MODE;
@@ -120,15 +126,12 @@ export function renderStageFrame(
   ctx.fillStyle = '#101216';
   ctx.fillRect(0, 0, width, height);
 
-  if (columns) drawWaterfallColumns(ctx, timeline, tracks, t, width, height, panels, momentOf, options.loop);
+  if (columns) drawWaterfallColumns(ctx, timeline, tracks, t, width, height, panels, momentOf, options);
 
   if (!columns) panels.forEach((panel, i) => {
     const { top, height: h } = layout.panels[i];
     const track = tracks[i];
     const moment = momentOf(track);
-    const strings = timeline.tracks[track]?.stringCount ?? 6;
-    // a 4-string track draws on the bass photo, any other on the guitar photo
-    const neckPhoto = neckPhotoKind(strings) === 'bass' ? options.bassPhoto ?? options.photo ?? null : options.photo ?? null;
     region(ctx, top, width, h, () => {
       switch (panel) {
         case 'highway':
@@ -141,28 +144,9 @@ export function renderStageFrame(
           renderFretboard(ctx, timeline, track, t, width, h, { lookahead, labelMode, moment });
           break;
         case 'neck':
-          renderNeckFrame(ctx, neckPhoto, timeline, track, t, width, h, {
-            zoom: true,
-            lookahead,
-            labelMode,
-            techniqueCues: options.neckCues ?? true,
-            profile: neckProfileFor(strings),
-            moment,
-          });
+        case 'pick':
+          drawGuitar(ctx, panel, timeline, track, t, width, h, moment, options);
           break;
-        case 'pick': {
-          // a 4-string track's pick view is drawn on the bass photo, which travels with the neck view's photo
-          const bassProfile = bassPickProfileFor(strings);
-          renderNeckFrame(ctx, bassProfile ? neckPhoto : options.pickPhoto?.photo ?? null, timeline, track, t, width, h, {
-            zoom: true,
-            lookahead,
-            labelMode,
-            techniqueCues: options.neckCues ?? true,
-            profile: bassProfile ?? options.pickPhoto?.profile ?? PICK_PROFILE,
-            moment,
-          });
-          break;
-        }
       }
     });
   });
@@ -189,8 +173,9 @@ function drawWaterfallColumns(
   height: number,
   panels: readonly PanelId[],
   momentOf: (track: number) => Moment,
-  loop: LoopBars | null | undefined,
+  options: FrameOptions,
 ): void {
+  const loop = options.loop;
   const layout = waterfallColumns(width, height, panels);
   for (const column of layout.columns) {
     const rect = { left: column.left, top: layout.top, width: column.width, height: layout.height };
@@ -204,6 +189,10 @@ function drawWaterfallColumns(
       drawTurned(ctx, rect, (turned, w, h) =>
         renderHighway(turned, timeline, trackIndex, t, w, h, { moment, strikeFraction: WATERFALL_STRIKE_FRACTION }),
       );
+    } else if (column.panel === 'neck' || column.panel === 'pick') {
+      // already upright on a tall surface: the photo turns itself so the headstock is at the top
+      ctx.translate(rect.left, rect.top);
+      drawGuitar(ctx, column.panel, timeline, trackIndex, t, rect.width, rect.height, moment, options);
     } else {
       drawTurned(
         ctx,
@@ -214,6 +203,33 @@ function drawWaterfallColumns(
     }
     ctx.restore();
   }
+}
+
+/** The Real guitar view or the pick view, filling a `width` x `height` area at the origin. A 4-string track draws on the bass photo, any other on the guitar photo. */
+function drawGuitar(
+  ctx: FrameContext,
+  panel: 'neck' | 'pick',
+  timeline: Timeline,
+  track: number,
+  t: number,
+  width: number,
+  height: number,
+  moment: Moment,
+  options: FrameOptions,
+): void {
+  const strings = timeline.tracks[track]?.stringCount ?? 6;
+  const neckPhoto = neckPhotoKind(strings) === 'bass' ? options.bassPhoto ?? options.photo ?? null : options.photo ?? null;
+  const shared = { zoom: true, lookahead: options.lookahead, labelMode: options.labelMode ?? DEFAULT_LABEL_MODE, techniqueCues: options.neckCues ?? true, moment };
+  if (panel === 'neck') {
+    renderNeckFrame(ctx, neckPhoto, timeline, track, t, width, height, { ...shared, profile: neckProfileFor(strings) });
+    return;
+  }
+  // a 4-string track's pick view is drawn on the bass photo, which travels with the neck view's photo
+  const bassProfile = bassPickProfileFor(strings);
+  renderNeckFrame(ctx, bassProfile ? neckPhoto : options.pickPhoto?.photo ?? null, timeline, track, t, width, height, {
+    ...shared,
+    profile: bassProfile ?? options.pickPhoto?.profile ?? PICK_PROFILE,
+  });
 }
 
 /** Runs `draw` inside a clipped rectangle that starts at `top`, with its own origin there (none to move for the top region). */
