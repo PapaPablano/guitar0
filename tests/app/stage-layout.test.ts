@@ -10,7 +10,9 @@ import {
   saveLayout,
   setPanel,
   showsDots,
+  setBottomTrack,
   swapPanels,
+  trackForSlot,
 } from '../../src/app/stage-layout';
 
 function memory() {
@@ -127,5 +129,46 @@ describe('the pick view (R22)', () => {
     const store = memory();
     store.setItem('tab-highway.stage-layout', JSON.stringify({ top: 'highway', bottom: 'neck' }));
     expect(loadLayout(store)).toEqual({ top: 'highway', bottom: 'neck' });
+  });
+});
+
+describe('a track for the bottom slot', () => {
+  const layout = { top: 'neck', bottom: 'pick', bottomTrack: 2 } as const;
+
+  it('follows the picker unless the bottom slot names a track the song has', () => {
+    expect(trackForSlot({ top: 'neck', bottom: 'pick' }, 'bottom', 1, 3)).toBe(1);
+    expect(trackForSlot(layout, 'bottom', 1, 3)).toBe(2);
+    expect(trackForSlot(layout, 'top', 1, 3)).toBe(1);
+  });
+
+  it('covers AE3: falls back to the picker when the song has no such track', () => {
+    expect(trackForSlot(layout, 'bottom', 0, 2)).toBe(0);
+  });
+
+  it('is read from an old layout without the field, and bad values are dropped', () => {
+    expect(normaliseLayout({ top: 'neck', bottom: 'tab' })).toEqual({ top: 'neck', bottom: 'tab' });
+    expect(normaliseLayout({ top: 'neck', bottom: 'tab', bottomTrack: 2 })).toEqual({ top: 'neck', bottom: 'tab', bottomTrack: 2 });
+    expect(normaliseLayout({ top: 'neck', bottom: 'tab', bottomTrack: -1 })).toEqual({ top: 'neck', bottom: 'tab' });
+    expect(normaliseLayout({ top: 'neck', bottom: 'tab', bottomTrack: 1.5 })).toEqual({ top: 'neck', bottom: 'tab' });
+    expect(normaliseLayout({ top: 'neck', bottom: null, bottomTrack: 2 })).toEqual({ top: 'neck', bottom: null });
+  });
+
+  it('stays with the slot when views move or swap', () => {
+    expect(swapPanels(layout)).toEqual({ top: 'pick', bottom: 'neck', bottomTrack: 2 });
+    expect(setPanel(layout, 'top', 'pick')).toEqual({ top: 'pick', bottom: 'neck', bottomTrack: 2 });
+    expect(setPanel(layout, 'bottom', 'tab')).toEqual({ top: 'neck', bottom: 'tab', bottomTrack: 2 });
+  });
+
+  it('is set and cleared, and a layout with one panel has none', () => {
+    expect(setBottomTrack({ top: 'neck', bottom: 'pick' }, 3)).toEqual({ top: 'neck', bottom: 'pick', bottomTrack: 3 });
+    expect(setBottomTrack(layout, undefined)).toEqual({ top: 'neck', bottom: 'pick' });
+    expect(setBottomTrack({ top: 'neck', bottom: null }, 3)).toEqual({ top: 'neck', bottom: null });
+    expect(setPanel(layout, 'bottom', null)).toEqual({ top: 'neck', bottom: null });
+  });
+
+  it('survives saving', () => {
+    const store = memory();
+    saveLayout(layout, store);
+    expect(loadLayout(store)).toEqual(layout);
   });
 });

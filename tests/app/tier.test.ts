@@ -60,6 +60,8 @@ describe('views', () => {
     const saved: StageLayout = { top: 'highway', bottom: 'neck' };
     expect(layoutForTier(saved, FREE)).toEqual({ top: 'highway', bottom: 'fretboard' });
     expect(layoutForTier({ top: 'pick', bottom: 'fretboard' }, FREE)).toEqual({ top: 'highway', bottom: 'fretboard' });
+    // the bottom slot keeps its own track when its view is swapped for a free one
+    expect(layoutForTier({ top: 'highway', bottom: 'neck', bottomTrack: 2 }, FREE)).toEqual({ top: 'highway', bottom: 'fretboard', bottomTrack: 2 });
     expect(layoutForTier({ top: 'neck', bottom: 'pick' }, FREE)).toEqual({ top: 'fretboard', bottom: 'highway' });
     expect(layoutForTier({ top: 'neck', bottom: null }, FREE)).toEqual({ top: 'fretboard', bottom: null });
     expect(layoutForTier(DEFAULT_LAYOUT, FREE)).toEqual(DEFAULT_LAYOUT);

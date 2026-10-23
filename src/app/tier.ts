@@ -90,7 +90,8 @@ export function layoutForTier(layout: StageLayout, state: TierState): StageLayou
   const top = isProPanel(layout.top) ? firstFreePanelNot(layout.bottom) : layout.top;
   if (layout.bottom === null) return { top, bottom: null };
   const bottom = isProPanel(layout.bottom) || layout.bottom === top ? firstFreePanelNot(top) : layout.bottom;
-  return { top, bottom };
+  // the bottom slot keeps its own track whichever view it ends up showing
+  return layout.bottomTrack === undefined ? { top, bottom } : { top, bottom, bottomTrack: layout.bottomTrack };
 }
 
 /** Free keeps the basic loop; every other practice tool is Pro. */
