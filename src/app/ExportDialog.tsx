@@ -6,11 +6,11 @@ import { browserExportEnvironment, checkExportSupport, type ExportSupport } from
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
 import { loadPickPhoto } from '../export/pick-photo';
-import { bassPickProfileFor, neckPhotoKind } from '../render/neck-profile';
+import { photosNeeded } from '../export/photos-needed';
 import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
-import { isGuitarPanel, panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
+import { isGuitarPanel, panelsOf, PANEL_NAMES, trackForSlot, type StageLayout } from './stage-layout';
 import { isPro, useTier } from './tier';
 import type { Timeline } from '../model/score';
 
@@ -53,6 +53,8 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
+  /** The track each panel draws, top first, as on the page. */
+  const panelTracks = panels.map((_, i) => trackForSlot(stageLayout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks.length));
   const tier = useTier();
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
@@ -122,30 +124,39 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
     try {
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
-      const strings = timeline.tracks[trackIndex]?.stringCount ?? 6;
-      // a bass track's pick view draws on the bass photo too, so it needs the neck photo even when the neck view is not exported
-      const photo = panels.includes('neck') || (panels.includes('pick') && bassPickProfileFor(strings)) ? await loadNeckPhoto(neckPhotoKind(strings)) : undefined;
+      // the photos the panels need, each from its own track: a 4-string track draws on the bass photo, any other on the guitar photo
+      const needed = photosNeeded(panels, panelTracks, timeline);
+      const opened: ImageBitmap[] = [];
+      const closeOpened = () => opened.forEach((b) => b.close());
+      let photo: ImageBitmap | undefined;
+      let bassPhoto: ImageBitmap | undefined;
       let pick: Awaited<ReturnType<typeof loadPickPhoto>> | undefined;
       try {
-        pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
+        if (needed.guitar) opened.push((photo = await loadNeckPhoto('guitar')));
+        if (needed.bass) opened.push((bassPhoto = await loadNeckPhoto('bass')));
+        if (needed.pick) {
+          pick = await loadPickPhoto();
+          opened.push(pick.photo);
+        }
       } catch (e) {
-        photo?.close();
+        closeOpened();
         throw e;
       }
       if (!current()) {
-        photo?.close();
-        pick?.photo.close();
+        closeOpened();
         return;
       }
       setPhase({ name: 'exporting', fraction: 0 });
       const running = startExport({
         timeline,
         trackIndex,
+        panelTracks,
         preset,
         audio,
         panels,
         view,
         photo,
+        bassPhoto,
         pickPhoto: pick,
         alignment,
         watermark: !isPro(tier),

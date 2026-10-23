@@ -13,8 +13,9 @@ export interface TimelineData {
   readonly notes: Readonly<Record<number, readonly NoteEvent[]>>;
 }
 
-/** Plain data for one track: what the exporter needs to draw it. */
-export function serializeTimeline(timeline: Timeline, trackIndex: number): TimelineData {
+/** Plain data for the given track or tracks: what the exporter needs to draw them. */
+export function serializeTimeline(timeline: Timeline, trackIndex: number | readonly number[]): TimelineData {
+  const indexes = typeof trackIndex === 'number' ? [trackIndex] : [...new Set(trackIndex)];
   return {
     title: timeline.title,
     artist: timeline.artist,
@@ -23,7 +24,7 @@ export function serializeTimeline(timeline: Timeline, trackIndex: number): Timel
     tempoMap: timeline.tempoMap,
     durationSeconds: timeline.durationSeconds,
     scoreBarCount: timeline.scoreBarCount,
-    notes: { [trackIndex]: timeline.notesForTrack(trackIndex) },
+    notes: Object.fromEntries(indexes.map((i) => [i, timeline.notesForTrack(i)])),
   };
 }
 

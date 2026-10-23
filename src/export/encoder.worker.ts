@@ -7,20 +7,25 @@ import { renderStageFrame, type ExportViewOptions, type FrameContext } from '../
 import { tabTimeAt, type PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
 import { AUDIO_CHANNELS, frameCount, frameTime, type ExportPreset } from './presets';
+import { photosNeeded } from './photos-needed';
 import { drawWatermark, type MarkContext } from './watermark';
 
 export interface StartMessage {
   type: 'start';
   data: TimelineData;
   trackIndex: number;
+  /** The track each panel draws, top first; every panel draws `trackIndex` when absent. */
+  panelTracks?: number[];
   preset: ExportPreset;
   audio: PcmAudio;
   /** The panels each frame shows, top to bottom, chosen when the export started. */
   panels: PanelId[];
   /** The look-ahead, dot labels and technique cues in use when the export started. */
   view: ExportViewOptions;
-  /** The guitar photo, loaded on the main thread; needed when the real guitar is one of the panels. */
+  /** The guitar photo, loaded on the main thread; needed when the real guitar draws a track that is not a 4-string bass. */
   photo?: ImageBitmap;
+  /** The bass photo; needed when the real guitar or pick view draws a 4-string track. */
+  bassPhoto?: ImageBitmap;
   /** The pick view's photo and the profile it was measured with, sent together; needed when the pick view is one of the panels. */
   pickPhoto?: { photo: ImageBitmap; profile: NeckProfile };
   /** How long the video lasts: the tab plus any extra playing the tab waits through. */
@@ -80,8 +85,11 @@ async function run(msg: StartMessage): Promise<void> {
   videoEncoder.configure(videoConfigFor(preset));
   const audioEncoder = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: onError });
   audioEncoder.configure(audioConfig());
-  if (msg.panels.includes('neck') && !msg.photo) throw new Error('The guitar photo was not loaded for the real guitar view.');
-  if (msg.panels.includes('pick') && !msg.pickPhoto) throw new Error('The guitar photo and its profile were not loaded for the pick view.');
+  const tracks = msg.panelTracks ?? msg.panels.map(() => msg.trackIndex);
+  const needed = photosNeeded(msg.panels, tracks, timeline);
+  if (needed.guitar && !msg.photo) throw new Error('The guitar photo was not loaded for the real guitar view.');
+  if (needed.bass && !msg.bassPhoto && !msg.photo) throw new Error('The bass photo was not loaded for a 4-string track.');
+  if (needed.pick && !msg.pickPhoto) throw new Error('The guitar photo and its profile were not loaded for the pick view.');
 
   // Audio first: it is already rendered, so it goes in as one-second blocks.
   const block = audio.sampleRate;
@@ -111,7 +119,7 @@ async function run(msg: StartMessage): Promise<void> {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     if (failure) throw failure;
     const t = tabTimeAt(alignment, frameTime(frame, preset.fps));
-    renderStageFrame(ctx as unknown as FrameContext, timeline, msg.trackIndex, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null, pickPhoto: msg.pickPhoto ?? null });
+    renderStageFrame(ctx as unknown as FrameContext, timeline, tracks, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null, bassPhoto: msg.bassPhoto ?? null, pickPhoto: msg.pickPhoto ?? null });
     if (msg.watermark) drawWatermark(ctx as unknown as MarkContext, preset.width, preset.height);
     const videoFrame = new VideoFrame(canvas, {
       timestamp: Math.round((frame * 1e6) / preset.fps),
