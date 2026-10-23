@@ -5,7 +5,7 @@ import { DEFAULT_LABEL_MODE, renderFretboard, type LabelMode } from './fretboard
 import { DEFAULT_LOOKAHEAD } from './fretboard-steps';
 import { renderHighway } from './highway';
 import { momentAt, type Moment } from './moment';
-import { bassPickProfileFor, neckProfileFor, PICK_PROFILE, type NeckProfile } from './neck-profile';
+import { bassPickProfileFor, neckPhotoKind, neckProfileFor, PICK_PROFILE, type NeckProfile } from './neck-profile';
 import { renderNeckFrame, type PhotoContext } from './neck-view';
 import { renderTabStrip, type LoopBars } from './tab-strip';
 import { drawTurned, WATERFALL_STRIKE_FRACTION } from './upright';
@@ -84,15 +84,17 @@ export function waterfallColumns(width: number, height: number, panels: readonly
 export function renderStageFrame(
   ctx: FrameContext,
   timeline: Timeline,
-  trackIndex: number,
+  trackIndex: number | readonly number[],
   t: number,
   width: number,
   height: number,
   panels: readonly PanelId[],
   options: ExportViewOptions & {
     loop?: LoopBars | null;
-    /** The Real guitar view's photo: the bass photo for a 4-string track, the guitar photo for any other. */
+    /** The Real guitar view's photo: the guitar photo, or the bass photo when that is the only one given and the track has 4 strings. */
     photo?: CanvasImageSource | null;
+    /** The bass photo, for a panel whose track has 4 strings; `photo` stands in when absent. */
+    bassPhoto?: CanvasImageSource | null;
     /** The pick view's photo and the profile it was measured with; its bundled profile with no photo when absent. */
     pickPhoto?: { readonly photo: CanvasImageSource | null; readonly profile: NeckProfile } | null;
   } = { lookahead: DEFAULT_LOOKAHEAD },
@@ -101,42 +103,57 @@ export function renderStageFrame(
   const labelMode = options.labelMode ?? DEFAULT_LABEL_MODE;
   const columns = usesWaterfallColumns(panels, width, height);
   const layout = frameLayout(height, columns ? 1 : panels.length, !panels.includes('tab'));
-  // One moment for the whole frame, so every panel agrees on what is sounding.
-  const moment = momentAt(timeline, trackIndex, t, { lookahead, loop: options.loop });
+  // The track each panel draws: one number means every panel draws it.
+  const tracks = panels.map((_, i) => (typeof trackIndex === 'number' ? trackIndex : trackIndex[i] ?? trackIndex[0] ?? 0));
+  // One moment per distinct track, so panels on the same track agree on what is sounding.
+  const moments = new Map<number, Moment>();
+  const momentOf = (track: number): Moment => {
+    let m = moments.get(track);
+    if (!m) {
+      m = momentAt(timeline, track, t, { lookahead, loop: options.loop });
+      moments.set(track, m);
+    }
+    return m;
+  };
 
   ctx.save();
   ctx.fillStyle = '#101216';
   ctx.fillRect(0, 0, width, height);
 
-  if (columns) drawWaterfallColumns(ctx, timeline, trackIndex, t, width, height, panels, moment, options.loop);
+  if (columns) drawWaterfallColumns(ctx, timeline, tracks, t, width, height, panels, momentOf, options.loop);
 
   if (!columns) panels.forEach((panel, i) => {
     const { top, height: h } = layout.panels[i];
+    const track = tracks[i];
+    const moment = momentOf(track);
+    const strings = timeline.tracks[track]?.stringCount ?? 6;
+    // a 4-string track draws on the bass photo, any other on the guitar photo
+    const neckPhoto = neckPhotoKind(strings) === 'bass' ? options.bassPhoto ?? options.photo ?? null : options.photo ?? null;
     region(ctx, top, width, h, () => {
       switch (panel) {
         case 'highway':
-          renderHighway(ctx, timeline, trackIndex, t, width, h, { moment });
+          renderHighway(ctx, timeline, track, t, width, h, { moment });
           break;
         case 'tab':
-          renderTabStrip(ctx, timeline, trackIndex, t, width, h, { loop: options.loop, moment });
+          renderTabStrip(ctx, timeline, track, t, width, h, { loop: options.loop, moment });
           break;
         case 'fretboard':
-          renderFretboard(ctx, timeline, trackIndex, t, width, h, { lookahead, labelMode, moment });
+          renderFretboard(ctx, timeline, track, t, width, h, { lookahead, labelMode, moment });
           break;
         case 'neck':
-          renderNeckFrame(ctx, options.photo ?? null, timeline, trackIndex, t, width, h, {
+          renderNeckFrame(ctx, neckPhoto, timeline, track, t, width, h, {
             zoom: true,
             lookahead,
             labelMode,
             techniqueCues: options.neckCues ?? true,
-            profile: neckProfileFor(timeline.tracks[trackIndex]?.stringCount ?? 6),
+            profile: neckProfileFor(strings),
             moment,
           });
           break;
         case 'pick': {
           // a 4-string track's pick view is drawn on the bass photo, which travels with the neck view's photo
-          const bassProfile = bassPickProfileFor(timeline.tracks[trackIndex]?.stringCount ?? 6);
-          renderNeckFrame(ctx, bassProfile ? options.photo ?? null : options.pickPhoto?.photo ?? null, timeline, trackIndex, t, width, h, {
+          const bassProfile = bassPickProfileFor(strings);
+          renderNeckFrame(ctx, bassProfile ? neckPhoto : options.pickPhoto?.photo ?? null, timeline, track, t, width, h, {
             zoom: true,
             lookahead,
             labelMode,
@@ -151,7 +168,7 @@ export function renderStageFrame(
   });
   const bar = layout.bar;
   if (bar) {
-    region(ctx, bar.top, width, bar.height, () => renderBarTimeline(ctx, timeline, t, width, bar.height, { loop: options.loop, moment }));
+    region(ctx, bar.top, width, bar.height, () => renderBarTimeline(ctx, timeline, t, width, bar.height, { loop: options.loop, moment: momentOf(tracks[0] ?? 0) }));
   }
 
   ctx.restore();
@@ -166,17 +183,19 @@ export function tabColumnZoom(columnWidth: number): number {
 function drawWaterfallColumns(
   ctx: FrameContext,
   timeline: Timeline,
-  trackIndex: number,
+  tracks: readonly number[],
   t: number,
   width: number,
   height: number,
   panels: readonly PanelId[],
-  moment: Moment,
+  momentOf: (track: number) => Moment,
   loop: LoopBars | null | undefined,
 ): void {
   const layout = waterfallColumns(width, height, panels);
   for (const column of layout.columns) {
     const rect = { left: column.left, top: layout.top, width: column.width, height: layout.height };
+    const trackIndex = tracks[panels.indexOf(column.panel)] ?? tracks[0] ?? 0;
+    const moment = momentOf(trackIndex);
     ctx.save();
     ctx.beginPath();
     ctx.rect(rect.left, rect.top, rect.width, rect.height);
