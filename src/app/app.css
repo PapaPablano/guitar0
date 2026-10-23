@@ -824,3 +824,16 @@ button.primary:hover:not(:disabled) {
 .panel-fullscreen-photo {
   right: 200px;
 }
+
+.slot-track {
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  min-height: 36px;
+  max-width: 11rem;
+}
+
+@media (pointer: coarse) {
+  .slot-track {
+    min-height: 44px;
+  }
+}

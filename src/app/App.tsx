@@ -68,7 +68,7 @@ import { canSwitchTone, programOverrides, type GuitarTone } from '../audio/guita
 import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
-import { panelsOf, saveLayout, type PanelId, type StageLayout } from './stage-layout';
+import { panelsOf, saveLayout, setBottomTrack, trackForSlot, type PanelId, type StageLayout } from './stage-layout';
 import { FREE, isPro, layoutForTier, panelAllowed, readTier, TierContext, tempoFor, toolsForTier, type ProFeature, type TierState } from './tier';
 import { UpgradePrompt } from './UpgradePrompt';
 import { BackupDialog } from './BackupDialog';
@@ -1207,6 +1207,7 @@ export function App() {
           neckCues={neckCues}
           onNeckCuesChange={changeNeckCues}
           onFullscreen={setFullscreenPanel}
+          onBottomTrackChange={(track) => setLayout(setBottomTrack(storedLayout, track))}
           lookahead={lookahead}
           labelMode={labelMode}
           loop={loopOn ? loop : null}
@@ -1266,7 +1267,7 @@ export function App() {
             onLoopChange={setLoopRange}
             onSeekBar={seekToBar}
             timeline={timeline}
-            trackIndex={trackIndex}
+            trackIndex={trackForSlot(layout, fullscreenPanel === layout.bottom ? 'bottom' : 'top', trackIndex, timeline.tracks.length)}
             clock={clock}
             lookahead={lookahead}
             labelMode={labelMode}

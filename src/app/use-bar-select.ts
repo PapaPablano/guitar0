@@ -22,8 +22,9 @@ export function useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeek
     drag.current = null;
   }, [resetKey]);
 
-  return (kind: 'tab' | 'bar') => {
-    const barOf = (e: PointerEvent<HTMLCanvasElement>) => barAtPointer(kind, e.currentTarget, e.clientX, timeline, trackIndex, clock.time());
+  /** `track` is the track the strip draws when it is not the picker's, so a click lands on the bar under it in that track's layout. */
+  return (kind: 'tab' | 'bar', track: number = trackIndex) => {
+    const barOf = (e: PointerEvent<HTMLCanvasElement>) => barAtPointer(kind, e.currentTarget, e.clientX, timeline, track, clock.time());
     const end = () => {
       const d = drag.current;
       drag.current = null;
