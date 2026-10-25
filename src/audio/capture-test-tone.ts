@@ -113,7 +113,7 @@ export interface ToneContext {
   readonly sampleRate: number;
   readonly destination: unknown;
   createBuffer(channels: number, length: number, sampleRate: number): { getChannelData(channel: number): Float32Array };
-  createBufferSource(): { buffer: unknown; onended: (() => void) | null; connect(destination: unknown): void; start(when?: number): void };
+  createBufferSource(): { buffer: unknown; onended: ((...args: never[]) => unknown) | null; connect(destination: unknown): void; start(when?: number): void };
 }
 
 /** Plays the test sound into the page's output and resolves when it has finished. Create the context from a click. */

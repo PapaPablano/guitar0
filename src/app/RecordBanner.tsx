@@ -5,6 +5,10 @@ interface RecordBannerProps {
   state: RecordState;
   onStop: () => void;
   onDismiss: () => void;
+  /** Record anyway, from a warning. */
+  onProceed: () => void;
+  /** Plays back the captured test sound. */
+  onHear: () => void;
 }
 
 function clockText(seconds: number): string {
@@ -12,11 +16,45 @@ function clockText(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-/** Where a "Record with video" export stands: recording with a stop button, then where the file went. Top left, clear of the video dock. */
-export function RecordBanner({ state, onStop, onDismiss }: RecordBannerProps) {
+/** Where a "Record with video" export stands: the setup check, then recording with a stop button, then where the file went. Top left, clear of the video dock. */
+export function RecordBanner({ state, onStop, onDismiss, onProceed, onHear }: RecordBannerProps) {
   if (state.name === 'idle') return null;
   return (
-    <div className="record-banner" role="status">
+    <div className={state.name === 'report' ? 'record-banner check' : 'record-banner'} role="status" aria-live="polite">
+      {state.name === 'picking' && (
+        <>
+          Choose this tab in the picker and tick "Share tab audio".
+          <button type="button" onClick={onStop}>Cancel</button>
+        </>
+      )}
+      {state.name === 'checking' && (
+        <>
+          Checking the sound. A short test sound is about to play; please leave the volume and the tab alone.
+          <button type="button" onClick={onStop}>Stop</button>
+        </>
+      )}
+      {state.name === 'report' && (
+        <>
+          <strong>{state.result.outcome === 'clean' ? 'The sound came through cleanly.' : 'The recording may not sound like the video.'}</strong>
+          <ul>
+            {state.result.lines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <span className="record-actions">
+            {state.variant === 'before-recording' && (
+              <button type="button" autoFocus onClick={onProceed}>Record anyway</button>
+            )}
+            {state.canHear && (
+              <button type="button" onClick={onHear}>Hear it yourself</button>
+            )}
+            <button type="button" autoFocus={state.variant === 'check-only'} onClick={onDismiss}>
+              Close
+            </button>
+          </span>
+          {state.variant === 'before-recording' && <span className="muted">To fix the share, close this and press Record with video again.</span>}
+        </>
+      )}
       {state.name === 'recording' && (
         <>
           <span className="record-dot" aria-hidden="true" /> Recording {clockText(state.seconds)} / {clockText(state.total)}

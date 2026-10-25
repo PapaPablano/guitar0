@@ -24,6 +24,7 @@ import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { RecordBanner } from './RecordBanner';
 import { useRecordWithVideo } from './useRecordWithVideo';
+import { recordLocks } from './record-locks';
 import { captureAvailable, recordModeOffered } from '../export/record-capture';
 import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
@@ -666,7 +667,18 @@ export function App() {
 
   const clock: Clock | undefined = chooseClock({ video: ytBacking.activeClock, source: ytBacking.source, stems: stems?.clock, userClock, session: session?.clock });
   followedClock.current = clock;
-  const record = useRecordWithVideo({ getClock: () => followedClock.current, totalSeconds: session?.timeline.durationSeconds ?? 0, title: session?.timeline.title ?? '' });
+  const record = useRecordWithVideo({
+    getClock: () => followedClock.current,
+    // Only the video's sound belongs in the file, so the app's own clocks are paused when a recording starts.
+    pauseOwnClocks: () => {
+      live.current.session?.clock.pause();
+      stems?.clock.pause();
+      live.current.userClock?.pause();
+    },
+    totalSeconds: session?.timeline.durationSeconds ?? 0,
+    title: session?.timeline.title ?? '',
+  });
+  const locks = recordLocks(record.state);
   const sourceTimeline = session?.timeline;
   // The tab is shown in the chosen tuning; the sound always comes from the file.
   const timeline = useMemo(() => {
@@ -924,7 +936,7 @@ export function App() {
     ),
     backing: (
       <BackingTrack
-        video={<VideoPanel backing={ytBacking} tabSeconds={timeline.durationSeconds} firstNoteSeconds={firstNoteSeconds(timeline)} apiKey={configuredApiKey()} />}
+        video={<VideoPanel backing={ytBacking} tabSeconds={timeline.durationSeconds} firstNoteSeconds={firstNoteSeconds(timeline)} apiKey={configuredApiKey()} sourceLockedReason={locks.reason} />}
         videoAttached={ytBacking.videoId !== null}
         recording={
           <OffsetSlider
@@ -932,7 +944,8 @@ export function App() {
             offsetControl={stateControls.showOffset}
             fileName={userClock?.file?.name ?? stems?.title ?? null}
             error={userAudioError}
-            onLoad={onLoadRecording}
+            onLoad={(file) => (locks.locked ? undefined : void onLoadRecording(file))}
+            loadLockedReason={locks.reason}
             onOffsetChange={(raw) => {
               const seconds = clampOffset(raw);
               offsetMoved.current = true;
@@ -948,6 +961,7 @@ export function App() {
             recording={userClock?.file ?? null}
             durationSeconds={timeline.durationSeconds}
             active={stems}
+            lockedReason={locks.reason}
             mix={mix}
             onMixChange={(next) => {
               setMix(next);
@@ -1183,6 +1197,8 @@ export function App() {
             onNeckCuesChange={changeNeckCues}
             onClose={() => setExportOpen(false)}
             onRecordWithVideo={recordOffered ? () => void record.start() : undefined}
+            onRecheckCapture={recordOffered ? () => void record.recheck() : undefined}
+            recordBusyReason={record.state.name === 'recording' || record.state.name === 'saving' || record.state.name === 'picking' || record.state.name === 'checking' ? 'A recording or check is already running.' : null}
             notice={exportVideoNotice(ytBacking.videoId !== null)}
             loopRange={exportLoopRange}
             alignment={exportAlignment}
@@ -1201,7 +1217,7 @@ export function App() {
             }
           />
         )}
-        <RecordBanner state={record.state} onStop={record.stop} onDismiss={record.dismiss} />
+        <RecordBanner state={record.state} onStop={record.stop} onDismiss={record.dismiss} onProceed={record.proceed} onHear={record.hear} />
         {ytBacking.videoId && (
           <YoutubeDock key={`${tabKey}:${ytBacking.videoId}`} videoId={ytBacking.videoId} source={ytBacking.source} onPlayer={ytBacking.onPlayer} onError={ytBacking.onError} />
         )}

@@ -922,6 +922,25 @@ button.primary:hover:not(:disabled) {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 
+/* The setup check's findings run to several lines, so the banner wraps and stacks them. */
+.record-banner.check {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.record-banner.check ul {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.record-banner .record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-basis: 100%;
+}
+
 .record-dot {
   width: 10px;
   height: 10px;

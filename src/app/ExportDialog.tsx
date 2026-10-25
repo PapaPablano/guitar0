@@ -39,6 +39,10 @@ interface ExportDialogProps {
   onClose: () => void;
   /** Starts the recorded export that includes the YouTube video; the button shows only when this is given. */
   onRecordWithVideo?: () => void;
+  /** Runs the sound check again without recording; given only when Record with video is offered. */
+  onRecheckCapture?: () => void;
+  /** Why Re-check and Record with video are unavailable right now, such as a recording already running; null when they are available. */
+  recordBusyReason?: string | null;
   /** A line to show at the top of the dialog, such as what the export leaves out; nothing when null. */
   notice?: string | null;
 }
@@ -53,7 +57,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose, onRecordWithVideo, notice = null }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose, onRecordWithVideo, onRecheckCapture, recordBusyReason = null, notice = null }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
@@ -298,6 +302,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
           {phase.name === 'idle' && onRecordWithVideo && (
             <button
               type="button"
+              disabled={recordBusyReason !== null}
               title="Records this window live, with the video player and its sound, for as long as the song lasts"
               onClick={() => {
                 // Called first, in the click, so the browser still treats the share picker as user-initiated.
@@ -308,6 +313,21 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
               Record with video
             </button>
           )}
+          {phase.name === 'idle' && onRecordWithVideo && onRecheckCapture && (
+            <button
+              type="button"
+              disabled={recordBusyReason !== null}
+              title="Plays a short test sound through the screen share to check how well the recording will sound"
+              onClick={() => {
+                // Also called first, in the click, for the share picker.
+                onRecheckCapture();
+                onClose();
+              }}
+            >
+              Re-check recording sound
+            </button>
+          )}
+          {phase.name === 'idle' && onRecordWithVideo && recordBusyReason && <span className="muted">{recordBusyReason}</span>}
           {phase.name === 'failed' && (
             <button type="button" onClick={() => void (lastKind.current === 'audio' ? saveAudio() : start())}>
               Retry
