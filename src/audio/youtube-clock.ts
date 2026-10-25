@@ -283,15 +283,23 @@ export class YoutubeClock implements Clock {
     return tab + this.map.base;
   }
 
-  /** Whether the player has stopped reporting new positions and says it is not playing. */
+  /** Whether the player has stopped reporting new positions and says it is not playing. Buffering is not a stop: the views wait with it. */
   private stalled(): boolean {
     const now = this.source();
-    return now >= this.settleUntil && now - this.reported.at > STALL_SECONDS && !this.player.playing();
+    return now >= this.settleUntil && now - this.reported.at > STALL_SECONDS && !this.player.playing() && !this.player.buffering();
   }
 
   /** Tab time from the player's position, interpolated between its reports at the rate it plays at. */
   private tabFromVideo(): number {
     const now = this.source();
+    if (this.player.buffering()) {
+      // The video is frozen while it loads, so the views wait at its position instead of running ahead and snapping back.
+      // Just after the clock moved the player, its reported position may still be the old one, so the clock's own stands.
+      const video = now < this.settleUntil ? this.reported.video : this.player.time();
+      this.reported = { video, at: now };
+      this.estimate = video;
+      return video - this.map.base;
+    }
     // Just after the clock moved the player, what it reports may still be where it was, so the clock only interpolates.
     const video = now < this.settleUntil ? this.reported.video : this.player.time();
     if (video !== this.reported.video) {
@@ -366,6 +374,11 @@ export class YoutubeClock implements Clock {
   private checkLanding(): void {
     const landing = this.landing;
     if (!landing || !this.playing || this.leadIn) return;
+    if (this.player.buffering()) {
+      // A jump that is still loading has not landed yet; the grace period starts when the video runs.
+      landing.at = this.source();
+      return;
+    }
     if (this.source() - landing.at < LANDING_GRACE_SECONDS) return;
     const expected = landing.target + (this.source() - landing.at) * this.appliedRate;
     const actual = this.player.time();

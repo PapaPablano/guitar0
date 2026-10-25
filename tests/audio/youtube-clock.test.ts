@@ -9,13 +9,14 @@ class FakePlayer implements EmbeddedPlayer {
   position = 0;
   private startedAt = now();
   isPlaying = false;
+  isBuffering = false;
   appliedRate = 1;
   muted = false;
   seekError = 0;
   seeks: number[] = [];
   offered = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   private settle() {
-    if (this.isPlaying) this.position += (now() - this.startedAt) * this.appliedRate;
+    if (this.isPlaying && !this.isBuffering) this.position += (now() - this.startedAt) * this.appliedRate;
     this.startedAt = now();
   }
   play() {
@@ -55,7 +56,15 @@ class FakePlayer implements EmbeddedPlayer {
     this.muted = false;
   }
   playing() {
-    return this.isPlaying;
+    return this.isPlaying && !this.isBuffering;
+  }
+  buffering() {
+    return this.isBuffering;
+  }
+  /** The embed's buffering state: the position freezes while the video stays "playing" in intent. */
+  buffer(on: boolean) {
+    this.settle();
+    this.isBuffering = on;
   }
   load() {}
   destroy() {}
@@ -224,6 +233,86 @@ describe('YoutubeClock', () => {
     advance(1);
     clock.time(); // the page reads the clock every frame
     expect(clock.playing).toBe(true);
+  });
+
+  describe('buffering', () => {
+    const drift = () => clock.time() - player.time();
+
+    it('holds the views at the frozen video instead of running ahead of it', () => {
+      clock.seek(10);
+      clock.play();
+      advance(2);
+      player.buffer(true);
+      for (let i = 0; i < 6; i++) {
+        advance(0.25);
+        expect(Math.abs(drift())).toBeLessThan(0.1);
+      }
+      expect(clock.playing).toBe(true);
+    });
+
+    it('stays in step after a short buffer, with no hold and no jump back', () => {
+      clock.seek(10);
+      clock.play();
+      advance(2);
+      player.buffer(true);
+      advance(0.5);
+      player.buffer(false);
+      let last = clock.time();
+      for (let i = 0; i < 12; i++) {
+        advance(0.25);
+        const t = clock.time();
+        expect(t).toBeGreaterThanOrEqual(last);
+        expect(Math.abs(drift())).toBeLessThan(0.1);
+        last = t;
+      }
+    });
+
+    it('does not run ahead and snap back on a buffer of a second or two', () => {
+      clock.seek(10);
+      clock.play();
+      advance(2);
+      player.buffer(true);
+      let last = clock.time();
+      for (let i = 0; i < 6; i++) {
+        advance(0.25);
+        const t = clock.time();
+        expect(t).toBeGreaterThanOrEqual(last - 0.01);
+        last = t;
+      }
+      player.buffer(false);
+      for (let i = 0; i < 4; i++) {
+        advance(0.25);
+        const t = clock.time();
+        expect(t).toBeGreaterThanOrEqual(last - 0.01);
+        expect(Math.abs(drift())).toBeLessThan(0.1);
+        last = t;
+      }
+    });
+
+    it('keeps playing through a long buffer and resumes with the video', () => {
+      clock.seek(10);
+      clock.play();
+      advance(2);
+      player.buffer(true);
+      advance(8);
+      expect(clock.playing).toBe(true);
+      expect(Math.abs(drift())).toBeLessThan(0.1);
+      player.buffer(false);
+      advance(1);
+      expect(clock.playing).toBe(true);
+      expect(Math.abs(drift())).toBeLessThan(0.1);
+    });
+
+    it('does not seek the video forward to catch up after a buffer right after a jump', () => {
+      clock.seek(10);
+      clock.play();
+      clock.seek(60);
+      player.buffer(true);
+      advance(3);
+      player.buffer(false);
+      advance(2);
+      expect(player.seeks.filter((s) => s > 61)).toEqual([]);
+    });
   });
 
   it('keeps a set offset against the tab while paused and moves the video instead', () => {

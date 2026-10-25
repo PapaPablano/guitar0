@@ -36,6 +36,8 @@ export interface EmbeddedPlayer {
   mute(): void;
   unmute(): void;
   playing(): boolean;
+  /** The embed is waiting for data: its position is frozen though playback is still wanted. */
+  buffering(): boolean;
   load(videoId: string): void;
   destroy(): void;
 }
@@ -54,6 +56,7 @@ export function wrapPlayer(raw: RawYoutubePlayer): EmbeddedPlayer {
     mute: () => raw.mute(),
     unmute: () => raw.unMute(),
     playing: () => raw.getPlayerState() === PLAYER_STATE.playing,
+    buffering: () => raw.getPlayerState() === PLAYER_STATE.buffering,
     load: (videoId) => raw.loadVideoById(videoId),
     destroy: () => raw.destroy(),
   };
