@@ -66,7 +66,7 @@ An embed gives play, seek and speed control but no access to its audio. The stem
 **Boundaries with existing features**
 
 - R10. Loading a file, its stems, the mixer and mixed export audio keep working as today.
-- R11. Exported videos never include YouTube audio or picture.
+- R11. Amended 2026-10-25 (owner-directed, see `2026-10-25-0830-feat-export-with-youtube-video-plan.md`): a video export made in the "Record with video" mode shows the dock and carries the video's audio, as the live app does. The offline export, used for the synth and loaded-file audio, still never includes YouTube audio or picture. The owner took responsibility for the compliance call without a written source.
 
 ### Key Flows
 
@@ -82,7 +82,7 @@ An embed gives play, seek and speed control but no access to its audio. The stem
 - AE2. **Covers R8.** Given Original is playing, when the player changes view, then the video player is still on screen and uncovered.
 - AE3. **Covers R9.** Given the app speed is below what the video can play, when the player is on Original, then the player sees a plain message and Original does not play at the wrong speed.
 - AE4. **Covers R7.** Given the player scrubs the video to the first note and presses Sync here, when they press play, then the tab's first note lands with that moment in the video.
-- AE5. **Covers R11.** Given a tab with a video attached, when the player exports a video, then the export uses the synth or the loaded file's audio and shows no YouTube content.
+- AE5. **Covers R11.** Given a tab with a video attached, when the player exports a video, then the offline export uses the synth or the loaded file's audio and shows no YouTube content, and the "Record with video" export shows the dock and the video's audio.
 
 ### Scope Boundaries
 
@@ -93,7 +93,7 @@ An embed gives play, seek and speed control but no access to its audio. The stem
 #### Deferred to Follow-Up Work
 
 - Auto-suggesting a video from the tab's title and artist.
-- Showing the video inside the exported file, which the embed's terms rule out.
+- Showing the video inside the offline-rendered export. Superseded for the "Record with video" mode by R11 as amended.
 
 ### Dependencies / Assumptions
 
