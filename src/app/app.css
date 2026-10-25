@@ -860,6 +860,16 @@ button.primary:hover:not(:disabled) {
   padding: 4px 8px;
   font-size: 0.8rem;
   color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.youtube-dock-bar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .youtube-dock-frame {

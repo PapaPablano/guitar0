@@ -15,5 +15,5 @@ export function dockRules(attached: boolean, source: AudioSource): DockRules {
 }
 
 /** Smallest the video's frame may be, in CSS pixels, so the embed meets YouTube's minimum player size (200 by 200). */
-export const DOCK_WIDTH_PX = 360;
-export const DOCK_HEIGHT_PX = 203;
+export const DOCK_WIDTH_PX = 200;
+export const DOCK_HEIGHT_PX = 200;
