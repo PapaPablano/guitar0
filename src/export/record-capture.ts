@@ -175,10 +175,3 @@ export function startRecorder(
     },
   };
 }
-
-/** Shares the page and starts recording straight away, with no check. Kept for callers that do not run the setup check. */
-export async function startCapture(handlers: CaptureHandlers): Promise<CaptureSession> {
-  if (!pickRecorderMime((type) => MediaRecorder.isTypeSupported(type))) throw new Error('This browser cannot record video.');
-  const stream = await acquireStream((options) => navigator.mediaDevices.getDisplayMedia(options));
-  return startRecorder(stream, handlers);
-}

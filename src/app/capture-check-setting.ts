@@ -65,7 +65,7 @@ function parse(raw: string): CheckResult | null {
     sampleRate: rate,
     lines: r.lines as string[],
     mime: typeof r.mime === 'string' ? r.mime : null,
-    audioBitsPerSecond: typeof r.audioBitsPerSecond === 'number' && Number.isFinite(r.audioBitsPerSecond) ? r.audioBitsPerSecond : null,
+    audioBitsPerSecond: numberOrNull(r.audioBitsPerSecond) ?? null,
   };
 }
 

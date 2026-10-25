@@ -22,6 +22,12 @@ export type FlowState =
 
 export type FlowMode = 'record' | 'recheck';
 
+/** What came back from the test, kept in memory only so the player can hear it. */
+export interface HeardSound {
+  samples: Float32Array;
+  sampleRate: number;
+}
+
 /** What running the check found. */
 export interface CheckRun {
   report: CheckReport;
@@ -29,8 +35,7 @@ export interface CheckRun {
   chosen: RecorderChoice;
   /** The second recorder was refused, so encoder loss was not measured. */
   encoderSkipped: boolean;
-  /** What came back, kept in memory only so the player can hear it. */
-  heard: { samples: Float32Array; sampleRate: number } | null;
+  heard: HeardSound | null;
 }
 
 export interface FlowDeps {
@@ -84,7 +89,7 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
   let stream: MediaStream | null = null;
   let session: CaptureSession | null = null;
   let pendingChoice: RecorderChoice = {};
-  let heard: { samples: Float32Array; sampleRate: number } | null = null;
+  let heard: HeardSound | null = null;
 
   const set = (next: FlowState) => {
     state = next;
@@ -255,7 +260,7 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
       set({ name: 'idle' });
     },
     /** What came back from the test, for the Hear it yourself button. */
-    heardSound: (): { samples: Float32Array; sampleRate: number } | null => heard,
+    heardSound: (): HeardSound | null => heard,
     state: (): FlowState => state,
   };
 }

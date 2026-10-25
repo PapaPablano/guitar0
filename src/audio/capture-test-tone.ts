@@ -117,7 +117,7 @@ export interface ToneContext {
 }
 
 /** Plays the test sound into the page's output and resolves when it has finished. Create the context from a click. */
-export function playTestSignal(context: ToneContext, signal: TestSignal): Promise<void> {
+export function playTestSignal(context: ToneContext, signal: Pick<TestSignal, 'samples' | 'sampleRate'>): Promise<void> {
   const buffer = context.createBuffer(1, signal.samples.length, signal.sampleRate);
   buffer.getChannelData(0).set(signal.samples);
   const source = context.createBufferSource();

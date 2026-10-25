@@ -33,6 +33,8 @@ const MIN_CORRELATION = 0.2;
 const DECIMATE = 8;
 const FFT_SIZE = 4096;
 
+const HANN = new Float64Array(FFT_SIZE).map((_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1)));
+
 const db = (ratio: number): number => (ratio <= 1e-12 ? -120 : 20 * Math.log10(ratio));
 
 function rms(samples: Float32Array, from: number, to: number): number {
@@ -106,6 +108,24 @@ function findLag(played: TestSignal, captured: Float32Array): { lag: number; cor
   return { lag: refined, correlation: best.correlation };
 }
 
+const twiddleCache = new Map<number, { cos: Float64Array; sin: Float64Array }>();
+
+/** The twiddle factors for one butterfly stage, computed once per stage size. */
+function twiddles(size: number): { cos: Float64Array; sin: Float64Array } {
+  let table = twiddleCache.get(size);
+  if (!table) {
+    const half = size / 2;
+    const angle = (-2 * Math.PI) / size;
+    table = { cos: new Float64Array(half), sin: new Float64Array(half) };
+    for (let k = 0; k < half; k++) {
+      table.cos[k] = Math.cos(angle * k);
+      table.sin[k] = Math.sin(angle * k);
+    }
+    twiddleCache.set(size, table);
+  }
+  return table;
+}
+
 /** In-place radix-2 FFT. */
 function fft(re: Float64Array, im: Float64Array): void {
   const n = re.length;
@@ -119,11 +139,11 @@ function fft(re: Float64Array, im: Float64Array): void {
     }
   }
   for (let size = 2; size <= n; size <<= 1) {
-    const angle = (-2 * Math.PI) / size;
+    const { cos, sin } = twiddles(size);
     for (let start = 0; start < n; start += size) {
       for (let k = 0; k < size / 2; k++) {
-        const wr = Math.cos(angle * k);
-        const wi = Math.sin(angle * k);
+        const wr = cos[k];
+        const wi = sin[k];
         const a = start + k;
         const b = a + size / 2;
         const tr = re[b] * wr - im[b] * wi;
@@ -140,17 +160,18 @@ function fft(re: Float64Array, im: Float64Array): void {
 /** Average power in each band, over Hann-windowed frames of the stretch. */
 function bandPowers(samples: Float32Array, from: number, to: number, rate: number, bands: ReadonlyArray<readonly [number, number]>): number[] {
   const totals = bands.map(() => 0);
-  const hann = new Float64Array(FFT_SIZE);
-  for (let i = 0; i < FFT_SIZE; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1));
+  const bins = bands.map(([low, high]) => ({
+    first: Math.max(1, Math.floor((low * FFT_SIZE) / rate)),
+    last: Math.min(FFT_SIZE / 2 - 1, Math.ceil((high * FFT_SIZE) / rate)),
+  }));
   const hop = FFT_SIZE / 2;
+  const re = new Float64Array(FFT_SIZE);
+  const im = new Float64Array(FFT_SIZE);
   for (let start = from; start + FFT_SIZE <= to; start += hop) {
-    const re = new Float64Array(FFT_SIZE);
-    const im = new Float64Array(FFT_SIZE);
-    for (let i = 0; i < FFT_SIZE; i++) re[i] = (samples[start + i] ?? 0) * hann[i];
+    im.fill(0);
+    for (let i = 0; i < FFT_SIZE; i++) re[i] = (samples[start + i] ?? 0) * HANN[i];
     fft(re, im);
-    bands.forEach(([low, high], b) => {
-      const first = Math.max(1, Math.floor((low * FFT_SIZE) / rate));
-      const last = Math.min(FFT_SIZE / 2 - 1, Math.ceil((high * FFT_SIZE) / rate));
+    bins.forEach(({ first, last }, b) => {
       for (let bin = first; bin <= last; bin++) totals[b] += re[bin] * re[bin] + im[bin] * im[bin];
     });
   }

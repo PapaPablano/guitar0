@@ -1,6 +1,6 @@
 import { buildTestSignal, playTestSignal } from '../audio/capture-test-tone';
 import { analyseCapture, type CheckReport } from './capture-check';
-import type { CheckRun } from './capture-check-flow';
+import type { CheckRun, HeardSound } from './capture-check-flow';
 import { containerCandidates } from './record-capture';
 
 /** The audio-only container that stands in for a video container when measuring what the encoder does to the sound. */
@@ -137,18 +137,10 @@ export async function runCaptureCheck(stream: MediaStream, isAborted: () => bool
 }
 
 /** Plays back the captured test sound so the player can hear what came through. */
-export async function playHeard(heard: { samples: Float32Array; sampleRate: number }): Promise<void> {
+export async function playHeard(heard: HeardSound): Promise<void> {
   const context = new AudioContext();
   try {
-    const buffer = context.createBuffer(1, heard.samples.length, heard.sampleRate);
-    buffer.getChannelData(0).set(heard.samples);
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
-    await new Promise<void>((resolve) => {
-      source.onended = () => resolve();
-      source.start();
-    });
+    await playTestSignal(context, heard);
   } finally {
     void context.close().catch(() => undefined);
   }
