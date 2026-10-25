@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CHECK_VERSION, readCaptureCheck, writeCaptureCheck, type CheckResult } from '../../src/app/capture-check-setting';
 import type { ProfileStorage } from '../../src/audio/profile-store-web';
-import { createCaptureFlow, weaknessLines, type CheckRun, type FlowDeps, type FlowState } from '../../src/export/capture-check-flow';
+import { createCaptureFlow, shareLine, weaknessLines, type CheckRun, type FlowDeps, type FlowState } from '../../src/export/capture-check-flow';
 import type { CaptureSession, StreamInspection } from '../../src/export/record-capture';
 
 function memory(): ProfileStorage & { data: Record<string, string> } {
@@ -397,5 +397,21 @@ describe('weaknessLines', () => {
 
   it('has nothing to say about a clean tab share', () => {
     expect(weaknessLines(tabShare)).toEqual([]);
+  });
+});
+
+describe('shareLine', () => {
+  it('covers R3: says which sound was shared and at what rate', () => {
+    expect(shareLine(tabShare)).toBe("Shared: this tab's sound, 48 kHz.");
+    expect(shareLine({ ...tabShare, surface: 'monitor' })).toMatch(/whole screen/);
+    expect(shareLine({ ...tabShare, surface: 'unknown' })).toBe('Sample rate: 48 kHz.');
+    expect(shareLine({ ...tabShare, surface: 'unknown', sampleRate: null })).toBeNull();
+  });
+
+  it('puts the line in the result of a check that ran', async () => {
+    const { flow } = setup();
+    await flow.start('recheck');
+    const state = flow.state();
+    expect(state.name === 'report' && state.result.lines).toContain("Shared: this tab's sound, 48 kHz.");
   });
 });

@@ -71,6 +71,14 @@ export function weaknessLines(share: StreamInspection): string[] {
 
 const sharesBadly = (share: StreamInspection): boolean => weaknessLines(share).length > 0;
 
+/** What was shared and at what sample rate, so the player can see which setup the result is about. */
+export function shareLine(share: StreamInspection): string | null {
+  const what = share.surface === 'browser' ? "this tab's sound" : share.surface === 'monitor' ? "the whole screen's sound" : share.surface === 'window' ? "a window's sound" : null;
+  const rate = share.sampleRate ? `${Math.round(share.sampleRate / 100) / 10} kHz` : null;
+  if (what) return `Shared: ${what}${rate ? `, ${rate}` : ''}.`;
+  return rate ? `Sample rate: ${rate}.` : null;
+}
+
 const NO_SOUND_LINE = 'No sound came with the share. Share the tab and tick "Share tab audio".';
 
 function failureReason(e: unknown): string {
@@ -231,6 +239,8 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
       if (run.encoderSkipped) lines.push('The encoder was not measured on this machine.');
     }
     lines.push(...weaknessLines(share));
+    const shared = shareLine(share);
+    if (run !== null && shared) lines.push(shared);
     const result = resultFor(share, outcome, lines, run);
     remember(result);
     heard = run?.heard ?? null;
