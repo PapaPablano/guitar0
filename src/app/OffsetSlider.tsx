@@ -1,14 +1,6 @@
 import { useRef } from 'react';
 import { OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../audio/offset-range';
-import { nudgeOffset, offsetDirectionLabel } from './offset-controls';
-
-/** Visible text, step size, direction and spoken label for each nudge button, in display order. */
-const NUDGES = [
-  ['-100 ms', 'coarse', -1, '100 ms later'],
-  ['-10 ms', 'fine', -1, '10 ms later'],
-  ['+10 ms', 'fine', 1, '10 ms earlier'],
-  ['+100 ms', 'coarse', 1, '100 ms earlier'],
-] as const;
+import { NUDGES, nudgeOffset, offsetDirectionLabel } from './offset-controls';
 
 interface OffsetSliderProps {
   /** Null when no recording is loaded. */

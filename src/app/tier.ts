@@ -101,8 +101,8 @@ export function toolsForTier(tools: readonly ToolId[], state: TierState): ToolId
   return isPro(state) ? [...tools] : tools.filter((t) => t === 'loop');
 }
 
-/** YouTube import needs Pro, the build setting (checked by the caller) and the remote switch. */
-export const youtubeAllowed = (state: TierState): boolean => isPro(state) && state.youtube;
+/** Whether the embedded YouTube video is allowed: Pro only, and not behind the shell's remote switch, which the web never has. */
+export const embedAllowed = (state: TierState): boolean => isPro(state);
 
 export const TierContext = createContext<TierState>(FREE);
 

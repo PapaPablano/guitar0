@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { availableTools } from '../../src/app/practice-tools';
 import { DEFAULT_LAYOUT, type StageLayout } from '../../src/app/stage-layout';
-import { FREE, isProPanel, layoutForTier, panelAllowed, parseTier, readDevProFlag, readTier, tempoFor, toolsForTier, youtubeAllowed, type TierState } from '../../src/app/tier';
+import { FREE, isProPanel, layoutForTier, panelAllowed, parseTier, readDevProFlag, readTier, tempoFor, toolsForTier, type TierState } from '../../src/app/tier';
 
 const PRO: TierState = { ...FREE, tier: 'pro', youtube: true };
 
@@ -75,11 +75,5 @@ describe('practice tools and YouTube', () => {
     const all = availableTools({ hasAudioSource: true, hasSections: true });
     expect(toolsForTier(all, FREE)).toEqual(['loop']);
     expect(toolsForTier(all, PRO)).toEqual(all);
-  });
-
-  it.skip('Covers R18. YouTube needs Pro and the status switch on', () => {
-    expect(youtubeAllowed(PRO)).toBe(true);
-    expect(youtubeAllowed({ ...PRO, youtube: false })).toBe(false);
-    expect(youtubeAllowed({ ...FREE, youtube: true })).toBe(false);
   });
 });

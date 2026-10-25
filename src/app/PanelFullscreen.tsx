@@ -28,6 +28,11 @@ interface PanelFullscreenProps {
   canPlay: boolean;
   onTogglePlay: () => void;
   onClose: () => void;
+  /**
+   * False while a video's own audio plays: the browser's full screen would hide the video, so the panel only fills the
+   * window and the docked video stays on top of it.
+   */
+  useBrowserFullscreen?: boolean;
 }
 
 /**
@@ -52,6 +57,7 @@ export function PanelFullscreen({
   canPlay,
   onTogglePlay,
   onClose,
+  useBrowserFullscreen = true,
 }: PanelFullscreenProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLCanvasElement>(null);
@@ -73,12 +79,14 @@ export function PanelFullscreen({
     root?.focus();
     let entered = false;
     // A browser can refuse (or lack) full screen; the overlay still covers the window then.
-    root?.requestFullscreen?.().then(
-      () => {
-        entered = true;
-      },
-      () => undefined,
-    );
+    if (useBrowserFullscreen) {
+      root?.requestFullscreen?.().then(
+        () => {
+          entered = true;
+        },
+        () => undefined,
+      );
+    }
     const onChange = () => {
       if (entered && !document.fullscreenElement) onClose();
     };
@@ -93,7 +101,7 @@ export function PanelFullscreen({
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
       opener?.focus();
     };
-  }, [onClose]);
+  }, [onClose, useBrowserFullscreen]);
 
   useEffect(() => {
     let frame = 0;

@@ -25,6 +25,8 @@ export default defineConfig({
   define: {
     __YOUTUBE_ENABLED__: JSON.stringify(process.env.VITE_ENABLE_YOUTUBE !== 'false'),
     __DEV_PRO__: JSON.stringify(process.env.VITE_DEV_PRO === '1'),
+    // The YouTube Data API key for in-app search; without one, search is hidden and pasting a link still works.
+    __YOUTUBE_API_KEY__: JSON.stringify(process.env.VITE_YOUTUBE_API_KEY ?? ''),
   },
   plugins: [react(), alphaTab(), dropUnusedSoundfont()],
   test: {

@@ -37,6 +37,8 @@ interface ExportDialogProps {
   /** Where the recording sits against the tab; the export lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
   onClose: () => void;
+  /** A line to show at the top of the dialog, such as what the export leaves out; nothing when null. */
+  notice?: string | null;
 }
 
 function safeFilename(title: string): string {
@@ -49,7 +51,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose, notice = null }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
@@ -194,6 +196,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
     <div className="overlay">
       <section className="dialog" role="dialog" aria-modal="true" aria-label="Export video">
         <h2>Export video</h2>
+        {notice && <p className="muted note">{notice}</p>}
 
         {phase.name === 'idle' && (
           <>

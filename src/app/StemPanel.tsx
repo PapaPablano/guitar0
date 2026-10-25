@@ -1,54 +1,33 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { initialMix, MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
 import type { StemMixClock } from '../audio/stem-mix';
 import type { StemSources } from '../export/stem-audio';
-import { EngineClient, SeparationCancelled, STEM_NAMES, type SearchItem, type StemName } from '../stems/engine-client';
+import { EngineClient, SeparationCancelled, STEM_NAMES, type StemName } from '../stems/engine-client';
 import { hashFile } from '../stems/file-hash';
 import { audioContext, loadStems } from '../stems/load-stems';
 import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
-import type { BackingMethod } from './backing-track';
 import { isDesktop } from './desktop';
-import { stepAfterJudge, stepAfterPrecheck, TAKE_CHECKING_LABEL, type TakeJudged, type TakeOpenDecision, type TakeStep } from './take-align';
-import { readYoutubeFlag, youtubeControls } from './feature-flags';
-import { isPro, useTier, youtubeAllowed } from './tier';
-import { describeEngine, engineStateLine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
-import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, rankByLength, searchRow, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
+import { isPro, useTier } from './tier';
+import { describeEngine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
+import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
 export interface ActiveStems {
   readonly clock: StemMixClock;
   readonly sources: StemSources;
-  /** What the stems came from: the recording's file name or the video's title. */
+  /** What the stems came from: the recording's file name. */
   readonly title: string;
-  /** Set only for a take imported from YouTube: the video's link, so the take, not the loaded recording, owns its alignment. */
-  readonly videoUrl?: string;
-  /** For a take: the offset it was judged to line up by (or remembered as), in seconds. */
-  readonly takeOffset?: number;
-}
-
-/** What the app lends the panel to judge a YouTube take against the tab before it is switched on. */
-export interface TakeChecks {
-  /** Before any download: what is remembered for this video and the tab as it is now. */
-  precheck(videoUrl: string): Promise<TakeOpenDecision>;
-  /** After the stems load: compares them with the tab. `takeSeconds` is the stems' own length. */
-  judge(sources: StemSources, videoUrl: string, takeSeconds: number, onProgress: (fraction: number) => void, signal: AbortSignal): Promise<TakeJudged>;
-  /** Forgets a remembered no-match so the next import checks again. */
-  forget(videoUrl: string): Promise<void>;
 }
 
 interface StemPanelProps {
   /** The desktop shell's report on setup and the engine, from the Backing track section. */
   status: ShellEngineStatus | null;
-  /** The way the player chose to get a backing track; the YouTube search shows only for 'youtube'. */
-  method: BackingMethod;
   recording: File | null;
   durationSeconds: number;
   active: ActiveStems | null;
   mix: MixState;
   onMixChange: (mix: MixState) => void;
   onActivate: (stems: ActiveStems | null) => void;
-  /** Judges a YouTube take before it plays; without it a take is switched on as it is. */
-  takes?: TakeChecks;
 }
 
 const savedStems = new SavedStems(shellStemIndex);
@@ -58,13 +37,11 @@ interface Source {
   /** Key in the saved-stems index. */
   key: () => Promise<string>;
   title: string;
-  /** Set for a YouTube take, which is judged against the tab before it is switched on. */
-  item?: SearchItem;
   separate: (client: EngineClient, onProgress: (p: number) => void, signal: AbortSignal) => Promise<{ jobId: string; title?: string }>;
 }
 
-/** Search, separate and mix controls. Renders nothing outside the desktop app. */
-export function StemPanel({ status, method, recording, durationSeconds, active, mix, onMixChange, onActivate, takes }: StemPanelProps) {
+/** Separate and mix controls for a loaded recording. Renders nothing outside the desktop app. */
+export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate }: StemPanelProps) {
   const desktop = isDesktop();
   const tier = useTier();
   const [savedJob, setSavedJob] = useState<string | null>(null);
@@ -72,11 +49,6 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
   const [busyLabel, setBusyLabel] = useState('');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  /** Why the latest take was not switched on, with the result to check again when that is possible. */
-  const [takeNote, setTakeNote] = useState<{ text: string; again: SearchItem | null } | null>(null);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchItem[] | null>(null);
-  const [searching, setSearching] = useState(false);
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice>('off');
   const [pass, setPass] = useState(1);
   const abort = useRef<AbortController | null>(null);
@@ -136,13 +108,11 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
   const engine = describeEngine(status, !isPro(tier));
   const bar = setupBar(engine);
   const control = separateControl({ engine, hasRecording: recording !== null, hasSaved: savedJob !== null, busy });
-  const youtube = youtubeControls({ enabled: readYoutubeFlag() && youtubeAllowed(tier), stemsEnabled: engine.stemsEnabled, hasResults: results !== null });
 
   /** Separates (or reuses saved stems for) a source, then plays them. */
   async function start(source: Source) {
     if (!client) return;
     setError(null);
-    setTakeNote(null);
     setBusy(true);
     setBusyLabel(source.title);
     setProgress(0);
@@ -151,17 +121,6 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
     const run = runs.current.begin();
     const stale = () => !runs.current.isCurrent(run) || controller.signal.aborted;
     try {
-      let takeOffset: number | null = null;
-      if (source.item && takes) {
-        // A remembered no-match is shown without downloading anything; a remembered offset skips only the check.
-        const first = stepAfterPrecheck(await takes.precheck(source.item.url));
-        if (stale()) return;
-        if (first.step === 'show') {
-          showTakeNote(first, source.item);
-          return;
-        }
-        if (first.step === 'load') takeOffset = first.offset;
-      }
       const key = await source.key();
       let jobId = await savedStems.find(key, (id) => client.jobExists(id));
       let title = source.title;
@@ -179,24 +138,6 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
       const loaded = await loadStems(client, jobId, durationSeconds, context);
       if (stale()) {
         loaded.clock.dispose();
-        return;
-      }
-      if (source.item && takes) {
-        // The take is judged before it is switched on, so a take that does not line up never plays (KD1).
-        let offset = takeOffset;
-        if (offset === null) {
-          setBusyLabel(TAKE_CHECKING_LABEL);
-          setProgress(0);
-          const next = stepAfterJudge(await takes.judge(loaded.sources, source.item.url, loaded.clock.mediaSeconds, setProgress, controller.signal));
-          if (stale() || next.step !== 'activate') {
-            loaded.clock.dispose();
-            if (!stale() && next.step === 'show') showTakeNote(next, source.item);
-            if (!stale() && next.step === 'error') setError(next.text);
-            return;
-          }
-          offset = next.offset;
-        }
-        onActivate({ ...loaded, title, videoUrl: source.item.url, takeOffset: offset });
         return;
       }
       onActivate({ ...loaded, title });
@@ -222,42 +163,6 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
       title: recording.name,
       separate: async (c, onProgress, signal) => ({ jobId: await c.separate(recording, { onProgress, signal }) }),
     });
-  }
-
-  function importResult(item: SearchItem) {
-    void start({
-      key: async () => `url:${item.url}`,
-      title: item.title,
-      item,
-      separate: (c, onProgress, signal) => c.separateUrl(item.url, { onProgress, signal }),
-    });
-  }
-
-  /** Says why a take was not switched on; a remembered no-match also offers to check the result again. */
-  function showTakeNote(step: Extract<TakeStep, { step: 'show' }>, item: SearchItem) {
-    setTakeNote({ text: step.text, again: step.canRecheck ? item : null });
-  }
-
-  /** Forgets a remembered no-match, then imports the result again so the take is judged afresh. */
-  async function checkAgain(item: SearchItem) {
-    await takes?.forget(item.url).catch(() => undefined);
-    importResult(item);
-  }
-
-  async function search(e: FormEvent) {
-    e.preventDefault();
-    if (!client) return;
-    setError(null);
-    setTakeNote(null);
-    setSearching(true);
-    try {
-      setResults(await client.search(query));
-    } catch (err) {
-      setResults(null);
-      setError(err instanceof Error ? err.message : 'The search failed.');
-    } finally {
-      setSearching(false);
-    }
   }
 
   function change(update: (current: MixState) => MixState) {
@@ -292,51 +197,6 @@ export function StemPanel({ status, method, recording, durationSeconds, active, 
             </button>
           )}
         </div>
-      )}
-      {!active && method === 'youtube' && youtube.search && (
-        <form className="stems-row" onSubmit={(e) => void search(e)} role="search">
-          <input
-            type="search"
-            value={query}
-            placeholder="Search YouTube for a song"
-            aria-label="Search YouTube for a song"
-            disabled={!youtube.searchUsable}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button type="submit" disabled={!youtube.searchUsable || busy || searching || query.trim().length < 2}>
-            {searching ? 'Searching…' : 'Search'}
-          </button>
-          <span className="muted">
-            {youtube.searchUsable ? 'Imports the audio and splits it into stems. Use only audio you have the right to use.' : engineStateLine(engine)}
-          </span>
-        </form>
-      )}
-      {!active && method === 'youtube' && youtube.results && results !== null && (
-        <ul className="search-results" aria-label="Search results">
-          {results.length === 0 && <li className="muted">No results.</li>}
-          {rankByLength(results, durationSeconds).map((item) => {
-            const row = searchRow(item);
-            return (
-              <li key={item.url}>
-                <button type="button" disabled={busy || row.disabled} onClick={() => importResult(item)}>
-                  Use
-                </button>
-                <span className="result-title">{row.title}</span>
-                <span className="muted">{[row.detail, row.note].filter(Boolean).join(' · ')}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {!active && takeNote && (
-        <p role="status" className="notice">
-          {takeNote.text}{' '}
-          {takeNote.again && (
-            <button type="button" disabled={busy} onClick={() => void checkAgain(takeNote.again as SearchItem)}>
-              Check again
-            </button>
-          )}
-        </p>
       )}
       {error && (
         <p role="alert" className="error">
