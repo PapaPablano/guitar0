@@ -78,6 +78,7 @@ import { Transport } from './Transport';
 import type { LabelMode } from '../render/fretboard';
 import { initialViewState, ViewControls } from './ViewControls';
 import { panelsOf, saveLayout, setBottomTrack, trackForSlot, type PanelId, type StageLayout } from './stage-layout';
+import { stepTempo } from './tempo-steps';
 import { FREE, isPro, layoutForTier, panelAllowed, readTier, TierContext, tempoFor, toolsForTier, type ProFeature, type TierState } from './tier';
 import { UpgradePrompt } from './UpgradePrompt';
 import { BackupDialog } from './BackupDialog';
@@ -848,10 +849,10 @@ export function App() {
           clock.seek(seekByBar(timeline, clock.time(), 1));
           break;
         case 'tempo-up':
-          requestTempo(Math.min(125, live.current.tempoPercent + 5));
+          requestTempo(stepTempo(live.current.tempoPercent, 1));
           break;
         case 'tempo-down':
-          requestTempo(Math.max(25, live.current.tempoPercent - 5));
+          requestTempo(stepTempo(live.current.tempoPercent, -1));
           break;
         case 'toggle-loop':
           if (loop) setLoopOn((on) => !on);
