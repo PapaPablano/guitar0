@@ -20,6 +20,26 @@ export const PANEL_NAMES: Record<PanelId, string> = {
 export interface StageLayout {
   readonly top: PanelId;
   readonly bottom: PanelId | null;
+  /** The track the bottom panel draws; absent means the track picked in the track picker. The top panel always follows the picker. */
+  readonly bottomTrack?: number;
+}
+
+/** A layout with the bottom track set, or without the field at all when there is none, so layouts without one stay as they were. */
+function withBottomTrack(top: PanelId, bottom: PanelId | null, track: number | undefined): StageLayout {
+  return track === undefined || bottom === null ? { top, bottom } : { top, bottom, bottomTrack: track };
+}
+
+/** The track each shown panel draws, top first: the top follows the picker, the bottom has its own when it names a playable track the song has. */
+export function trackForSlot(
+  layout: StageLayout,
+  slot: 'top' | 'bottom',
+  pickerTrack: number,
+  tracks: readonly { readonly isPercussion: boolean }[],
+): number {
+  if (slot === 'top') return pickerTrack;
+  const own = layout.bottomTrack;
+  // the chooser lists playable tracks only, so a drum track is never a panel's own
+  return own !== undefined && Number.isInteger(own) && own >= 0 && own < tracks.length && !tracks[own].isPercussion ? own : pickerTrack;
 }
 
 export const DEFAULT_LAYOUT: StageLayout = { top: 'highway', bottom: 'tab' };
@@ -38,26 +58,33 @@ function isPanel(value: unknown): value is PanelId {
 /** A layout from anything stored: unknown ids, or the same panel twice, give the default. */
 export function normaliseLayout(raw: unknown): StageLayout {
   if (typeof raw !== 'object' || raw === null) return DEFAULT_LAYOUT;
-  const { top, bottom } = raw as { top?: unknown; bottom?: unknown };
+  const { top, bottom, bottomTrack } = raw as { top?: unknown; bottom?: unknown; bottomTrack?: unknown };
   if (!isPanel(top)) return DEFAULT_LAYOUT;
   if (bottom === null) return { top, bottom: null };
   if (!isPanel(bottom) || bottom === top) return DEFAULT_LAYOUT;
-  return { top, bottom };
+  const track = typeof bottomTrack === 'number' && Number.isInteger(bottomTrack) && bottomTrack >= 0 ? bottomTrack : undefined;
+  return withBottomTrack(top, bottom, track);
 }
 
 /** Puts `id` in a slot. Choosing the panel the other slot shows swaps them, so a panel is never on twice. */
 export function setPanel(layout: StageLayout, slot: 'top' | 'bottom', id: PanelId | null): StageLayout {
   if (slot === 'top') {
     if (id === null) return layout;
-    return id === layout.bottom ? { top: id, bottom: layout.top } : { top: id, bottom: layout.bottom };
+    // a track belongs to its slot, so moving views between slots leaves each slot's track where it was
+    return id === layout.bottom ? withBottomTrack(id, layout.top, layout.bottomTrack) : withBottomTrack(id, layout.bottom, layout.bottomTrack);
   }
   if (id === null) return { top: layout.top, bottom: null };
-  if (id === layout.top) return layout.bottom === null ? layout : { top: layout.bottom, bottom: id };
-  return { top: layout.top, bottom: id };
+  if (id === layout.top) return layout.bottom === null ? layout : withBottomTrack(layout.bottom, id, layout.bottomTrack);
+  return withBottomTrack(layout.top, id, layout.bottomTrack);
 }
 
 export function swapPanels(layout: StageLayout): StageLayout {
-  return layout.bottom === null ? layout : { top: layout.bottom, bottom: layout.top };
+  return layout.bottom === null ? layout : withBottomTrack(layout.bottom, layout.top, layout.bottomTrack);
+}
+
+/** Gives the bottom panel its own track, or back to the picker's with `undefined`. */
+export function setBottomTrack(layout: StageLayout, track: number | undefined): StageLayout {
+  return withBottomTrack(layout.top, layout.bottom, track);
 }
 
 export function panelsOf(layout: StageLayout): PanelId[] {

@@ -70,3 +70,13 @@ export function makeTimeline(specs: NoteSpec[], barSeconds = 2, bars = 4, string
     notesForTrack: (i) => (i === 0 ? notes : []),
   };
 }
+
+/** A Timeline of two tracks: the first of `first` at index 0 and the first of `second` at index 1, on `first`'s bars. */
+export function makeTwoTrackTimeline(first: Timeline, second: Timeline): Timeline {
+  const second0 = second.notesForTrack(0).map((n) => ({ ...n, trackIndex: 1 }));
+  return {
+    ...first,
+    tracks: [first.tracks[0], { ...second.tracks[0], index: 1, name: 'Bass' }],
+    notesForTrack: (i) => (i === 0 ? first.notesForTrack(0) : i === 1 ? second0 : []),
+  };
+}

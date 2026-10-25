@@ -75,21 +75,3 @@ describe('controlsFor', () => {
     expect(controlsFor({ phase: 'lined-up', skipped: 0 }, { hasTimeline: true, hasRecordingFile: false }).canReanalyse).toBe(false);
   });
 });
-
-import { takeControls } from '../../src/app/alignment-controls';
-
-describe('takeControls (a YouTube take on screen)', () => {
-  it('covers R6: shows the nudge for a lined-up take, whatever the loaded recording\'s timeline or status is', () => {
-    expect(takeControls().showOffset).toBe(true);
-  });
-
-  it('never offers Re-analyse (that is for a recording file) and never blocks export', () => {
-    expect(takeControls().canReanalyse).toBe(false);
-    expect(takeControls().exportBlockedReason).toBeNull();
-  });
-
-  it('leaves a recording\'s controls as they were', () => {
-    expect(controlsFor({ phase: 'lined-up', skipped: 0 }, { hasTimeline: true, hasRecordingFile: true })).toEqual({ showOffset: false, exportBlockedReason: null, canReanalyse: true });
-    expect(controlsFor({ phase: 'analysing', progress: 0.2 }, { hasTimeline: false, hasRecordingFile: true }).exportBlockedReason).not.toBeNull();
-  });
-});

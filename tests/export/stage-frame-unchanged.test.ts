@@ -37,7 +37,8 @@ function hashOf(width: number, height: number, panels: PanelId[], t: number, loo
 }
 
 const LANDSCAPE: PanelId[][] = [['highway', 'tab'], ['highway', 'neck'], ['tab', 'neck'], ['highway'], ['tab'], ['highway', 'fretboard']];
-const PORTRAIT_STACKED: PanelId[][] = [['highway', 'fretboard'], ['neck'], ['highway', 'neck'], ['tab', 'neck'], ['neck', 'pick']];
+// a portrait frame with the fretboard still stacks; the Real guitar and pick views now run upright as columns
+const PORTRAIT_STACKED: PanelId[][] = [['highway', 'fretboard']];
 
 function keysFor(width: number, height: number, layouts: PanelId[][]): { key: string; run: () => string }[] {
   const out: { key: string; run: () => string }[] = [];
@@ -88,26 +89,6 @@ const PINNED: Record<string, string> = {
   '1080x1920:highway+fretboard@1.3': 'ce6809bf',
   '1080x1920:highway+fretboard@3': 'd938b047',
   '1080x1920:highway+fretboard@1.3:loop': 'da28e0ab',
-  '1080x1920:neck@0.5': '723a0b13',
-  '1080x1920:neck@1.1': 'e48aad6f',
-  '1080x1920:neck@1.3': '46275ea7',
-  '1080x1920:neck@3': 'f7fec579',
-  '1080x1920:neck@1.3:loop': 'ae803d63',
-  '1080x1920:highway+neck@0.5': '179b4dd4',
-  '1080x1920:highway+neck@1.1': '083c9dcf',
-  '1080x1920:highway+neck@1.3': '87e04e95',
-  '1080x1920:highway+neck@3': 'c178685b',
-  '1080x1920:highway+neck@1.3:loop': 'e3ef8aad',
-  '1080x1920:tab+neck@0.5': '653f39b4',
-  '1080x1920:tab+neck@1.1': '17cde232',
-  '1080x1920:tab+neck@1.3': '01006c53',
-  '1080x1920:tab+neck@3': 'cda35af3',
-  '1080x1920:tab+neck@1.3:loop': 'd268ad42',
-  '1080x1920:neck+pick@0.5': '65277bad',
-  '1080x1920:neck+pick@1.1': '84c909f8',
-  '1080x1920:neck+pick@1.3': '6e152bdb',
-  '1080x1920:neck+pick@3': '6cc9f531',
-  '1080x1920:neck+pick@1.3:loop': '06335927',
 };
 
 describe('frames that must not change', () => {

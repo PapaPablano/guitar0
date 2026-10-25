@@ -12,7 +12,7 @@ export interface NeckProfile {
   readonly fretX: readonly number[];
   /** X where the strings end in the photo (the bridge, or the photo's edge). */
   readonly endX: number;
-  /** Y of each of the six strings (high e first) at the X positions in `stringKnotsX`; between them the strings run straight. */
+  /** Y of each string (high one first; six on the guitar photos, four on the bass photo) at the X positions in `stringKnotsX`; between them the strings run straight. */
   readonly stringKnotsX: readonly number[];
   readonly stringKnotsY: readonly (readonly number[])[];
   /** The stretch of the photo the view shows, and the row the neck runs along. */
@@ -73,6 +73,53 @@ export const PICK_PROFILE: NeckProfile = {
   pickX: 880,
 };
 
+/**
+ * The bass photo: a 4-string Jazz Bass with 20 frets, headstock on the left, ending at the bridge. Measured from the 1024 by 572
+ * image in units of 1.35 photo pixels, so the 12th fret sits about as far from the nut as on the guitar photo. The body shows past the
+ * neck but has no pick point, so the pick effects do not apply to it.
+ */
+export const BASS_PROFILE: NeckProfile = {
+  photoWidth: 1382,
+  photoHeight: 772,
+  nutX: 279,
+  fretX: [334.3, 384.8, 432.4, 477.4, 520.6, 561.7, 600.1, 636.7, 671.4, 704, 734.9, 764.1, 791.9, 818.8, 844.3, 868.6, 891.5, 913.3, 933.8, 953.6],
+  endX: 1255.5,
+  stringKnotsX: [279.5, 734.9, 953.6, 1255.5],
+  stringKnotsY: [
+    [363.6, 356.1, 351.9, 346.1],
+    [375.8, 373.3, 372.1, 369.8],
+    [388.3, 390.8, 392, 393.8],
+    [401.2, 408.6, 412.6, 417.7],
+  ],
+  viewStart: 165,
+  viewEnd: 1050,
+  neckRow: 382.4,
+  inlayFrets: [3, 5, 7, 9, 12, 15, 17, 19],
+};
+
+/**
+ * The bass photo with a pick point, for the pick view: the same measurements, plus the point between the two pickups where the
+ * picking hand lands. A bass track's pick view draws on this photo instead of the guitar's, so it carries pick effects too.
+ */
+export const BASS_PICK_PROFILE: NeckProfile = { ...BASS_PROFILE, pickX: 1160 };
+
+/** Which of the bundled photos a track's neck is drawn on: the bass photo for exactly four strings, the guitar photo for any other count. */
+export type NeckPhotoKind = 'guitar' | 'bass';
+
+export function neckPhotoKind(stringCount: number): NeckPhotoKind {
+  return stringCount === 4 ? 'bass' : 'guitar';
+}
+
+/** The profile of the photo the Real guitar view draws a track with `stringCount` strings on. */
+export function neckProfileFor(stringCount: number): NeckProfile {
+  return neckPhotoKind(stringCount) === 'bass' ? BASS_PROFILE : NECK_PROFILE;
+}
+
+/** The profile the pick view draws a track with `stringCount` strings on, when the track is not on the pick view's own guitar photo. */
+export function bassPickProfileFor(stringCount: number): NeckProfile | null {
+  return neckPhotoKind(stringCount) === 'bass' ? BASS_PICK_PROFILE : null;
+}
+
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const finiteList = (v: unknown, min: number): v is number[] => Array.isArray(v) && v.length >= min && v.every(finite);
 const increasing = (list: readonly number[]): boolean => list.every((v, i) => i === 0 || v > list[i - 1]);
@@ -86,7 +133,7 @@ export function isNeckProfile(value: unknown): value is NeckProfile {
   if (!finiteList(p.fretX, 1) || !increasing([p.nutX as number, ...p.fretX])) return false;
   if (!finiteList(p.stringKnotsX, 2) || !increasing(p.stringKnotsX)) return false;
   const knots = p.stringKnotsX.length;
-  if (!Array.isArray(p.stringKnotsY) || p.stringKnotsY.length !== 6) return false;
+  if (!Array.isArray(p.stringKnotsY) || p.stringKnotsY.length < 2) return false;
   if (!p.stringKnotsY.every((row) => finiteList(row, knots) && row.length === knots)) return false;
   if (!finiteList(p.inlayFrets, 0)) return false;
   return p.pickX === undefined || finite(p.pickX);

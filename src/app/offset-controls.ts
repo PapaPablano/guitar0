@@ -16,3 +16,10 @@ export function offsetDirectionLabel(offsetSeconds: number): string {
   return offsetSeconds < 0 ? 'recording starts later' : 'recording starts earlier';
 }
 
+/** Visible text, step size, direction and spoken label for each nudge button, in display order. */
+export const NUDGES = [
+  ['-100 ms', 'coarse', -1, '100 ms later'],
+  ['-10 ms', 'fine', -1, '10 ms later'],
+  ['+10 ms', 'fine', 1, '10 ms earlier'],
+  ['+100 ms', 'coarse', 1, '100 ms earlier'],
+] as const;

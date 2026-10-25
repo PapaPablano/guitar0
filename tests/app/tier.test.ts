@@ -1,7 +1,8 @@
+// The tests marked skip check the Free/Pro limits, which are switched off (see isPro in src/app/tier.ts). Unskip them when the gating comes back.
 import { describe, expect, it, vi } from 'vitest';
 import { availableTools } from '../../src/app/practice-tools';
 import { DEFAULT_LAYOUT, type StageLayout } from '../../src/app/stage-layout';
-import { FREE, isProPanel, layoutForTier, panelAllowed, parseTier, readDevProFlag, readTier, tempoFor, toolsForTier, youtubeAllowed, type TierState } from '../../src/app/tier';
+import { FREE, isProPanel, layoutForTier, panelAllowed, parseTier, readDevProFlag, readTier, tempoFor, toolsForTier, type TierState } from '../../src/app/tier';
 
 const PRO: TierState = { ...FREE, tier: 'pro', youtube: true };
 
@@ -34,7 +35,7 @@ describe('readTier', () => {
 });
 
 describe('tempo', () => {
-  it('Covers AE1. Free cannot leave 100%, in either direction', () => {
+  it.skip('Covers AE1. Free cannot leave 100%, in either direction', () => {
     expect(tempoFor(100, FREE)).toEqual({ percent: 100, blocked: false });
     expect(tempoFor(75, FREE)).toEqual({ percent: 100, blocked: true });
     expect(tempoFor(120, FREE)).toEqual({ percent: 100, blocked: true });
@@ -47,7 +48,7 @@ describe('tempo', () => {
 });
 
 describe('views', () => {
-  it('the real guitar and pick views are Pro', () => {
+  it.skip('the real guitar and pick views are Pro', () => {
     expect(isProPanel('neck')).toBe(true);
     expect(isProPanel('pick')).toBe(true);
     expect(isProPanel('highway')).toBe(false);
@@ -56,10 +57,12 @@ describe('views', () => {
     expect(panelAllowed('fretboard', FREE)).toBe(true);
   });
 
-  it('a saved Pro layout shows free views to a Free user, without repeating a panel, and is kept for Pro', () => {
+  it.skip('a saved Pro layout shows free views to a Free user, without repeating a panel, and is kept for Pro', () => {
     const saved: StageLayout = { top: 'highway', bottom: 'neck' };
     expect(layoutForTier(saved, FREE)).toEqual({ top: 'highway', bottom: 'fretboard' });
     expect(layoutForTier({ top: 'pick', bottom: 'fretboard' }, FREE)).toEqual({ top: 'highway', bottom: 'fretboard' });
+    // the bottom slot keeps its own track when its view is swapped for a free one
+    expect(layoutForTier({ top: 'highway', bottom: 'neck', bottomTrack: 2 }, FREE)).toEqual({ top: 'highway', bottom: 'fretboard', bottomTrack: 2 });
     expect(layoutForTier({ top: 'neck', bottom: 'pick' }, FREE)).toEqual({ top: 'fretboard', bottom: 'highway' });
     expect(layoutForTier({ top: 'neck', bottom: null }, FREE)).toEqual({ top: 'fretboard', bottom: null });
     expect(layoutForTier(DEFAULT_LAYOUT, FREE)).toEqual(DEFAULT_LAYOUT);
@@ -68,15 +71,9 @@ describe('views', () => {
 });
 
 describe('practice tools and YouTube', () => {
-  it('Free keeps only the basic loop; Pro keeps every tool', () => {
+  it.skip('Free keeps only the basic loop; Pro keeps every tool', () => {
     const all = availableTools({ hasAudioSource: true, hasSections: true });
     expect(toolsForTier(all, FREE)).toEqual(['loop']);
     expect(toolsForTier(all, PRO)).toEqual(all);
-  });
-
-  it('Covers R18. YouTube needs Pro and the status switch on', () => {
-    expect(youtubeAllowed(PRO)).toBe(true);
-    expect(youtubeAllowed({ ...PRO, youtube: false })).toBe(false);
-    expect(youtubeAllowed({ ...FREE, youtube: true })).toBe(false);
   });
 });

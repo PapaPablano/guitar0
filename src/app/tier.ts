@@ -32,7 +32,9 @@ export const FEATURE_NAMES: Record<ProFeature, string> = {
   'clean-export': 'Exports without a watermark',
 };
 
-export const isPro = (state: TierState): boolean => state.tier === 'pro';
+// Pro gating is switched off for now: everything is unlocked. Restore the line below (and delete the one under it) to bring the Free/Pro limits back.
+// export const isPro = (state: TierState): boolean => state.tier === 'pro';
+export const isPro = (_state: TierState): boolean => true;
 
 /** Reads the shell's answer defensively: anything that is not clearly Pro is Free. */
 export function parseTier(raw: unknown): TierState {
@@ -90,7 +92,8 @@ export function layoutForTier(layout: StageLayout, state: TierState): StageLayou
   const top = isProPanel(layout.top) ? firstFreePanelNot(layout.bottom) : layout.top;
   if (layout.bottom === null) return { top, bottom: null };
   const bottom = isProPanel(layout.bottom) || layout.bottom === top ? firstFreePanelNot(top) : layout.bottom;
-  return { top, bottom };
+  // the bottom slot keeps its own track whichever view it ends up showing
+  return layout.bottomTrack === undefined ? { top, bottom } : { top, bottom, bottomTrack: layout.bottomTrack };
 }
 
 /** Free keeps the basic loop; every other practice tool is Pro. */
@@ -98,8 +101,8 @@ export function toolsForTier(tools: readonly ToolId[], state: TierState): ToolId
   return isPro(state) ? [...tools] : tools.filter((t) => t === 'loop');
 }
 
-/** YouTube import needs Pro, the build setting (checked by the caller) and the remote switch. */
-export const youtubeAllowed = (state: TierState): boolean => isPro(state) && state.youtube;
+/** Whether the embedded YouTube video is allowed: Pro only, and not behind the shell's remote switch, which the web never has. */
+export const embedAllowed = (state: TierState): boolean => isPro(state);
 
 export const TierContext = createContext<TierState>(FREE);
 

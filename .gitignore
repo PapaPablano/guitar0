@@ -15,3 +15,7 @@ __pycache__/
 
 # Local song files for the dev-only measurement page
 dev/local/
+
+# Local env (API keys)
+.env.local
+client_secret_*.json
