@@ -16,7 +16,7 @@ export type FlowState =
   | { name: 'idle' }
   | { name: 'picking' }
   | { name: 'checking' }
-  | { name: 'report'; variant: 'before-recording' | 'check-only'; result: CheckResult; canHear: boolean }
+  | { name: 'report'; variant: 'before-recording' | 'check-only'; result: CheckResult; canHear: boolean; weak: boolean }
   | { name: 'recording' }
   | { name: 'failed'; reason: string };
 
@@ -71,6 +71,8 @@ export function weaknessLines(share: StreamInspection): string[] {
 
 const sharesBadly = (share: StreamInspection): boolean => weaknessLines(share).length > 0;
 
+const NO_SOUND_LINE = 'No sound came with the share. Share the tab and tick "Share tab audio".';
+
 function failureReason(e: unknown): string {
   const name = e instanceof Error ? e.name : '';
   if (name === 'NotSupportedError' || name === 'NotFoundError') return 'This app cannot capture the screen here, so Record with video is not available on this machine.';
@@ -85,7 +87,8 @@ function failureReason(e: unknown): string {
 export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
   let state: FlowState = { name: 'idle' };
   let inFlight = false;
-  let aborted = false;
+  /** Bumped by every start and every abort, so a call that outlives either can tell it is stale and leave the new run alone. */
+  let generation = 0;
   let stream: MediaStream | null = null;
   let session: CaptureSession | null = null;
   let pendingChoice: RecorderChoice = {};
@@ -140,15 +143,18 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
       return;
     }
     if (state.name === 'checking' || state.name === 'picking' || (state.name === 'report' && state.variant === 'before-recording')) {
-      aborted = true;
+      generation++;
       finishTo({ name: 'failed', reason: 'The share ended before the check finished.' });
     }
   };
 
   async function start(mode: FlowMode): Promise<void> {
+    // A report left on screen does not block a new start: it is replaced, and its share released.
+    if (inFlight && state.name === 'report') finishTo({ name: 'idle' });
     if (inFlight) return;
     inFlight = true;
-    aborted = false;
+    const gen = ++generation;
+    const stale = () => gen !== generation;
     heard = null;
     set({ name: 'picking' });
 
@@ -156,6 +162,7 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
     try {
       acquired = await deps.acquire();
     } catch (e) {
+      if (stale()) return;
       if (e instanceof Error && e.name === 'NotAllowedError') {
         inFlight = false;
         set({ name: 'idle' });
@@ -169,10 +176,9 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
       set({ name: 'failed', reason: failureReason(e) });
       return;
     }
-    if (aborted) {
+    if (stale()) {
+      // Cancelled while the picker was open; only the share this call got is released, the newer run owns the rest.
       acquired.getTracks().forEach((t) => t.stop());
-      inFlight = false;
-      set({ name: 'idle' });
       return;
     }
     stream = acquired;
@@ -180,14 +186,19 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
 
     const share = deps.inspect(stream);
     const stored = readCaptureCheck(deps.storage);
-    const usable = stored !== null && stored.captureWorks && !isStale(stored, share.sampleRate ?? deps.currentSampleRate());
+    // A remembered result that found no sound is checked again, since the share may carry sound now.
+    const usable = stored !== null && stored.captureWorks && stored.outcome !== 'no-audio' && stored.outcome !== 'nothing' && !isStale(stored, share.sampleRate ?? deps.currentSampleRate());
 
     if (mode === 'record' && usable) {
       pendingChoice = { mime: stored.mime ?? undefined, audioBitsPerSecond: stored.audioBitsPerSecond ?? undefined };
-      if (differsFromShare(stored, share)) {
-        // A different share than the one checked: warn again from what it reports, with no test sound.
-        const lines = share.hasAudio ? weaknessLines(share) : ['No sound came with the share. Share the tab and tick "Share tab audio".'];
-        set({ name: 'report', variant: 'before-recording', canHear: false, result: { ...stored, surface: share.surface, echoCancellation: share.echoCancellation, noiseSuppression: share.noiseSuppression, autoGainControl: share.autoGainControl, outcome: share.hasAudio ? stored.outcome : 'no-audio', lines: lines.length ? lines : ['This share differs from the one that was checked.'] } });
+      const differs = differsFromShare(stored, share);
+      if (differs || stored.outcome === 'altered' || sharesBadly(share)) {
+        // A different share than the one checked, or a weak one the player already knows about: warn again, with no test sound.
+        const lines = differs ? (share.hasAudio ? weaknessLines(share) : [NO_SOUND_LINE]) : stored.lines;
+        const result = differs
+          ? { ...stored, surface: share.surface, echoCancellation: share.echoCancellation, noiseSuppression: share.noiseSuppression, autoGainControl: share.autoGainControl, outcome: share.hasAudio ? stored.outcome : ('no-audio' as const), lines: lines.length ? lines : ['This share differs from the one that was checked.'] }
+          : stored;
+        set({ name: 'report', variant: 'before-recording', canHear: false, weak: true, result });
         return;
       }
       startLong(pendingChoice);
@@ -198,13 +209,13 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
     let run: CheckRun | null = null;
     if (share.hasAudio && share.audioLive) {
       try {
-        run = await deps.runCheck(stream, () => aborted);
+        run = await deps.runCheck(stream, stale);
       } catch (e) {
-        if (!aborted) finishTo({ name: 'failed', reason: failureReason(e) });
+        if (!stale()) finishTo({ name: 'failed', reason: failureReason(e) });
         return;
       }
     }
-    if (aborted) {
+    if (stale()) {
       // Stop, or the share ending, already released the stream and moved the state.
       return;
     }
@@ -213,7 +224,7 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
     let lines: string[];
     if (run === null) {
       outcome = 'no-audio';
-      lines = ['No sound came with the share. Share the tab and tick "Share tab audio".'];
+      lines = [NO_SOUND_LINE];
     } else {
       outcome = run.report.verdict;
       lines = describeEffects(run.report);
@@ -225,13 +236,14 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
     heard = run?.heard ?? null;
     pendingChoice = run?.chosen ?? {};
 
+    const weak = outcome !== 'clean' || sharesBadly(share);
     if (mode === 'recheck') {
       release();
-      set({ name: 'report', variant: 'check-only', result, canHear: heard !== null });
+      set({ name: 'report', variant: 'check-only', result, canHear: heard !== null, weak });
       return;
     }
-    if (outcome !== 'clean' || sharesBadly(share)) {
-      set({ name: 'report', variant: 'before-recording', result, canHear: heard !== null });
+    if (weak) {
+      set({ name: 'report', variant: 'before-recording', result, canHear: heard !== null, weak });
       return;
     }
     startLong(pendingChoice);
@@ -245,7 +257,7 @@ export function createCaptureFlow(deps: FlowDeps, hooks: FlowHooks) {
     },
     /** Stop, Close, or the page going away: ends whatever is in flight and returns to idle with the tracks stopped. */
     abort(): void {
-      aborted = true;
+      generation++;
       session?.cancel();
       session = null;
       heard = null;

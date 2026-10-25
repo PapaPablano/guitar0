@@ -24,3 +24,9 @@ export function recordLocks(state: RecordLockState): RecordLocks {
     (state.name === 'report' && state.variant === 'before-recording');
   return locked ? { locked, reason: REASON } : { locked: false, reason: null };
 }
+
+/** Why Record with video and Re-check are unavailable right now, or null when they can be started. A warning left on screen is replaced by a new start. */
+export function recordBusyReason(state: RecordLockState): string | null {
+  const busy = state.name === 'picking' || state.name === 'checking' || state.name === 'recording' || state.name === 'saving';
+  return busy ? 'A recording or check is already running.' : null;
+}

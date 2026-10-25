@@ -11,6 +11,8 @@ function audioMimeFor(videoMime: string): string {
 const BITRATES = [192_000, 320_000];
 /** Time to let the recorders finish after the sound ends. */
 const TAIL_MS = 400;
+/** How long past the sound's own length to wait for it to finish before calling the check failed. */
+const PLAY_GRACE_MS = 5000;
 
 /** How much damage a report shows: the sum of its effects' sizes, with a missing sound counting as the worst. */
 function lossOf(report: CheckReport): number {
@@ -45,6 +47,8 @@ export async function runCaptureCheck(stream: MediaStream, isAborted: () => bool
   const track = stream.getAudioTracks()[0];
   const cleanup: Array<() => void> = [];
   try {
+    // A context made outside a click can start suspended, and a suspended one never plays the sound.
+    await context.resume().catch(() => undefined);
     const signal = buildTestSignal(context.sampleRate);
     const captureStream = new MediaStream([track]);
 
@@ -83,8 +87,12 @@ export async function runCaptureCheck(stream: MediaStream, isAborted: () => bool
     }
     if (candidates.length === 0) encoderSkipped = true;
 
-    const finished = await Promise.race([
+    const finished = await Promise.race<boolean | 'timeout'>([
       playTestSignal(context, signal).then(() => new Promise<void>((r) => setTimeout(r, TAIL_MS))).then(() => true),
+      new Promise<'timeout'>((resolve) => {
+        const timer = setTimeout(() => resolve('timeout'), (signal.samples.length / signal.sampleRate) * 1000 + PLAY_GRACE_MS);
+        cleanup.push(() => clearTimeout(timer));
+      }),
       new Promise<boolean>((resolve) => {
         const poll = setInterval(() => {
           if (isAborted()) {
@@ -105,6 +113,7 @@ export async function runCaptureCheck(stream: MediaStream, isAborted: () => bool
         }),
     );
     await Promise.all(stopped);
+    if (finished === 'timeout') throw new Error('The test sound did not play, so the recording sound could not be checked.');
 
     const captured = mergeChunks(raw);
     if (!finished) {

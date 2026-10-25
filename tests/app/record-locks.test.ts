@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { recordLocks } from '../../src/app/record-locks';
+import { recordBusyReason, recordLocks } from '../../src/app/record-locks';
 
 describe('recordLocks', () => {
   it('covers AE4: locks source switching and file loads while a recording is picking, checking or running, with a reason', () => {
@@ -22,5 +22,19 @@ describe('recordLocks', () => {
 
   it('locks nothing after a Re-check, which never records', () => {
     expect(recordLocks({ name: 'report', variant: 'check-only' })).toEqual({ locked: false, reason: null });
+  });
+});
+
+describe('recordBusyReason', () => {
+  it('says a recording or check is running while picking, checking, recording or saving', () => {
+    for (const state of [{ name: 'picking' }, { name: 'checking' }, { name: 'recording' }, { name: 'saving' }] as const) {
+      expect(recordBusyReason(state)).toMatch(/already running/i);
+    }
+  });
+
+  it('lets Record start again from idle, done, failed and any report, since a new start replaces a report', () => {
+    for (const state of [{ name: 'idle' }, { name: 'done' }, { name: 'failed' }, { name: 'report', variant: 'check-only' }, { name: 'report', variant: 'before-recording' }] as const) {
+      expect(recordBusyReason(state)).toBeNull();
+    }
   });
 });

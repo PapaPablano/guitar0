@@ -11,7 +11,7 @@ export type RecordState =
   | { name: 'idle' }
   | { name: 'picking' }
   | { name: 'checking' }
-  | { name: 'report'; variant: 'before-recording' | 'check-only'; result: CheckResult; canHear: boolean }
+  | { name: 'report'; variant: 'before-recording' | 'check-only'; result: CheckResult; canHear: boolean; weak: boolean }
   | { name: 'recording'; seconds: number; total: number }
   | { name: 'saving' }
   | { name: 'done'; saved: SaveResult }
@@ -130,14 +130,24 @@ export function useRecordWithVideo({ getClock, pauseOwnClocks, totalSeconds, tit
     );
   }
 
+  /** Nothing of the app's own may play under the test sound or the recording, so everything is paused before the picker opens. */
+  const quietThePage = () => {
+    latest.current.pauseOwnClocks?.();
+    latest.current.getClock()?.pause();
+  };
+
   /** Call from a click: the browser only shows its share picker for a user action. */
   const start = useCallback(() => {
     if (!latest.current.getClock()) return;
+    quietThePage();
     void flow.current?.start('record');
   }, []);
 
   /** Runs the sound check again without recording; also needs a click, for the picker. */
-  const recheck = useCallback(() => void flow.current?.start('recheck'), []);
+  const recheck = useCallback(() => {
+    quietThePage();
+    void flow.current?.start('recheck');
+  }, []);
 
   /** Record anyway, from a warning. */
   const proceed = useCallback(() => flow.current?.proceed(), []);

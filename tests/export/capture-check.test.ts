@@ -92,6 +92,13 @@ describe('analyseCapture', () => {
     expect(level!.measured).toBeCloseTo(-6, 0);
   });
 
+  it('reports a louder-than-played capture as a level change with a positive number', () => {
+    const report = analyseCapture(signal, scaled(signal.samples, 2), RATE);
+    const level = report.effects.find((e) => e.kind === 'level-change');
+    expect(level).toBeDefined();
+    expect(level!.measured).toBeGreaterThan(3);
+  });
+
   it('reports automatic gain when every burst comes back at nearly the same level', () => {
     // Each burst is pulled to the level of the loudest, as an automatic gain stage would.
     const target = Math.max(...signal.bursts.map((b) => b.amplitude));

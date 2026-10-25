@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CHECK_VERSION, readCaptureCheck, writeCaptureCheck, type CheckResult } from '../../src/app/capture-check-setting';
 import type { ProfileStorage } from '../../src/audio/profile-store-web';
-import { createCaptureFlow, type CheckRun, type FlowDeps, type FlowState } from '../../src/export/capture-check-flow';
+import { createCaptureFlow, weaknessLines, type CheckRun, type FlowDeps, type FlowState } from '../../src/export/capture-check-flow';
 import type { CaptureSession, StreamInspection } from '../../src/export/record-capture';
 
 function memory(): ProfileStorage & { data: Record<string, string> } {
@@ -247,5 +247,155 @@ describe('the capture check flow', () => {
     expect(flow.state().name).toBe('idle');
     await flow.start('record');
     expect(deps.acquire).toHaveBeenCalledTimes(2);
+  });
+});
+
+const alteredRun: CheckRun = { ...cleanRun, report: { verdict: 'altered', effects: [{ kind: 'lost-highs', measured: -20 }], latencySeconds: 0, aligned: true } };
+
+describe('the capture check flow, failure and restart paths', () => {
+  it('fails, stops the share and stores nothing when the check itself throws', async () => {
+    const { flow, share, storage } = setup({ runCheck: vi.fn(async () => Promise.reject(new Error('The test sound did not play.'))) });
+    await flow.start('record');
+    const state = flow.state();
+    expect(state.name === 'failed' && state.reason).toMatch(/did not play/);
+    for (const t of share.tracks) expect(t.stop).toHaveBeenCalled();
+    expect(readCaptureCheck(storage)).toBeNull();
+  });
+
+  it('fails with the mapped reason when the long recorder cannot start', async () => {
+    const { flow } = setup({
+      startRecorder: vi.fn(() => {
+        throw domError('NotSupportedError');
+      }),
+    });
+    await flow.start('record');
+    const state = flow.state();
+    expect(state.name === 'failed' && state.reason).toMatch(/cannot capture/i);
+  });
+
+  it('checks again when the machine audio rate changed since the stored result', async () => {
+    const { flow, deps, storage } = setup();
+    writeCaptureCheck(storedTabResult({ sampleRate: 44100 }), storage);
+    await flow.start('record');
+    expect(deps.runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the full check again when the stored result says capture did not work', async () => {
+    const { flow, deps, storage } = setup();
+    writeCaptureCheck(storedTabResult({ captureWorks: false, outcome: 'failed' }), storage);
+    await flow.start('record');
+    expect(deps.runCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the check again, not just a warning, when a stored result found no sound and the share now has some', async () => {
+    const { flow, deps, storage } = setup();
+    writeCaptureCheck(storedTabResult({ outcome: 'no-audio' }), storage);
+    await flow.start('record');
+    expect(deps.runCheck).toHaveBeenCalledTimes(1);
+    expect(readCaptureCheck(storage)?.outcome).toBe('clean');
+  });
+
+  it('warns again, with the stored findings, on a repeat of a share that was already found weak', async () => {
+    const { flow, deps, storage } = setup();
+    writeCaptureCheck(storedTabResult({ outcome: 'altered', lines: ['Highs were cut by 20 dB against the middle of the sound, which makes it muffled.'] }), storage);
+    await flow.start('record');
+    expect(deps.startRecorder).not.toHaveBeenCalled();
+    expect(deps.runCheck).not.toHaveBeenCalled();
+    const state = flow.state();
+    expect(state.name === 'report' && state.weak).toBe(true);
+    expect(state.name === 'report' && state.result.lines[0]).toMatch(/Highs were cut/);
+  });
+
+  it('warns when the stored result was clean but the new share still applies processing', async () => {
+    const { flow, deps, storage } = setup({}, { ...tabShare, autoGainControl: true });
+    writeCaptureCheck(storedTabResult(), storage);
+    await flow.start('record');
+    const state = flow.state();
+    expect(state.name === 'report' && state.weak).toBe(true);
+    expect(deps.startRecorder).not.toHaveBeenCalled();
+  });
+
+  it('ends with a failure when the share ends while a warning waits for Record anyway', async () => {
+    const { flow, deps, share } = setup({ runCheck: vi.fn(async () => alteredRun) });
+    await flow.start('record');
+    share.end();
+    const state = flow.state();
+    expect(state.name === 'failed' && state.reason).toMatch(/share ended/i);
+    flow.proceed();
+    expect(deps.startRecorder).not.toHaveBeenCalled();
+  });
+
+  it('marks a clean Re-check as not weak and an altered one as weak', async () => {
+    const clean = setup();
+    await clean.flow.start('recheck');
+    const cleanState = clean.flow.state();
+    expect(cleanState.name === 'report' && cleanState.weak).toBe(false);
+
+    const weak = setup({ runCheck: vi.fn(async () => alteredRun) });
+    await weak.flow.start('recheck');
+    const weakState = weak.flow.state();
+    expect(weakState.name === 'report' && weakState.weak).toBe(true);
+  });
+
+  it('lets Record start again straight after a Re-check report, instead of doing nothing until Close', async () => {
+    const { flow, deps } = setup();
+    await flow.start('recheck');
+    expect(flow.state().name).toBe('report');
+    await flow.start('record');
+    expect(deps.acquire).toHaveBeenCalledTimes(2);
+    expect(flow.state().name).toBe('recording');
+  });
+
+  it('replaces a warning that is still showing when Record is pressed again', async () => {
+    const first = fakeShare();
+    const second = fakeShare();
+    const acquire = vi.fn().mockResolvedValueOnce(first.stream).mockResolvedValueOnce(second.stream);
+    const { flow, deps } = setup({ acquire, runCheck: vi.fn().mockResolvedValueOnce(alteredRun) });
+    await flow.start('record');
+    expect(flow.state().name).toBe('report');
+    await flow.start('record');
+    // The first share is released and a fresh one is asked for; the remembered weak result warns again without a new test.
+    for (const t of first.tracks) expect(t.stop).toHaveBeenCalled();
+    expect(deps.acquire).toHaveBeenCalledTimes(2);
+    expect(deps.runCheck).toHaveBeenCalledTimes(1);
+    expect(flow.state().name).toBe('report');
+    flow.proceed();
+    expect(deps.startRecorder).toHaveBeenCalledWith(second.stream, expect.anything());
+  });
+
+  it('leaves a newer run alone when an older cancelled one finishes later', async () => {
+    const first = fakeShare();
+    const second = fakeShare();
+    let resolveFirst: (s: MediaStream) => void = () => undefined;
+    const acquire = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<MediaStream>((r) => (resolveFirst = r)))
+      .mockImplementationOnce(async () => second.stream);
+    const { flow, deps } = setup({ acquire });
+    const old = flow.start('record');
+    await Promise.resolve();
+    flow.abort();
+    await flow.start('record');
+    expect(flow.state().name).toBe('recording');
+    resolveFirst(first.stream);
+    await old;
+    for (const t of first.tracks) expect(t.stop).toHaveBeenCalled();
+    for (const t of second.tracks) expect(t.stop).not.toHaveBeenCalled();
+    expect(flow.state().name).toBe('recording');
+    expect(deps.startRecorder).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('weaknessLines', () => {
+  it('names each processing stage still applied and the surface that carries other sound', () => {
+    expect(weaknessLines({ ...tabShare, echoCancellation: true }).join(' ')).toMatch(/echo cancellation/i);
+    expect(weaknessLines({ ...tabShare, noiseSuppression: true }).join(' ')).toMatch(/noise suppression/i);
+    expect(weaknessLines({ ...tabShare, autoGainControl: true }).join(' ')).toMatch(/automatic gain/i);
+    expect(weaknessLines({ ...tabShare, surface: 'window' }).join(' ')).toMatch(/window/i);
+    expect(weaknessLines({ ...tabShare, surface: 'monitor' }).join(' ')).toMatch(/whole screen/i);
+  });
+
+  it('has nothing to say about a clean tab share', () => {
+    expect(weaknessLines(tabShare)).toEqual([]);
   });
 });

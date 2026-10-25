@@ -24,7 +24,7 @@ import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
 import { RecordBanner } from './RecordBanner';
 import { useRecordWithVideo } from './useRecordWithVideo';
-import { recordLocks } from './record-locks';
+import { recordBusyReason, recordLocks } from './record-locks';
 import { captureAvailable, recordModeOffered } from '../export/record-capture';
 import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
@@ -1198,7 +1198,7 @@ export function App() {
             onClose={() => setExportOpen(false)}
             onRecordWithVideo={recordOffered ? () => void record.start() : undefined}
             onRecheckCapture={recordOffered ? () => void record.recheck() : undefined}
-            recordBusyReason={record.state.name === 'recording' || record.state.name === 'saving' || record.state.name === 'picking' || record.state.name === 'checking' ? 'A recording or check is already running.' : null}
+            recordBusyReason={recordBusyReason(record.state)}
             notice={exportVideoNotice(ytBacking.videoId !== null)}
             loopRange={exportLoopRange}
             alignment={exportAlignment}

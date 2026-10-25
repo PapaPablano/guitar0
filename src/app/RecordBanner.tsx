@@ -35,7 +35,7 @@ export function RecordBanner({ state, onStop, onDismiss, onProceed, onHear }: Re
       )}
       {state.name === 'report' && (
         <>
-          <strong>{state.result.outcome === 'clean' ? 'The sound came through cleanly.' : 'The recording may not sound like the video.'}</strong>
+          <strong>{state.weak ? 'The recording may not sound like the video.' : 'The sound came through cleanly.'}</strong>
           <ul>
             {state.result.lines.map((line) => (
               <li key={line}>{line}</li>
