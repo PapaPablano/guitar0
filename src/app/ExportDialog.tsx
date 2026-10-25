@@ -37,6 +37,8 @@ interface ExportDialogProps {
   /** Where the recording sits against the tab; the export lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
   onClose: () => void;
+  /** Starts the recorded export that includes the YouTube video; the button shows only when this is given. */
+  onRecordWithVideo?: () => void;
   /** A line to show at the top of the dialog, such as what the export leaves out; nothing when null. */
   notice?: string | null;
 }
@@ -51,7 +53,7 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose, notice = null }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose, onRecordWithVideo, notice = null }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
@@ -291,6 +293,19 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
           {phase.name === 'idle' && (
             <button type="button" onClick={() => void saveAudio()}>
               Save audio (WAV)
+            </button>
+          )}
+          {phase.name === 'idle' && onRecordWithVideo && (
+            <button
+              type="button"
+              title="Records this window live, with the video player and its sound, for as long as the song lasts"
+              onClick={() => {
+                // Called first, in the click, so the browser still treats the share picker as user-initiated.
+                onRecordWithVideo();
+                onClose();
+              }}
+            >
+              Record with video
             </button>
           )}
           {phase.name === 'failed' && (

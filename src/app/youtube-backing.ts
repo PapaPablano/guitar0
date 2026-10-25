@@ -27,9 +27,9 @@ export function ownClock(choice: Omit<ClockChoice, 'video' | 'source'>): Clock |
   return choice.stems ?? choice.userClock ?? choice.session ?? undefined;
 }
 
-/** The sentence the export dialog shows while a video is attached, so the player knows what the export will carry. */
+/** The sentence the export dialog shows while a video is attached, so the player knows what each export will carry. */
 export function exportVideoNotice(attached: boolean): string | null {
-  return attached ? 'The YouTube video is not part of the export. The exported video uses the synth, or your loaded recording.' : null;
+  return attached ? 'The video export leaves out the YouTube video and uses the synth, or your loaded recording. To include the video and its sound, use Record with video.' : null;
 }
 
 /** Whether the video's audio is what is heard, so the controls that only suit the synth (play along, tone) stay out of the way. */

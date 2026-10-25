@@ -22,6 +22,9 @@ import { slicePcm } from '../export/audio-file';
 import { decodeRecordingWindow, renderStemMix, renderStemMixRange } from '../export/stem-audio';
 import { initialMix, type MixState } from '../audio/mix-gains';
 import { ExportDialog } from './ExportDialog';
+import { RecordBanner } from './RecordBanner';
+import { useRecordWithVideo } from './useRecordWithVideo';
+import { captureAvailable, recordModeOffered } from '../export/record-capture';
 import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
@@ -651,6 +654,7 @@ export function App() {
   /** The clock the page follows now, which may be the video's; stems take their starting position from it. */
   const followedClock = useRef<Clock | undefined>(undefined);
   const videoHeard = videoIsHeard(ytBacking.videoId !== null, ytBacking.source);
+  const recordOffered = recordModeOffered({ videoAttached: ytBacking.videoId !== null, source: ytBacking.source, canCapture: captureAvailable() });
 
   // What the player is told about exact jumps: a held jump first, then a recording that cannot be made exact, then what is exact so far.
   const warnsOfApproximateJumps = copyState === 'failed' || copyState === 'too-long';
@@ -661,6 +665,7 @@ export function App() {
 
   const clock: Clock | undefined = chooseClock({ video: ytBacking.activeClock, source: ytBacking.source, stems: stems?.clock, userClock, session: session?.clock });
   followedClock.current = clock;
+  const record = useRecordWithVideo({ getClock: () => followedClock.current, totalSeconds: session?.timeline.durationSeconds ?? 0, title: session?.timeline.title ?? '' });
   const sourceTimeline = session?.timeline;
   // The tab is shown in the chosen tuning; the sound always comes from the file.
   const timeline = useMemo(() => {
@@ -1176,6 +1181,7 @@ export function App() {
             view={{ lookahead, labelMode, neckCues }}
             onNeckCuesChange={changeNeckCues}
             onClose={() => setExportOpen(false)}
+            onRecordWithVideo={recordOffered ? () => void record.start() : undefined}
             notice={exportVideoNotice(ytBacking.videoId !== null)}
             loopRange={exportLoopRange}
             alignment={exportAlignment}
@@ -1194,6 +1200,7 @@ export function App() {
             }
           />
         )}
+        <RecordBanner state={record.state} onStop={record.stop} onDismiss={record.dismiss} />
         {ytBacking.videoId && (
           <YoutubeDock key={`${tabKey}:${ytBacking.videoId}`} videoId={ytBacking.videoId} source={ytBacking.source} onPlayer={ytBacking.onPlayer} onError={ytBacking.onError} />
         )}

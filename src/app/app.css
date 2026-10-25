@@ -903,3 +903,28 @@ button.primary:hover:not(:disabled) {
 .video-panel {
   flex-wrap: wrap;
 }
+
+/* The "Record with video" status: top left so it never covers the docked video (bottom right by default). */
+.record-banner {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+.record-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e5484d;
+}

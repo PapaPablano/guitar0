@@ -43,8 +43,8 @@ describe('ownClock', () => {
 });
 
 describe('export notice', () => {
-  it('tells the player the video is not in the export only while one is attached', () => {
-    expect(exportVideoNotice(true)).toMatch(/not part of the export/);
+  it('tells the player the offline export leaves the video out, and where to include it, only while one is attached', () => {
+    expect(exportVideoNotice(true)).toMatch(/leaves out the YouTube video[\s\S]*Record with video/);
     expect(exportVideoNotice(false)).toBeNull();
   });
 });

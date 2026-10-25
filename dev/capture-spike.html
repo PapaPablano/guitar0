@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capture spike</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 16px; max-width: 760px; }
+      .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+      button { padding: 6px 12px; }
+      #player iframe { border: 0; width: 100%; height: 100%; }
+      video { max-width: 100%; background: #000; }
+      pre { background: #8881; padding: 8px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Capture spike</h1>
+    <p>Dev-only (U1 of the export-with-video plan). Start the video, press Record, pick this tab in the picker and tick "Share tab audio". It records for the length below, then plays the file back so the dock's picture and audio can be checked.</p>
+    <div class="row">
+      Video id or link <input id="vid" placeholder="paste the id from your tab" style="width: 16em" />
+      <button id="load">Load video</button>
+      Seconds <input id="secs" type="number" value="8" min="2" max="60" style="width: 4em" />
+      <button id="rec">Record</button>
+    </div>
+    <div id="player" style="width: 200px; height: 200px; background: #000"></div>
+    <h2>Result</h2>
+    <video id="out" controls></video>
+    <pre id="log">waiting</pre>
+    <script type="module" src="./capture-spike.ts"></script>
+  </body>
+</html>
