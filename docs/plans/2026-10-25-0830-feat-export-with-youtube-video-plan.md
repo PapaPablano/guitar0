@@ -59,4 +59,4 @@ The product owner's research disagrees with that. Those lines change in U0, and 
 ## Open questions
 
 - What is the source for the rule? (U0)
-- Can the desktop shell capture itself? (U1)
+- Can the desktop shell capture itself? (U1) The app's own sound check now records the answer on the first Record with video or Re-check on each machine (`src/app/capture-check-setting.ts`: whether capture works, the surface, which processing is active). Not yet run on the desktop build; the answer is still open until someone does.

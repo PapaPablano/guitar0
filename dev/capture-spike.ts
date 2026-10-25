@@ -2,6 +2,10 @@
  * Dev-only spike for U1 of the export-with-video plan (not shipped, not a test: it needs a person at the capture picker).
  * Serve with `npm run dev` and open `/dev/capture-spike.html`. It checks that this browser can capture the page with
  * its audio, that the YouTube player's picture is in the recording, and what container the recorder produces.
+ *
+ * The app now has its own sound check (src/export/capture-check-flow.ts), which runs on the first Record with video and
+ * saves what it finds per machine (src/app/capture-check-setting.ts). Use that for the audio question; this spike remains
+ * only for looking at the player's picture in a recording.
  */
 import { mountPlayer, type EmbeddedPlayer } from '../src/app/youtube-player';
 
