@@ -14,18 +14,21 @@ interface OffsetSliderProps {
   onLoad: (file: File) => void;
   onOffsetChange: (seconds: number) => void;
   onRemove: () => void;
+  /** Why loading is unavailable right now, such as a recording with video being made; null when it is available. */
+  loadLockedReason?: string | null;
 }
 
-export function OffsetSlider({ offsetSeconds, offsetControl, autoPlaced = false, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
+export function OffsetSlider({ offsetSeconds, offsetControl, autoPlaced = false, fileName, error, onLoad, onOffsetChange, onRemove, loadLockedReason = null }: OffsetSliderProps) {
   const input = useRef<HTMLInputElement>(null);
   // The controls show for a loaded recording and for the stems; the note below says which one they move.
   const loaded = offsetSeconds !== null;
 
   return (
     <div className="audio-sync" role="group" aria-label="Your recording">
-      <button type="button" onClick={() => input.current?.click()}>
+      <button type="button" disabled={loadLockedReason !== null} onClick={() => input.current?.click()}>
         {loaded ? 'Replace recording' : 'Load your recording'}
       </button>
+      {loadLockedReason && <span className="muted">{loadLockedReason}</span>}
       <input
         ref={input}
         type="file"

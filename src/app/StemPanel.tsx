@@ -28,6 +28,8 @@ interface StemPanelProps {
   mix: MixState;
   onMixChange: (mix: MixState) => void;
   onActivate: (stems: ActiveStems | null) => void;
+  /** Why separating is unavailable right now, such as a recording with video being made; null when it is available. */
+  lockedReason?: string | null;
 }
 
 const savedStems = new SavedStems(shellStemIndex);
@@ -41,7 +43,7 @@ interface Source {
 }
 
 /** Separate and mix controls for a loaded recording. Renders nothing outside the desktop app. */
-export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate }: StemPanelProps) {
+export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate, lockedReason = null }: StemPanelProps) {
   const desktop = isDesktop();
   const tier = useTier();
   const [savedJob, setSavedJob] = useState<string | null>(null);
@@ -176,9 +178,10 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
     <div className="stems" role="group" aria-label="Stems">
       {!active && control.visible && (
         <div className="stems-row">
-          <button type="button" disabled={control.disabled} onClick={separateRecording}>
+          <button type="button" disabled={control.disabled || lockedReason !== null} onClick={separateRecording}>
             {control.label}
           </button>
+          {lockedReason && <span className="muted">{lockedReason}</span>}
           {busy && (
             <>
               <progress value={progress} max={1} aria-label="Separation progress" />

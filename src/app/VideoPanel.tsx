@@ -15,10 +15,12 @@ interface VideoPanelProps {
   firstNoteSeconds: number;
   /** The YouTube Data API key; null hides search. */
   apiKey: string | null;
+  /** Why switching what you hear is unavailable right now, such as a recording with video being made; null when it is available. */
+  sourceLockedReason?: string | null;
 }
 
 /** Attach a YouTube video by link or search, choose Original or Synth, and line the video up with the tab. */
-export function VideoPanel({ backing, tabSeconds, firstNoteSeconds, apiKey }: VideoPanelProps) {
+export function VideoPanel({ backing, tabSeconds, firstNoteSeconds, apiKey, sourceLockedReason = null }: VideoPanelProps) {
   const [link, setLink] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -108,11 +110,12 @@ export function VideoPanel({ backing, tabSeconds, firstNoteSeconds, apiKey }: Vi
         <>
           <span className="stems-row" role="group" aria-label="What you hear">
             {(Object.keys(SOURCE_LABELS) as AudioSource[]).map((choice) => (
-              <button key={choice} type="button" aria-pressed={backing.source === choice} disabled={!backing.ready} onClick={() => backing.setSource(choice)}>
+              <button key={choice} type="button" aria-pressed={backing.source === choice} disabled={!backing.ready || sourceLockedReason !== null} onClick={() => backing.setSource(choice)}>
                 {SOURCE_LABELS[choice]}
               </button>
             ))}
           </span>
+          {sourceLockedReason && <span className="muted">{sourceLockedReason}</span>}
           <button type="button" disabled={!backing.ready} onClick={() => backing.syncHere(firstNoteSeconds)} title="Scrub the video to the first note of the tab, then press this">
             Sync here
           </button>
