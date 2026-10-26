@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: a better export of the full screen with YouTube</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#5d5b55;--card:#ffffff;--line:#dedbd2;--accent:#1f5fbf;--accent-soft:#e6eefb;--accent-text:#143f80;--warn-soft:#fbf0dc;--warn-text:#7a4a05;--ok-soft:#e4f3e8;--ok-text:#1f5a31}
+@media (prefers-color-scheme:dark){:root{--bg:#161616;--fg:#ececea;--muted:#a9a79f;--card:#1f1f1e;--line:#3a3935;--accent:#7fb0ff;--accent-soft:#1d2a40;--accent-text:#b5d0ff;--warn-soft:#3a2d12;--warn-text:#f0c987;--ok-soft:#1b3023;--ok-text:#a6dcb5}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:900px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .6rem}
+h2{font-size:1.35rem;margin:2.4rem 0 .8rem;padding-top:.4rem;border-top:1px solid var(--line)}
+h3{font-size:1.1rem;margin:0 0 .4rem}
+p,li{max-width:72ch}
+code{font:.88em ui-monospace,Consolas,monospace;background:var(--accent-soft);color:var(--accent-text);padding:.05em .35em;border-radius:4px}
+.eyebrow{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:.2rem 1rem;margin:.6rem 0 1rem}
+dl.meta dt{color:var(--muted)}dl.meta dd{margin:0}
+.stats{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.15rem .7rem;background:var(--card);font-size:.85rem}
+.chip.hi{background:var(--ok-soft);color:var(--ok-text);border-color:transparent}
+.chip.mid{background:var(--warn-soft);color:var(--warn-text);border-color:transparent}
+.chip.ax{background:var(--accent-soft);color:var(--accent-text);border-color:transparent}
+nav.jump ol{padding-left:1.2rem}
+article.idea{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:18px 0}
+article.idea dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem;margin:.8rem 0 0}
+article.idea dt{font-weight:600;color:var(--muted)}article.idea dd{margin:0;max-width:68ch}
+.callout{background:var(--warn-soft);color:var(--warn-text);border-radius:8px;padding:.7rem 1rem;margin:1rem 0}
+.callout strong{color:inherit}
+.callout.info{background:var(--accent-soft);color:var(--accent-text)}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{border-bottom:1px solid var(--line);padding:.45rem .5rem;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+figure{margin:1rem 0}figcaption{font-size:.85rem;color:var(--muted);margin-top:.3rem}
+svg text{font:12px system-ui,sans-serif;fill:var(--fg)}
+svg .b{fill:var(--card);stroke:var(--line);stroke-width:1.2}
+svg .a{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+svg .w{fill:var(--warn-soft);stroke:var(--warn-text);stroke-width:1.2}
+svg .ln{stroke:var(--muted);stroke-width:1.4;fill:none}
+svg .m{fill:var(--muted)}
+footer.composition-signal{margin-top:3rem;color:var(--muted);font-size:.8rem;border-top:1px solid var(--line);padding-top:.8rem}
+@media (max-width:560px){dl.meta,article.idea dl{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="eyebrow">Ideation</div>
+<h1>A better export of the full screen with YouTube than the record</h1>
+<dl class="meta">
+<dt>Date</dt><dd><time datetime="2026-10-25">2026-10-25</time></dd>
+<dt>Topic</dt><dd>export-fullscreen-with-youtube</dd>
+<dt>Focus</dt><dd>a better export of full screen with youtube than the record</dd>
+<dt>Mode</dt><dd>Topic in this codebase (Tab Highway, Tauri desktop shell and web)</dd>
+</dl>
+<div class="stats">
+<span class="chip">19 candidates merged from 5 frames</span>
+<span class="chip">4 cross-cutting syntheses</span>
+<span class="chip hi">7 survivors</span>
+<span class="chip">5 axes covered</span>
+</div>
+<div class="callout info"><strong>Read this first.</strong> Every idea that keeps the YouTube picture in the file depends on one unrecorded fact: whether screen capture (<code>getDisplayMedia</code>, and the element-crop APIs) works inside the Tauri WebView2 shell. The spike meant to answer it, <code>dev/capture-spike.ts</code>, has no recorded result. Idea 2 answers it first and unblocks the rest.</div>
+</header>
+
+<section id="grounding-context">
+<h2>Codebase Context</h2>
+<p>Today's "Record with video" (<code>src/export/record-capture.ts</code>, <code>src/app/useRecordWithVideo.ts</code>) screen-captures the live window with <code>getDisplayMedia</code> and <code>MediaRecorder</code>. It requests 30 fps, fixes video at 8 Mbps and audio at 192 kbps, and sets no resolution, so the file is as large as whatever window or tab the player picked. The browser picker appears every time and the player must tick "share tab audio". The recording runs in real time from 0, forces the loop off and tempo to 1x, ignores the saved video offset, and can include the record banner and dialog in the frame. Leaving the page discards it. The blob is held in memory until stop.</p>
+<p>The offline export is a different path. <code>renderStageFrame</code> (<code>src/render/stage-frame.ts:98</code>) is pure in time, <code>encoder.worker.ts</code> encodes it with WebCodecs at 1920x1080 at 60 fps or 1080x1920 at 30 fps, faster than real time, and it honors the video offset through <code>tabTimeAt</code>. It never draws the YouTube dock or carries YouTube sound (plan requirement R11 and AE5, amended on 2026-10-25 only to let the recorded export show the dock).</p>
+<p>The YouTube iframe is cross-origin, so its picture can reach a file only through display capture. Canvas reads and WebCodecs cannot get at it. The owner has accepted the YouTube terms and copyright risk and chose to proceed without a written source on 2026-10-25. The legal review of "Record with video" and the payment-provider policy check are still open in <code>docs/launch-checklist.md</code>. The YouTube developer policies do not name screen recording. They bar storing copies of the content (III.E.1) and separating or modifying its audio or video (III.I.7), and a legal reading of that is not made.</p>
+<p>Outside signal (moderate): Mediabunny is the successor to mp4-muxer and drives WebCodecs from a canvas deterministically. Region Capture and Element Capture crop a display-capture track to one element but work only on self-capture and are unverified in WebView2. Windows Graphics Capture is the standard native way to capture a WebView2 window, BitBlt returns a white frame, and no ready-made Tauri plugin exists. Soundslice shares by link and keeps user recordings audio-only. Nothing found on how Synthesia, Yousician or Rocksmith export video.</p>
+</section>
+
+<section id="topic-axes">
+<h2>Topic Axes</h2>
+<ol>
+<li>Capture mechanics: how pixels and sound get in (picker, tab versus window, WebView2, native paths)</li>
+<li>Frame fidelity: resolution, frame rate, sync, offset alignment, window chrome, dock composition</li>
+<li>Time and flow: real-time cost, forced rate and loop, stop and cancel, batch</li>
+<li>YouTube rules: dock visibility, terms, what the offline export may not include</li>
+<li>Destination and purpose: what the file is for, sharing formats, watermark, tier</li>
+</ol>
+</section>
+
+<section id="ranked-ideas">
+<h2>Ranked Ideas</h2>
+<nav class="jump" aria-label="Ranked ideas">
+<ol>
+<li><a href="#idea-1">1. Keyed slot: offline-quality stage, live dock only</a></li>
+<li><a href="#idea-2">2. Capture doctor, clean audio and guarded start</a></li>
+<li><a href="#idea-3">3. Clip recording: a loop or section at a tempo step</a></li>
+<li><a href="#idea-4">4. Studio package: stage with a reserved dock slot and a sync sidecar</a></li>
+<li><a href="#idea-5">5. Clean frame: crop the shot to stage and dock</a></li>
+<li><a href="#idea-6">6. Native Windows capture of the app window</a></li>
+<li><a href="#idea-7">7. Finishing pass: a clean, fast-start, attributed file</a></li>
+</ol>
+</nav>
+
+<article class="idea" id="idea-1">
+<div class="eyebrow">Idea 1 · <span class="chip ax">Axis 2 Frame fidelity</span></div>
+<h3>1. Keyed slot: offline-quality stage, live dock only</h3>
+<p>Stop recording the whole window. Render the highway or neck through the existing deterministic <code>renderStageFrame</code> path at true 1080p60 (or vertical), with a reserved 200x200 slot where the dock sits. In one real-time pass, capture only the dock (its picture and sound) and log a clock trace of tab time against wall time, including buffering holds. Composite the dock clip into the slot and mux its audio. Because the stage is re-rendered from the trace, a stall in the video leaves the stage in step with it.</p>
+<figure>
+<svg viewBox="0 0 720 250" role="img" aria-label="Before and after: today the whole window is recorded; the keyed slot renders the stage offline and composites a live dock clip">
+<text x="10" y="18" class="m">Today</text>
+<rect class="b" x="10" y="28" width="150" height="46" rx="6"/><text x="22" y="56">Whole window</text>
+<rect class="w" x="230" y="28" width="190" height="46" rx="6"/><text x="242" y="49">Screen capture, 30 fps</text><text x="242" y="65">chrome and banner in shot</text>
+<rect class="b" x="490" y="28" width="150" height="46" rx="6"/><text x="502" y="56">Window-sized file</text>
+<path class="ln" d="M160 51H228M420 51H488"/>
+<text x="10" y="112" class="m">Keyed slot</text>
+<rect class="a" x="10" y="124" width="170" height="46" rx="6"/><text x="22" y="145">Offline stage render</text><text x="22" y="161">1080p60, offset honored</text>
+<rect class="w" x="10" y="184" width="170" height="46" rx="6"/><text x="22" y="205">Live dock clip + sound</text><text x="22" y="221">200x200, one pass</text>
+<rect class="b" x="250" y="184" width="170" height="46" rx="6"/><text x="262" y="205">Clock trace</text><text x="262" y="221">tab time vs wall time</text>
+<rect class="a" x="490" y="150" width="160" height="56" rx="6"/><text x="502" y="173">Composite + mux</text><text x="502" y="189">one clean 1080p60 file</text>
+<path class="ln" d="M180 147H336V165H488M180 207H215M420 207H455V190H488M335 184V165"/>
+</svg>
+<figcaption>Illustrative only. The live dock clip is the only part that depends on screen capture.</figcaption>
+</figure>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>stage-frame.ts:95-96</code> "The video export draws every frame through this function, so a frame matches what the page shows at that time." <code>direct:</code> the record path requests <code>frameRate: 30</code> (<code>record-capture.ts:67</code>), fixes 8 Mbps (<code>:85</code>), and takes no alignment (<code>useRecordWithVideo.ts:13-18</code>). <code>direct:</code> plan E14 "Quality depends on window size and screen capture, below the offline render." <code>direct:</code> <code>youtube-clock.ts:297-298</code> the views wait while the video loads. <code>external:</code> Region and Element Capture crop a display-capture track to one element, self-capture only. <code>reasoned:</code> live TV records each source clean beside the program mix, so the clean layer never inherits the weakest source's quality.</dd>
+<dt>Rationale</dt>
+<dd>It is the only candidate that makes the file visibly better than a screen record: crisp 60 fps stage, no browser chrome or banner, the offset honored, and a vertical variant from the same pass. YouTube pixels stay only in the small dock area, which is the exposure the owner already accepted.</dd>
+<dt>Downsides</dt>
+<dd>The hardest idea here. It needs same-tab capture plus Region Capture working in WebView2 (a window-surface pick cannot be cropped). Retiming the dock clip against the offline frames is tricky because the embed reports its position in coarse steps (<code>youtube-clock.ts:49-50</code>), and audio can glitch across stalls. The dock is only 200x200, so the video stays small. It still puts YouTube picture and sound in the file, so R11 and AE5 need the same amendment the recorded export got.</dd>
+<dt>Confidence</dt><dd>55%</dd>
+<dt>Complexity</dt><dd>High</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-2">
+<div class="eyebrow">Idea 2 · <span class="chip ax">Axis 1 Capture mechanics</span></div>
+<h3>2. Capture doctor, clean audio and guarded start</h3>
+<p>Make the real-time pass a reliable step before making it prettier, and make its sound clean. Promote <code>dev/capture-spike</code> into a one-time "capture doctor" that probes WebView2 (display capture, tab audio, element crop) and records which method works, behind one capture-source interface so the recorder, spike and later methods share the same codec, bitrate and chunk settings.</p>
+<p><strong>Clean audio.</strong> The recorder asks for <code>audio: true</code> with no audio options, so the browser may run echo cancellation, noise suppression and automatic gain on captured music. Request the audio with those three processing stages off, and have the doctor record which of them are actually active in WebView2, the audio sample rate, and whether the track carries the tab's sound only or the whole system's. The doctor makes a short test clip with processing on and off so the player or developer can compare. Raise the audio bitrate only if the test shows the codec, not the processing, is the limit.</p>
+<p>At record time, check the stream right after the picker, before the clock moves: an audio track is present, the shared surface is this window, the dock is in the frame, the player is ready. Then run a short countdown. Add a leave-page guard, and lock the dock in place and block covering it while recording, as plan U4 asks.</p>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>useRecordWithVideo.ts:81-82</code> <code>clock.seek(0); clock.play();</code> runs with no wait for player readiness. <code>direct:</code> the spike labels the missing audio case <code>'NONE (tick "Share tab audio" in the picker)'</code> and nothing checks it. <code>direct:</code> the spike and the shipped recorder differ in fallback list, bitrate (6 versus 8 Mbps) and chunk length, and the MIME list is duplicated. <code>direct:</code> plan E18 "The dock must stay visible, unobstructed and unminimized for the whole recording (R8)." <code>direct:</code> no <code>beforeunload</code> guard exists in <code>src/</code>. <code>direct:</code> <code>record-capture.ts:67-69</code> every capture request is <code>audio: true</code> with no audio constraints, and <code>:85</code> records at <code>audioBitsPerSecond: 192_000</code>. <code>reasoned:</code> Chromium can apply echo cancellation, noise suppression and automatic gain to captured audio unless they are switched off, which would flatten or pump music; YouTube's audio is also already lossy, so the record adds a second lossy pass. Which of these is active in WebView2 was not verified, which is why the doctor measures it.</dd>
+<dt>Rationale</dt>
+<dd>A real-time export means one mistake costs the whole song length, and today the failures are silent: a forgotten checkbox, a wrong surface, a covered dock. This also turns the biggest unknown into a recorded fact, which decides whether ideas 1, 5 and 6 are worth building. The player named audio as where the quality is lost, and none of the other ideas change the audio path. Turning off the processing is a one-line change to test first.</dd>
+<dt>Downsides</dt>
+<dd>Apart from the audio, it does not change how the file looks. The audio cause is a hypothesis until the test clip is compared. If processing is not the cause, the remaining loss is the double lossy encode, which only idea 4 (no YouTube sound in the file) avoids. The verifier judged the streamed-to-disk piece of the original candidate cosmetic for song-length recordings, so only the leave-page guard is kept. The doctor needs a person at the picker once per environment.</dd>
+<dt>Confidence</dt><dd>80%</dd>
+<dt>Complexity</dt><dd>Low to Medium</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-3">
+<div class="eyebrow">Idea 3 · <span class="chip ax">Axis 3 Time and flow</span></div>
+<h3>3. Clip recording: a loop or section at a tempo step</h3>
+<p>Drop the rule that every recording starts at 0 and lasts the whole song. Let the recording cover the current loop or a chosen section, at one of the 25-point tempo steps the YouTube player can follow, with a short count-in and the clip length shown first. A 15-second riff costs 15 seconds. Whole-song export stays with the offline path.</p>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>useRecordWithVideo.ts:72</code> "A loop would wrap the song before the end, and a tempo change would make the recording a different length," followed by <code>setLoop(null)</code> and <code>setRate(1)</code>. <code>direct:</code> <code>tempo-steps.ts:1</code> lists speeds the embedded player offers, so the video can always follow. <code>direct:</code> <code>dev/etsy-ads/videos/etsy-15s/</code> holds 15-second cuts, and <code>launch-checklist.md:55</code> lists a demo video as open. <code>direct:</code> <code>README.md:13</code> "loops and tempo changes apply to practice only."</dd>
+<dt>Rationale</dt>
+<dd>The real-time cost only hurts because the unit is the whole song. A clip turns the weakness into a feature and makes the app's core, loops and slowed tempo, exportable. It needs no new capture technology.</dd>
+<dt>Downsides</dt>
+<dd>The loop wrap and seek settle have to be handled so the take starts clean (<code>SETTLE_SECONDS</code> exists for seeks). Short clips make the picker friction a larger share of the effort, so it pairs with idea 2.</dd>
+<dt>Confidence</dt><dd>75%</dd>
+<dt>Complexity</dt><dd>Medium</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-4">
+<div class="eyebrow">Idea 4 · <span class="chip ax">Axis 4 YouTube rules</span></div>
+<h3>4. Studio package: stage with a reserved dock slot and a sync sidecar</h3>
+<p>A second export tier that contains no YouTube at all. Run the offline render with an empty 200x200 slot where the dock sits, and write a small sidecar with the video ID, saved offset, alignment, tempo and link. The player layers the real video in an editor, or plays it beside the file. It runs at offline speed and keeps R11 and AE5 untouched. It sits beside the recorded export as the safe default, the way a commentary track plays against a film the buyer already owns.</p>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> AE5 "an export with a video attached... shows no YouTube content." <code>direct:</code> <code>launch-checklist.md:44</code> the legal review of "Record with video" is open, and the checklist also lists the payment-provider YouTube policy. <code>external:</code> YouTube developer policies III.E.1 and III.I.7 (no storing copies, no separating audio or video); not placing the content in the file fits the text most cleanly. <code>direct:</code> <code>audio.ts:68-70</code> already encodes the offset mapping.</dd>
+<dt>Rationale</dt>
+<dd>It is the hedge if the legal read or the payment provider goes badly, and the only fast path that is clean under the policy text. It reuses the saved offset the recorder currently ignores.</dd>
+<dt>Downsides</dt>
+<dd>On its own it is a step back from what was asked: the user still has to put the video in. The verifier rated it sound as a hedge but a downgrade as the main answer. A hosted watch page was considered and cut because the app has no sharing infrastructure.</dd>
+<dt>Confidence</dt><dd>70%</dd>
+<dt>Complexity</dt><dd>Medium</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-5">
+<div class="eyebrow">Idea 5 · <span class="chip ax">Axis 2 Frame fidelity</span></div>
+<h3>5. Clean frame: crop the shot to stage and dock</h3>
+<p>Keep the whole-window recorder but fix what is in the shot. Hide <code>RecordBanner</code> and the export dialog from the captured pixels and show the counter somewhere outside the frame, such as the window title. Where Region or Element Capture works, crop the track to the stage-plus-dock container so browser chrome falls outside, and fix the output to a preset aspect ratio.</p>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>RecordBanner.tsx:22</code> is a fixed DOM span "Recording {clockText…}" and the capture records whatever the page shows. <code>direct:</code> the record path has no preset, and its size is whatever window was picked. <code>external:</code> Chrome documents Region Capture and Element Capture for self-capture, including a cross-origin-iframe pattern.</dd>
+<dt>Rationale</dt>
+<dd>It is the cheap improvement that does not need the full rebuild in idea 1, and the banner-hiding part works even if the crop APIs do not exist in WebView2.</dd>
+<dt>Downsides</dt>
+<dd>The crop needs same-tab capture, which <code>preferCurrentTab</code> only hints at, and the picker remains. It does not fix 30 fps, the fixed bitrate or real-time cost, and it overlaps idea 1 if that is built.</dd>
+<dt>Confidence</dt><dd>60%</dd>
+<dt>Complexity</dt><dd>Medium</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-6">
+<div class="eyebrow">Idea 6 · <span class="chip ax">Axis 1 Capture mechanics</span></div>
+<h3>6. Native Windows capture of the app window</h3>
+<p>If WebView2 cannot capture itself, add a Rust command in <code>src-tauri</code> that captures the app window through Windows Graphics Capture, with the window's own audio, and hands the MP4 to the existing 4 MiB-slice save path. No picker, no tick box, steady 60 fps, and it works when the window is partly covered. It would be the first capture module in the shell and could later serve practice-session clips and marketing videos.</p>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> plan E17 "If the desktop shell cannot capture itself, stop and report. The fallback is a native capture path in <code>src-tauri</code>, a much larger job." <code>direct:</code> <code>src-tauri</code> has no capture code. <code>external:</code> Windows Graphics Capture captures GPU-composited WebView2 where BitBlt gives a white frame; the Rust <code>windows-capture</code> crate captures via WGC and encodes MP4 (GStreamer merge request 4631, OBS issue 13359). Per-process audio loopback is from general knowledge and was not verified.</dd>
+<dt>Rationale</dt>
+<dd>It removes the picker and the audio checkbox by construction, and it is the only route if the spike shows the browser path fails on desktop.</dd>
+<dt>Downsides</dt>
+<dd>New Rust, new audio capture and a yellow capture border (removable on newer Windows only). No Tauri plugin exists. It fixes the picker, not real-time cost. A covered dock would break the unobstructed-player rule. Windows only. Build only if idea 2's doctor says the browser route fails.</dd>
+<dt>Confidence</dt><dd>50%</dd>
+<dt>Complexity</dt><dd>High</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-7">
+<div class="eyebrow">Idea 7 · <span class="chip ax">Axis 5 Destination and purpose</span></div>
+<h3>7. Finishing pass: a clean, fast-start, attributed file</h3>
+<p>After a recording stops, run it through a lightweight pass (WebCodecs or a Mediabunny remux, not a bundled ffmpeg) that normalizes the container to MP4/H.264 with fast start, a constant frame rate and the chosen preset size, trims the leading silence, and applies the saved offset. The same pass adds a small credit for the video (title, channel, link) that never covers the dock, plus a sidecar with the source URL and offset, and applies the Made with Tab Highway mark when the tier needs it.</p>
+<dl>
+<dt>Basis</dt>
+<dd><code>direct:</code> the container is chosen by the browser, with a webm fallback name (<code>record-capture.ts:24,32-34</code>), and <code>MediaRecorder</code> output is fragmented. <code>direct:</code> no watermark logic exists on the record path. <code>external:</code> YouTube developer policy III.F.2(c) bars obscuring attribution. <code>external:</code> Mediabunny is the successor to mp4-muxer with deterministic canvas output.</dd>
+<dt>Rationale</dt>
+<dd>It brings the recorded file up to the destination quality of the offline export and shows good faith toward the platform while the legal read is pending.</dd>
+<dt>Downsides</dt>
+<dd>The verifier called it mixed: remux and trim are real needs, but the watermark is dead code while <code>isPro</code> is forced true, and the credit is tiny work. A bundled ffmpeg brings size and licensing cost. A re-encode of recorded YouTube content is the riskiest reading of the policy text.</dd>
+<dt>Confidence</dt><dd>55%</dd>
+<dt>Complexity</dt><dd>Medium</dd>
+</dl>
+</article>
+</section>
+
+<section id="rejection-summary">
+<h2>Rejection Summary</h2>
+<table>
+<thead><tr><th>#</th><th>Idea</th><th>Reason Rejected</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Replay buffer / "save last take"</td><td>A rolling <code>MediaRecorder</code> cannot be cut cleanly (later chunks lack the header and keyframes) and means screen sharing through all practice; high cost for a niche payoff.</td></tr>
+<tr><td>2</td><td>Stall-aware pause and resume of the recorder</td><td>Pausing fights real-time sync; marking stalls is kept inside the clock trace of idea 1.</td></tr>
+<tr><td>3</td><td>Crash-safe streaming to disk as its own idea</td><td>Song-length recordings are modest in memory and a salvaged partial file is mostly cosmetic; the leave-page guard is folded into idea 2.</td></tr>
+<tr><td>4</td><td>One export job spec and preset-aware record</td><td>Preset sizes apply only to the offline path; a record takes the window size. It becomes real only inside idea 1.</td></tr>
+<tr><td>5</td><td>Synced watch link or commentary page</td><td>Needs hosting and a player page; the app has no sharing or upload infrastructure, and it is off-brief for an export.</td></tr>
+<tr><td>6</td><td>Dock slot filled by the user's own local video</td><td>Does not export the YouTube video; a good adjacent feature that answers a different question.</td></tr>
+<tr><td>7</td><td>Showtime mode for the user's own recorder</td><td>Pushes the whole problem to OBS or Game Bar; the owner wants the app to produce the file.</td></tr>
+<tr><td>8</td><td>Supersampled capture</td><td>Pixel ratio does not raise YouTube's delivered resolution, which follows the player's CSS size; unverified in WebView2.</td></tr>
+<tr><td>9</td><td>Bundle of native capture, crop, preflight and streaming</td><td>Native capture and crop are alternative routes to the same goal; kept as separate ideas 5 and 6.</td></tr>
+<tr><td>10</td><td>Replay clip kit (clips, buffer, presets)</td><td>Half sound: the clip part is idea 3, the buffer is rejected, presets depend on idea 1.</td></tr>
+<tr><td>11</td><td>Capture once, develop many, on its own</td><td>Adds nothing without the dock clip and clock trace; it is the vertical and clip output of idea 1.</td></tr>
+</tbody>
+</table>
+<p>No axis ended with zero survivors. Verification note: the basis verifier spot-checked <code>record-capture.ts</code>, the plan files and the Tauri source, but did not re-read all five evidence dossiers, and several external claims (Region Capture and Windows Graphics Capture inside WebView2, per-process audio loopback) could not be confirmed beyond the cited sources. The two-frame agents verify more shallowly per idea than the one-frame agents.</p>
+</section>
+
+<section id="sources">
+<h2>Sources</h2>
+<ul>
+<li><a href="https://developers.google.com/youtube/terms/developer-policies">YouTube developer policies</a></li>
+<li><a href="https://developer.chrome.com/docs/web-platform/region-capture">Region Capture (Chrome)</a></li>
+<li><a href="https://developer.chrome.com/docs/web-platform/element-capture">Element Capture (Chrome)</a></li>
+<li><a href="https://mediabunny.dev/guide/writing-media-files">Mediabunny: writing media files</a></li>
+<li><a href="https://learn.microsoft.com/en-us/windows/uwp/audio-video-camera/screen-capture">Windows screen capture (WGC)</a></li>
+<li><a href="https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/4631">GStreamer WebView2 capture via WGC</a></li>
+<li><a href="https://www.soundslice.com/help/en/creating/sharing/275/overview">Soundslice sharing</a></li>
+</ul>
+</section>
+
+<footer class="composition-signal">Composed 2026-10-25 by ce-ideate from the request "a better export of full screen with youtube than the record".</footer>
+</main>
+</body>
+</html>
