@@ -30,7 +30,7 @@ import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
 import { controlsFor } from './alignment-controls';
-import { decideOnOpen, evidenceFor, needsBandFallback, recordFromMap, settleAnalysis, withAttempt, type AlignBasis, type AlignStatus, type AlignStamp, type RedetectCause } from './auto-align';
+import { decideOnOpen, evidenceFor, needsBandFallback, recordFromMap, referenceBasisFor, settleAnalysis, withAttempt, type AlignBasis, type AlignStatus, type AlignStamp, type RedetectCause } from './auto-align';
 import { describeDiff, diffAlignments } from './alignment-diff';
 import { checkRecord } from '../alignment/spot-check';
 import { tabFingerprint } from '../audio/tab-fingerprint';
@@ -364,13 +364,13 @@ export function App() {
         },
         result,
       );
-    let basis: AlignBasis = 'track';
+    let basis: AlignBasis = referenceBasisFor(current.timeline.notesForTrack(viewedTrack));
     let job = analyse(basis);
     alignJob.current = job;
     let result = await job.result;
     if (alignJob.current === job) alignJob.current = null;
     let settled = settle(result);
-    if (needsBandFallback(settled, result)) {
+    if (basis === 'track' && needsBandFallback(settled, result)) {
       // The viewed track gave nothing usable, as when the recording lacks that part: compare with every part instead, without asking.
       basis = 'band';
       job = analyse(basis);

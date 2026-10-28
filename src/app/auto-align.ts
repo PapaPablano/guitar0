@@ -98,6 +98,17 @@ export function settleAnalysis(ctx: SettleContext, result: AnalysisResult): Sett
   }
 }
 
+/** A track that has not played by now gives the line-up nothing to match at the start, where the offset is decided. */
+export const OPENING_SECONDS = 10;
+
+/** Whether a track has a note in the opening seconds of the tab. */
+export const playsInOpening = (notes: readonly { readonly startSeconds: number }[]): boolean => notes.some((n) => n.startSeconds < OPENING_SECONDS);
+
+/** What to line the recording up with: the viewed track, unless it is silent in the opening, when the whole band is the better reference. */
+export function referenceBasisFor(viewedNotes: readonly { readonly startSeconds: number }[]): AlignBasis {
+  return playsInOpening(viewedNotes) ? 'track' : 'band';
+}
+
 /**
  * Whether a line-up on the viewed track alone should be tried again against the whole band: it committed no timeline because it
  * was not confident or its map failed the check. A silent or too long recording, a failed run and a dropped result would not

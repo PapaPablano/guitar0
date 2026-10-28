@@ -7,6 +7,7 @@ import {
   decideOnOpen,
   evidenceFor,
   needsBandFallback,
+  referenceBasisFor,
   restoreFromRecord,
   recordFromMap,
   settleAnalysis,
@@ -98,6 +99,20 @@ describe('settleAnalysis', () => {
     const out = settleAnalysis(ctx, aligned({ map: AlignmentMap.of(1, []), perBarMap: AlignmentMap.of(1, []) }));
     expect(out?.map).toBeNull();
     expect(out?.status).toEqual({ phase: 'not-found', reason: 'inconsistent' });
+  });
+});
+
+describe('referenceBasisFor', () => {
+  const notes = (...starts: number[]) => starts.map((startSeconds) => ({ startSeconds }));
+
+  it('uses the viewed track when it plays in the opening', () => {
+    expect(referenceBasisFor(notes(0, 1))).toBe('track');
+    expect(referenceBasisFor(notes(9.9))).toBe('track');
+  });
+
+  it('uses the whole band when the viewed track has no notes or first plays after the opening', () => {
+    expect(referenceBasisFor([])).toBe('band');
+    expect(referenceBasisFor(notes(10.5, 12))).toBe('band');
   });
 });
 
