@@ -64,6 +64,15 @@ describe('startAnalysis', () => {
     expect(seen[seen.length - 1]).toBe(1);
   });
 
+  it('carries the flag that bar 1 was set to the recording first sound through', async () => {
+    const { deps, answer } = fakes();
+    const job = startAnalysis(args(), deps);
+    await flush();
+    answer({ kind: 'aligned', data: { base: 0.1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [], sections: [], perBarData: { base: 0.1, holds: [] }, tier: 'lined-up', startSet: true });
+    const result = await job.result;
+    expect(result.kind === 'aligned' && result.startSet).toBe(true);
+  });
+
   it('carries the anchors, per-bar confidence and sections of the answer through', async () => {
     const { deps, answer } = fakes();
     const job = startAnalysis(args(), deps);

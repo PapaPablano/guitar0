@@ -24,9 +24,9 @@ export type AlignStatus =
   /** `again` is true when a saved timing from before is being detected again, and plays until the new one is committed. */
   | { readonly phase: 'analysing'; readonly progress: number; readonly again?: boolean }
   /** A timeline is committed and most bars are supported by onsets or by the whole-song pass. */
-  | { readonly phase: 'lined-up'; readonly skipped: number; readonly basis?: AlignBasis }
+  | { readonly phase: 'lined-up'; readonly skipped: number; readonly basis?: AlignBasis; readonly startSet?: boolean }
   /** A timeline is committed, but the accuracy target is not met for enough bars. */
-  | { readonly phase: 'roughly'; readonly skipped: number; readonly basis?: AlignBasis }
+  | { readonly phase: 'roughly'; readonly skipped: number; readonly basis?: AlignBasis; readonly startSet?: boolean }
   /** No timeline: the recording plays against the global offset alone. */
   | { readonly phase: 'not-found'; readonly reason: NotFoundReason }
   | { readonly phase: 'failed'; readonly reason: 'decode' | 'render' | 'worker' | 'no-sound' }
@@ -80,10 +80,11 @@ export function settleAnalysis(ctx: SettleContext, result: AnalysisResult): Sett
     case 'aligned': {
       if (ctx.offsetMovedSinceStart) return unchanged({ phase: 'idle' });
       const skipped = result.skippedStretches;
+      const startFlag = result.startSet ? { startSet: true } : {};
       const base = { sections: result.sections, barConfidence: result.barConfidence, barMatched: result.barMatched, remember: false };
       if (!failsCheck(result.map, ctx.bars)) {
         const tier = result.tier;
-        return { map: result.map, status: tier === 'lined-up' ? { phase: 'lined-up', skipped } : { phase: 'roughly', skipped }, tier, ...base };
+        return { map: result.map, status: tier === 'lined-up' ? { phase: 'lined-up', skipped, ...startFlag } : { phase: 'roughly', skipped, ...startFlag }, tier, ...base };
       }
       if (ctx.hasTimeline) return { ...unchanged({ phase: 'kept-previous' }), remember: true };
       if (!failsCheck(result.perBarMap, ctx.bars)) {

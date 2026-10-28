@@ -22,7 +22,9 @@ const basisName = (basis: AlignBasis): string => (basis === 'track' ? 'the track
 
 const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
-const skippedText =(skipped: number): string =>
+const startText = (startSet: boolean | undefined): string => (startSet ? " Bar 1 was set to the recording's first sound." : '');
+
+const skippedText = (skipped: number): string =>
   skipped > 0 ? ` The tab jumps past ${skipped} ${plural(skipped, 'stretch the recording skips', 'stretches the recording skips')}.` : '';
 
 /** What the panel says about the detection, in the user's words. */
@@ -37,9 +39,9 @@ export function statusText(status: AlignStatus): string {
         ? `Detecting this recording's timing again… ${Math.round(status.progress * 100)}%`
         : `Lining the recording up with the tab… ${Math.round(status.progress * 100)}%`;
     case 'lined-up':
-      return `Lined up with the tab${status.basis ? `, using ${basisName(status.basis)}` : ''}.${skippedText(status.skipped)}`;
+      return `Lined up with the tab${status.basis ? `, using ${basisName(status.basis)}` : ''}.${startText(status.startSet)}${skippedText(status.skipped)}`;
     case 'roughly':
-      return `Roughly lined up: some bar lines may be off by more than a few hundredths of a second.${status.basis ? ` ${capitalised(basisName(status.basis))} was used.` : ''}${skippedText(status.skipped)}`;
+      return `Roughly lined up: some bar lines may be off by more than a few hundredths of a second.${status.basis ? ` ${capitalised(basisName(status.basis))} was used.` : ''}${startText(status.startSet)}${skippedText(status.skipped)}`;
     case 'not-found':
       return `${notFoundText(status.reason)} The recording plays against the offset alone.`;
     case 'failed':

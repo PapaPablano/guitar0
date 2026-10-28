@@ -13,10 +13,14 @@ export const START_CHECK = {
   tabFirstSoundMax: 0.5,
 } as const;
 
-/** Whether the check applies: bar 1 is before the recording, and recording and tab both begin sounding at once. */
-export function startCheckApplies(barOneAnchor: number, recordingFirstSound: number | null, tabFirstSound: number | null): boolean {
+/**
+ * Whether the check applies: bar 1 is before the recording by more than the margin but less than a bar, and recording and tab
+ * both begin sounding at once. A recording that really starts a bar or more into the tab looks the same, so it is left as matched.
+ */
+export function startCheckApplies(barOneAnchor: number, recordingFirstSound: number | null, tabFirstSound: number | null, barSeconds: number): boolean {
   return (
     barOneAnchor < -START_CHECK.marginSeconds &&
+    -barOneAnchor < barSeconds &&
     recordingFirstSound !== null &&
     recordingFirstSound <= START_CHECK.recordingFirstSoundMax &&
     tabFirstSound !== null &&
@@ -34,7 +38,35 @@ export function shiftTimeline(anchors: readonly number[], endAnchor: number, del
   return { anchors: anchors.map((a) => a + delta), endAnchor: endAnchor + delta };
 }
 
-/** Whether to keep the shifted timeline: it passes the consistency check and bar 1's onsets support it at least as well as before. */
-export function acceptShift(passesCheck: boolean, oldProminence: number, newProminence: number): boolean {
-  return passesCheck && newProminence >= oldProminence;
+/**
+ * Whether to keep the shifted timeline: it passes the consistency check, and bar 1's onsets support it at least as well as at
+ * the old place or clearly enough on their own (`floor`, the matcher's own bar of "convincing").
+ */
+export function acceptShift(passesCheck: boolean, oldProminence: number, newProminence: number, floor: number): boolean {
+  return passesCheck && (newProminence >= oldProminence || newProminence >= floor);
+}
+
+export interface StartCorrectionInput {
+  readonly anchors: readonly number[];
+  readonly endAnchor: number;
+  readonly barOneStart: number;
+  /** The length of bar 1 in the tab, in seconds. */
+  readonly barSeconds: number;
+  readonly recordingFirstSound: number | null;
+  readonly tabFirstSound: number | null;
+  /** Sharpens bar 1's position on the onsets around a guess. */
+  readonly refine: (guess: number) => { seconds: number; prominence: number };
+  /** The consistency check, on a whole timeline. */
+  readonly passesCheck: (anchors: readonly number[], endAnchor: number) => boolean;
+  readonly floor: number;
+}
+
+/** The timeline with bar 1 set to the recording's first sound, or null when the check does not apply or the result does not hold. */
+export function proposeStartCorrection(i: StartCorrectionInput): { anchors: number[]; endAnchor: number } | null {
+  if (!startCheckApplies(i.anchors[0], i.recordingFirstSound, i.tabFirstSound, i.barSeconds)) return null;
+  const guess = startGuess(i.barOneStart, i.recordingFirstSound!, i.tabFirstSound!);
+  const at = i.refine(guess);
+  const before = i.refine(i.anchors[0]);
+  const shifted = shiftTimeline(i.anchors, i.endAnchor, (at.prominence > 0 ? at.seconds : guess) - i.anchors[0]);
+  return acceptShift(i.passesCheck(shifted.anchors, shifted.endAnchor), before.prominence, at.prominence, i.floor) ? shifted : null;
 }

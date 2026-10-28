@@ -102,6 +102,14 @@ describe('settleAnalysis', () => {
   });
 });
 
+describe('a corrected start', () => {
+  it('covers R4: marks the status when the result had bar 1 set to the first sound, and not otherwise', () => {
+    expect(settleAnalysis(ctx, aligned({ startSet: true }))?.status).toEqual({ phase: 'lined-up', skipped: 0, startSet: true });
+    expect(settleAnalysis(ctx, aligned({ startSet: true, tier: 'roughly' }))?.status).toEqual({ phase: 'roughly', skipped: 0, startSet: true });
+    expect(settleAnalysis(ctx, aligned())?.status).toEqual({ phase: 'lined-up', skipped: 0 });
+  });
+});
+
 describe('referenceBasisFor', () => {
   const notes = (...starts: number[]) => starts.map((startSeconds) => ({ startSeconds }));
 

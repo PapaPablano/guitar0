@@ -30,6 +30,14 @@ describe('statusText', () => {
     expect(statusText({ phase: 'roughly', skipped: 0, basis: 'track' })).toMatch(/The track on screen was used\./);
   });
 
+  it('covers AE1: says when bar 1 was set to the first sound of the recording, for both outcomes and with the reference', () => {
+    expect(statusText({ phase: 'lined-up', skipped: 0, startSet: true })).toBe("Lined up with the tab. Bar 1 was set to the recording's first sound.");
+    expect(statusText({ phase: 'roughly', skipped: 0, startSet: true })).toMatch(/few hundredths of a second\. Bar 1 was set to the recording's first sound\.$/);
+    expect(statusText({ phase: 'lined-up', skipped: 0, basis: 'band', startSet: true })).toBe(
+      "Lined up with the tab, using the whole band. Bar 1 was set to the recording's first sound.",
+    );
+  });
+
   it('reads as it always has when the reference is not known, as for a saved timeline', () => {
     expect(statusText({ phase: 'lined-up', skipped: 0 })).toBe('Lined up with the tab.');
     expect(statusText({ phase: 'roughly', skipped: 0 })).toBe(

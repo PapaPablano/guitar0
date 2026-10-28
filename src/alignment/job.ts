@@ -31,6 +31,8 @@ export type MatchJobResult =
       readonly perBarData: AlignmentData;
       /** Whether most bars are supported by their own onsets or by the whole-song pass (see `outcomeTier`). */
       readonly tier: OutcomeTier;
+      /** True when bar 1 was set to the recording's first sound instead of where the match put it before the recording. */
+      readonly startSet?: boolean;
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -63,6 +65,7 @@ export function runMatchJob(job: MatchJob, onProgress: (fraction: number) => voi
     barMatched: result.barMatched,
     sections,
     perBarData: result.perBarMap.toData(),
+    startSet: result.startSet,
     tier: data.anchors && data.endAnchor !== undefined ? outcomeTier(result.uncertainty, result.evidenceAgrees, data.anchors, data.endAnchor) : 'roughly',
   };
 }
