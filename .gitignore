@@ -19,3 +19,11 @@ dev/local/
 # Local env (API keys)
 .env.local
 client_secret_*.json
+
+# Local screen recordings, screenshots and scratch images
+Recording *.mp4
+Screenshot *.png
+Gemini_Generated_Image_*.jpg
+d27ad9b2-*.jpg
+dev/etsy-ads/
+dev/ozzy-fullscreen-contact.png
