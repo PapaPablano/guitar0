@@ -21,6 +21,8 @@ export interface ExportAudioOptions {
   effects?: boolean;
   /** Keep every track, including the one Play along silences. The alignment compares the recording with the whole band. */
   fullBand?: boolean;
+  /** Render this track alone, whatever Play along silences. An index outside the score renders the whole band. Wins over `fullBand`. */
+  onlyTrack?: number;
 }
 
 /** How long a rebuild of the synth's audio may take before it is given up on. */
@@ -271,7 +273,7 @@ export class SynthClock implements Clock {
    * needs so it compares the recording with every part. The light effects heard live are applied too, unless `effects` is
    * false: the alignment needs the plain sound.
    */
-  async exportAudio(onProgress?: (fraction: number) => void, { effects = true, fullBand = false }: ExportAudioOptions = {}): Promise<PcmAudio> {
+  async exportAudio(onProgress?: (fraction: number) => void, { effects = true, fullBand = false, onlyTrack }: ExportAudioOptions = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
@@ -281,7 +283,12 @@ export class SynthClock implements Clock {
       const gain = programGain(track.playbackInfo.program);
       if (gain !== 1) options.trackVolume.set(index, gain);
     });
-    if (!fullBand && this.silentTrack !== null) options.trackVolume.set(this.silentTrack, 0);
+    const tracks = this.api.score?.tracks ?? [];
+    if (onlyTrack !== undefined && onlyTrack >= 0 && onlyTrack < tracks.length) {
+      tracks.forEach((_, index) => {
+        if (index !== onlyTrack) options.trackVolume.set(index, 0);
+      });
+    } else if (!fullBand && this.silentTrack !== null) options.trackVolume.set(this.silentTrack, 0);
     const exporter = await this.api.exportAudio(options);
     const chunks: { left: Float32Array; right: Float32Array }[] = [];
     try {
