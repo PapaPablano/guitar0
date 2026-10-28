@@ -23,6 +23,20 @@ describe('statusText', () => {
     expect(statusText({ phase: 'failed', reason: 'worker' })).toMatch(/failed/);
   });
 
+  it('covers AE3: names the reference a timeline came from, the viewed track or the whole band', () => {
+    expect(statusText({ phase: 'lined-up', skipped: 0, basis: 'track' })).toBe('Lined up with the tab, using the track on screen.');
+    expect(statusText({ phase: 'lined-up', skipped: 0, basis: 'band' })).toBe('Lined up with the tab, using the whole band.');
+    expect(statusText({ phase: 'roughly', skipped: 0, basis: 'band' })).toMatch(/Roughly lined up.*few hundredths of a second\. The whole band was used\./);
+    expect(statusText({ phase: 'roughly', skipped: 0, basis: 'track' })).toMatch(/The track on screen was used\./);
+  });
+
+  it('reads as it always has when the reference is not known, as for a saved timeline', () => {
+    expect(statusText({ phase: 'lined-up', skipped: 0 })).toBe('Lined up with the tab.');
+    expect(statusText({ phase: 'roughly', skipped: 0 })).toBe(
+      'Roughly lined up: some bar lines may be off by more than a few hundredths of a second.',
+    );
+  });
+
   it('mentions the stretches the recording skips', () => {
     expect(statusText({ phase: 'lined-up', skipped: 1 })).toMatch(/1 stretch the recording skips/);
     expect(statusText({ phase: 'lined-up', skipped: 2 })).toMatch(/2 stretches the recording skips/);

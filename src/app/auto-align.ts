@@ -13,6 +13,9 @@ export type RedetectCause = 'tab-changed' | 'check-failed';
 
 export type NotFoundReason = 'too-long' | 'silent' | 'not-confident' | 'out-of-range' | 'inconsistent';
 
+/** What the recording was compared with: the track on screen alone, or every part of the tab. Unknown for a timeline restored from its file. */
+export type AlignBasis = 'track' | 'band';
+
 /** What the alignment panel says about the loaded recording. */
 export type AlignStatus =
   | { readonly phase: 'idle' }
@@ -21,9 +24,9 @@ export type AlignStatus =
   /** `again` is true when a saved timing from before is being detected again, and plays until the new one is committed. */
   | { readonly phase: 'analysing'; readonly progress: number; readonly again?: boolean }
   /** A timeline is committed and most bars are supported by onsets or by the whole-song pass. */
-  | { readonly phase: 'lined-up'; readonly skipped: number }
+  | { readonly phase: 'lined-up'; readonly skipped: number; readonly basis?: AlignBasis }
   /** A timeline is committed, but the accuracy target is not met for enough bars. */
-  | { readonly phase: 'roughly'; readonly skipped: number }
+  | { readonly phase: 'roughly'; readonly skipped: number; readonly basis?: AlignBasis }
   /** No timeline: the recording plays against the global offset alone. */
   | { readonly phase: 'not-found'; readonly reason: NotFoundReason }
   | { readonly phase: 'failed'; readonly reason: 'decode' | 'render' | 'worker' | 'no-sound' }
@@ -93,6 +96,17 @@ export function settleAnalysis(ctx: SettleContext, result: AnalysisResult): Sett
     case 'failed':
       return unchanged({ phase: 'failed', reason: result.reason });
   }
+}
+
+/**
+ * Whether a line-up on the viewed track alone should be tried again against the whole band: it committed no timeline because it
+ * was not confident or its map failed the check. A silent or too long recording, a failed run and a dropped result would not
+ * come out differently on the whole band.
+ */
+export function needsBandFallback(settled: Settled | null, result: AnalysisResult): boolean {
+  if (!settled || settled.map || settled.status.phase === 'idle') return false;
+  if (result.kind === 'not-found') return result.reason === 'not-confident';
+  return result.kind === 'aligned';
 }
 
 /** What a committed timeline rests on, bar by bar: where detection put it, the tab bar it was placed against, and how well it lined up. */

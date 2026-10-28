@@ -6,6 +6,7 @@ import { barSignature, tabFingerprint } from '../../src/audio/tab-fingerprint';
 import {
   decideOnOpen,
   evidenceFor,
+  needsBandFallback,
   restoreFromRecord,
   recordFromMap,
   settleAnalysis,
@@ -97,6 +98,46 @@ describe('settleAnalysis', () => {
     const out = settleAnalysis(ctx, aligned({ map: AlignmentMap.of(1, []), perBarMap: AlignmentMap.of(1, []) }));
     expect(out?.map).toBeNull();
     expect(out?.status).toEqual({ phase: 'not-found', reason: 'inconsistent' });
+  });
+});
+
+describe('needsBandFallback', () => {
+  const settle = (result: AnalysisResult, over: Partial<SettleContext> = {}) => ({ settled: settleAnalysis({ ...ctx, ...over }, result)!, result });
+  const asks = (result: AnalysisResult, over: Partial<SettleContext> = {}) => {
+    const s = settle(result, over);
+    return needsBandFallback(s.settled, s.result);
+  };
+
+  it('asks for the whole band when the viewed track gave no confident result', () => {
+    expect(asks({ kind: 'not-found', reason: 'not-confident' })).toBe(true);
+    expect(asks({ kind: 'not-found', reason: 'not-confident' }, { hasTimeline: true })).toBe(true);
+  });
+
+  it('covers AE3: asks for it when the whole-song and bar-by-bar maps both fail the check', () => {
+    expect(asks(aligned({ map: broken, perBarMap: broken }))).toBe(true);
+  });
+
+  it('asks for it on a re-detection whose map fails the check, which keeps the timeline in use', () => {
+    expect(asks(aligned({ map: broken, perBarMap: good }), { hasTimeline: true })).toBe(true);
+  });
+
+  it('does not ask when a first open commits the bar-by-bar map as roughly lined up', () => {
+    expect(asks(aligned({ map: broken, perBarMap: good }))).toBe(false);
+  });
+
+  it('does not ask when a timeline was committed', () => {
+    expect(asks(aligned())).toBe(false);
+  });
+
+  it('does not ask for a silent or too long recording, a failed run, or a result that was dropped', () => {
+    expect(asks({ kind: 'not-found', reason: 'silent' })).toBe(false);
+    expect(asks({ kind: 'not-found', reason: 'too-long' })).toBe(false);
+    expect(asks({ kind: 'failed', reason: 'render' })).toBe(false);
+    expect(asks(aligned({ map: broken, perBarMap: broken }), { offsetMovedSinceStart: true })).toBe(false);
+  });
+
+  it('does not ask when there is no settled result', () => {
+    expect(needsBandFallback(null, { kind: 'cancelled' })).toBe(false);
   });
 });
 

@@ -3,7 +3,7 @@ import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
 import { AlignmentMap } from '../audio/alignment-map';
-import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob, decodeRecording } from '../alignment/analyze';
+import { barFactsOf, barSpansOf, startAnalysis, type AnalysisJob, type AnalysisResult, decodeRecording } from '../alignment/analyze';
 import { startExactCopy, type CopyState, type ExactSession } from './exact-copy-load';
 import { copyStateText, exactLine, holdText } from './exactness-text';
 import { ExactnessStrip } from './ExactnessStrip';
@@ -30,7 +30,7 @@ import { Notices } from './Notices';
 import { AlignmentPanel } from './AlignmentPanel';
 import { OffsetSlider } from './OffsetSlider';
 import { controlsFor } from './alignment-controls';
-import { decideOnOpen, evidenceFor, recordFromMap, settleAnalysis, withAttempt, type AlignStatus, type AlignStamp, type RedetectCause } from './auto-align';
+import { decideOnOpen, evidenceFor, needsBandFallback, recordFromMap, settleAnalysis, withAttempt, type AlignBasis, type AlignStatus, type AlignStamp, type RedetectCause } from './auto-align';
 import { describeDiff, diffAlignments } from './alignment-diff';
 import { checkRecord } from '../alignment/spot-check';
 import { tabFingerprint } from '../audio/tab-fingerprint';
@@ -222,6 +222,7 @@ export function App() {
     session: null as Session | null,
     alignment: AlignmentMap.fromOffset(0),
     sections: [] as SectionRecord[],
+    trackIndex: 0,
   });
 
   /** Where per-recording offset and mix are remembered: a shell file on the desktop, browser storage on the web. */
@@ -337,33 +338,56 @@ export function App() {
       alignPrevious.current = recordFromMap(live.current.alignment, alignSource.current ?? 'auto', live.current.sections, alignStamp.current ?? undefined);
     }
     const bars = barSpansOf(current.timeline);
+    // The track on screen when the run starts is the reference; a switch while the run is going does not change it.
+    const viewedTrack = live.current.trackIndex;
     setAlignStatus({ phase: 'analysing', progress: 0, again });
-    const job = startAnalysis({
-      file,
-      durationSeconds: clockForRun.element.duration,
-      tabSeconds: current.timeline.durationSeconds,
-      bars,
-      barFacts: barFactsOf(current.timeline),
-      renderTab: (onProgress) => current.clock.exportAudio(onProgress, { fullBand: true, effects: false }),
-      onProgress: (progress) => {
-        if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress, again });
-      },
-    });
-    alignJob.current = job;
-    const result = await job.result;
-    if (alignJob.current === job) alignJob.current = null;
-    const settled = settleAnalysis(
-      {
-        stillCurrent: alignRuns.current.isCurrent(run) && token === sessionToken.current && userClockRef.current === clockForRun,
-        offsetMovedSinceStart: offsetMovedSinceRun.current,
+    const analyse = (basis: AlignBasis) =>
+      startAnalysis({
+        file,
+        durationSeconds: clockForRun.element.duration,
+        tabSeconds: current.timeline.durationSeconds,
         bars,
-        hasTimeline: live.current.alignment.hasAnchors,
-      },
-      result,
-    );
+        barFacts: barFactsOf(current.timeline),
+        renderTab: (onProgress) =>
+          current.clock.exportAudio(onProgress, basis === 'track' ? { onlyTrack: viewedTrack, effects: false } : { fullBand: true, effects: false }),
+        onProgress: (progress) => {
+          if (alignRuns.current.isCurrent(run)) setAlignStatus({ phase: 'analysing', progress, again });
+        },
+      });
+    const settle = (result: AnalysisResult) =>
+      settleAnalysis(
+        {
+          stillCurrent: alignRuns.current.isCurrent(run) && token === sessionToken.current && userClockRef.current === clockForRun,
+          offsetMovedSinceStart: offsetMovedSinceRun.current,
+          bars,
+          hasTimeline: live.current.alignment.hasAnchors,
+        },
+        result,
+      );
+    let basis: AlignBasis = 'track';
+    let job = analyse(basis);
+    alignJob.current = job;
+    let result = await job.result;
+    if (alignJob.current === job) alignJob.current = null;
+    let settled = settle(result);
+    if (needsBandFallback(settled, result)) {
+      // The viewed track gave nothing usable, as when the recording lacks that part: compare with every part instead, without asking.
+      basis = 'band';
+      job = analyse(basis);
+      alignJob.current = job;
+      result = await job.result;
+      if (alignJob.current === job) alignJob.current = null;
+      settled = settle(result);
+    }
     if (!settled) return;
     const cause = redetectCause.current;
-    setAlignStatus(settled.status.phase === 'kept-previous' && cause ? { phase: 'kept-previous', cause } : settled.status);
+    const status: AlignStatus =
+      settled.status.phase === 'lined-up' || settled.status.phase === 'roughly'
+        ? { ...settled.status, basis }
+        : settled.status.phase === 'kept-previous' && cause
+          ? { phase: 'kept-previous', cause }
+          : settled.status;
+    setAlignStatus(status);
     if (settled.map && settled.tier) {
       // The one place a detected timeline becomes the timeline in use: it replaces the owner's offset, which is kept in the record.
       const hadOffset = !live.current.alignment.hasAnchors && live.current.offset !== 0 ? live.current.offset : undefined;
@@ -640,7 +664,7 @@ export function App() {
     }
   }
 
-  live.current = { offset, tempoPercent, mix, userClock, session, alignment, sections };
+  live.current = { offset, tempoPercent, mix, userClock, session, alignment, sections, trackIndex };
 
   // The YouTube video attached to this tab: its clock plays and drives the views while Original is chosen.
   const videoStore = useMemo(() => browserVideoStore(), []);
