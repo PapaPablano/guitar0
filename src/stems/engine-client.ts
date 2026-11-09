@@ -37,20 +37,6 @@ interface JobState {
   title?: string | null;
 }
 
-/** One YouTube search result, as the engine reports it. */
-export interface SearchItem {
-  readonly url: string;
-  readonly title: string;
-  readonly duration: number | null;
-  readonly uploader: string | null;
-  /** Over the engine's length limit, so it cannot be imported. */
-  readonly too_long: boolean;
-}
-
-const MIN_QUERY_LENGTH = 2;
-/** The most results the engine returns for one search. Ranking by length needs a wide field to find a close match. */
-const SEARCH_LIMIT = 15;
-
 const SECRET_HEADER = 'X-TabHighway-Secret';
 
 /** Talks to the bundled StemDeck engine through Tab Highway's wrapper. */
@@ -73,31 +59,6 @@ export class EngineClient {
     const { job_id: jobId } = (await created.json()) as { job_id: string };
     await this.follow(jobId, onProgress, signal);
     return jobId;
-  }
-
-  /** Searches YouTube through the engine. A query shorter than two characters finds nothing. */
-  async search(query: string): Promise<SearchItem[]> {
-    const text = query.trim();
-    if (text.length < MIN_QUERY_LENGTH) return [];
-    const response = await this.request('/api/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: text, source: 'youtube', kind: 'track', limit: SEARCH_LIMIT }),
-    });
-    return ((await response.json()) as { items: SearchItem[] }).items;
-  }
-
-  /** Has the engine download a link's audio and separate it; resolves with the job id and the title. */
-  async separateUrl(url: string, { onProgress, signal }: SeparateOptions): Promise<{ jobId: string; title: string }> {
-    const created = await this.request('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, stems: STEM_NAMES }),
-      signal,
-    });
-    const { job_id: jobId } = (await created.json()) as { job_id: string };
-    const state = await this.follow(jobId, onProgress, signal);
-    return { jobId, title: state.title || 'Imported audio' };
   }
 
   /** Follows a job until it is done; cancels it if `signal` aborts. */

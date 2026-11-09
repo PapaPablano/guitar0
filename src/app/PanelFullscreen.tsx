@@ -28,6 +28,11 @@ interface PanelFullscreenProps {
   canPlay: boolean;
   onTogglePlay: () => void;
   onClose: () => void;
+  /**
+   * False while a video's own audio plays: the browser's full screen would hide the video, so the panel only fills the
+   * window and the docked video stays on top of it.
+   */
+  useBrowserFullscreen?: boolean;
 }
 
 /**
@@ -52,11 +57,13 @@ export function PanelFullscreen({
   canPlay,
   onTogglePlay,
   onClose,
+  useBrowserFullscreen = true,
 }: PanelFullscreenProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLCanvasElement>(null);
   const barRef = useRef<HTMLCanvasElement>(null);
   const photo = useNeckPhoto();
+  const bassPhoto = useNeckPhoto('bass');
   const pickPhoto = usePickPhoto();
   const [calibrating, setCalibrating] = useState(false);
   const liveRef = useRef({ loop, lookahead, labelMode, neckCues });
@@ -72,12 +79,14 @@ export function PanelFullscreen({
     root?.focus();
     let entered = false;
     // A browser can refuse (or lack) full screen; the overlay still covers the window then.
-    root?.requestFullscreen?.().then(
-      () => {
-        entered = true;
-      },
-      () => undefined,
-    );
+    if (useBrowserFullscreen) {
+      root?.requestFullscreen?.().then(
+        () => {
+          entered = true;
+        },
+        () => undefined,
+      );
+    }
     const onChange = () => {
       if (entered && !document.fullscreenElement) onClose();
     };
@@ -92,7 +101,7 @@ export function PanelFullscreen({
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
       opener?.focus();
     };
-  }, [onClose]);
+  }, [onClose, useBrowserFullscreen]);
 
   useEffect(() => {
     let frame = 0;
@@ -101,7 +110,7 @@ export function PanelFullscreen({
       const t = clock.time();
       const live = liveRef.current;
       // One moment per frame, handed to every surface so they all agree on what is sounding.
-      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current });
+      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, bassPhoto: bassPhoto.current, pickPhoto: pickPhoto.current });
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
@@ -114,7 +123,7 @@ export function PanelFullscreen({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, panel, photo, pickPhoto]);
+  }, [timeline, trackIndex, clock, panel, photo, bassPhoto, pickPhoto]);
 
   const name = PANEL_NAMES[panel];
   return (

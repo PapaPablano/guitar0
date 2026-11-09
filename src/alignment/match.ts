@@ -2,6 +2,8 @@ import { AlignmentMap, type BarSpan } from '../audio/alignment-map';
 import { OFFSET_MAX_SECONDS } from '../audio/offset-range';
 import { evidenceCurve, onsetPeaks, peakOf } from './evidence';
 import { CHROMA_BINS, CHROMA_RATE, ONSET_RATE, type Chroma } from './features';
+import { proposeStartCorrection } from './start-check';
+import { checkTimeline } from './timeline-check';
 import { solveChain, type ChainBar } from './whole-song';
 
 /** What the tab says about one played bar beyond where it starts and ends: the whole-song pass reads tempo and meter steadiness from it. */
@@ -51,6 +53,8 @@ export type MatchResult =
       readonly uncertainty: readonly number[];
       /** Whether each bar's own onsets, alone, agree with where the whole-song pass put it. */
       readonly evidenceAgrees: readonly boolean[];
+      /** True when the match put bar 1 before the recording and it was set to the recording's first sound instead (see `start-check`). */
+      readonly startSet: boolean;
     }
   | { readonly kind: 'not-found'; readonly reason: 'silent' | 'not-confident' | 'out-of-range' };
 
@@ -566,25 +570,61 @@ export function matchRecording(input: MatchInput, options: Partial<Options> = {}
   // A bar counts as pinned by its onsets only when they agree with where the whole-song pass put it.
   for (let k = 0; k < bars.length; k++) if (!whole.agrees[k]) barConfidence[k] = 0;
 
+  // A start the match put before the recording, though both begin sounding at once, is set to the recording's first sound.
+  const firstSound = (silent: Uint8Array): number | null => {
+    const first = silent.indexOf(0);
+    return first < 0 ? null : first / CHROMA_RATE;
+  };
+  const correct = (anchors: readonly number[], end: number) =>
+    proposeStartCorrection({
+      anchors,
+      endAnchor: end,
+      barOneStart: bars[0].start,
+      barSeconds: bars[0].end - bars[0].start,
+      recordingFirstSound: firstSound(recSilent),
+      tabFirstSound: firstSound(tabSilent),
+      refine: (guess) => refineAnchor(bars[0].start, guess, input, o),
+      passesCheck: (a, e) => checkTimeline(bars, a.map(round2), round2(e)).length === 0 && AlignmentMap.fromAnchors(bars, a.map(round2), round2(e)) !== null,
+      floor: o.anchorPeakMin,
+    });
+  let outMap = map;
+  let outPerBarMap = perBarMap;
+  let outAnchors = finalAnchors;
+  let outEnd = endAnchor;
+  let startSet = false;
+  const fixed = correct(finalAnchors, endAnchor);
+  if (fixed) {
+    const fixedMap = AlignmentMap.fromAnchors(bars, fixed.anchors.map(round2), round2(fixed.endAnchor));
+    if (fixedMap) {
+      outMap = fixedMap;
+      outAnchors = fixed.anchors.map(round2);
+      outEnd = round2(fixed.endAnchor);
+      startSet = true;
+      const fixedPerBar = map === perBarMap ? fixed : correct(perBar, endAnchor);
+      outPerBarMap = (fixedPerBar && AlignmentMap.fromAnchors(bars, fixedPerBar.anchors.map(round2), round2(fixedPerBar.endAnchor))) || fixedMap;
+    }
+  }
+
   // Stretches of bars the recording played much shorter than the tab's, which the tab jumps past.
   let skippedStretches = 0;
   let inSkip = false;
   for (let k = 0; k < bars.length; k++) {
-    const recorded = (k + 1 < bars.length ? finalAnchors[k + 1] : endAnchor) - finalAnchors[k];
+    const recorded = (k + 1 < bars.length ? outAnchors[k + 1] : outEnd) - outAnchors[k];
     const short = recorded < bars[k].end - bars[k].start - o.minHoldSeconds;
     if (short && !inSkip) skippedStretches += 1;
     inSkip = short;
   }
   return {
     kind: 'aligned',
-    map,
+    map: outMap,
     confidence: coarse.prominence,
     matchedFraction,
     skippedStretches,
     barConfidence,
     barMatched: barMatchedFlags(barSimilaritySum, barSimilarityCount, o.matchedMargin),
-    perBarMap,
+    perBarMap: outPerBarMap,
     uncertainty: whole.uncertainty,
     evidenceAgrees: whole.agrees,
+    startSet,
   };
 }

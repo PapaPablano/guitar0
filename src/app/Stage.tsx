@@ -6,7 +6,8 @@ import type { LabelMode } from '../render/fretboard';
 import type { LoopBars } from '../render/tab-strip';
 import { NeckCalibration } from './NeckCalibration';
 import { drawSurface, surfaceLabel, type SurfaceKind, withMoment } from './panel-draw';
-import { isGuitarPanel, needsBarStrip, panelsOf, PANEL_NAMES, type PanelId, type StageLayout } from './stage-layout';
+import { SlotTrackPicker } from './SlotTrackPicker';
+import { isGuitarPanel, needsBarStrip, panelsOf, PANEL_NAMES, trackForSlot, type PanelId, type StageLayout } from './stage-layout';
 import { useBarSelect } from './use-bar-select';
 import { useNeckPhoto } from './use-neck-photo';
 import { usePickPhoto } from './use-pick-photo';
@@ -31,6 +32,8 @@ interface StageProps {
   /** Called every frame so the parent can follow the clock (play state, time readout). */
   onFrame: (t: number) => void;
   onFullscreen: (panel: PanelId) => void;
+  /** Gives the bottom panel its own track, or back to the picker's with undefined. */
+  onBottomTrackChange: (track: number | undefined) => void;
 }
 
 export function Stage({
@@ -47,14 +50,23 @@ export function Stage({
   onSeekBar,
   onFrame,
   onFullscreen,
+  onBottomTrackChange,
 }: StageProps) {
   const canvases = useRef<Partial<Record<SurfaceKind, HTMLCanvasElement | null>>>({});
   const photo = useNeckPhoto();
+  const bassPhoto = useNeckPhoto('bass');
   const pickPhoto = usePickPhoto();
   const [calibrating, setCalibrating] = useState(false);
   const panels = panelsOf(layout);
   const bar = needsBarStrip(panels);
   const key = `${layout.top}/${layout.bottom}`;
+  /** The track each panel draws: the top follows the track picker, the bottom has its own when it names one. */
+  const panelTracks = panels.map((_, i) => trackForSlot(layout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks));
+  const shownRef = useRef<PanelId[]>(panels);
+  shownRef.current = panels;
+  const tracksRef = useRef(panelTracks);
+  tracksRef.current = panelTracks;
+  const trackOf = (id: PanelId): number => panelTracks[panels.indexOf(id)] ?? trackIndex;
   const liveRef = useRef({ loop, lookahead, labelMode, neckCues });
   liveRef.current = { loop, lookahead, labelMode, neckCues };
   const barSelect = useBarSelect({ timeline, trackIndex, clock, onLoopChange, onSeekBar, resetKey: key });
@@ -65,23 +77,31 @@ export function Stage({
     const draw = () => {
       const t = clock.time();
       const live = liveRef.current;
-      // One moment per frame, handed to every surface so they all agree on what is sounding.
-      const state = withMoment({ timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, pickPhoto: pickPhoto.current });
+      // One state per distinct track, so panels on one track share a moment and a different track gets its own.
+      const base = { timeline, trackIndex, t, loop: live.loop, lookahead: live.lookahead, labelMode: live.labelMode, neckCues: live.neckCues, photo: photo.current, bassPhoto: bassPhoto.current, pickPhoto: pickPhoto.current };
+      const states = new Map<number, ReturnType<typeof withMoment>>();
+      const stateFor = (track: number) => {
+        let st = states.get(track);
+        if (!st) states.set(track, (st = withMoment({ ...base, trackIndex: track })));
+        return st;
+      };
       const playbackBar = playbackBarIndexAt(timeline, t);
       const relabel = playbackBar !== lastBar;
       lastBar = playbackBar;
       for (const kind of Object.keys(canvases.current) as SurfaceKind[]) {
         const canvas = canvases.current[kind];
         if (!canvas) continue;
-        drawSurface(kind, canvas, state);
-        if (relabel) canvas.setAttribute('aria-label', surfaceLabel(kind, timeline, trackIndex, playbackBar));
+        const shown = shownRef.current;
+        const track = kind === 'bar' ? trackIndex : tracksRef.current[shown.indexOf(kind as PanelId)] ?? trackIndex;
+        drawSurface(kind, canvas, stateFor(track));
+        if (relabel) canvas.setAttribute('aria-label', surfaceLabel(kind, timeline, track, playbackBar));
       }
       onFrame(t);
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [timeline, trackIndex, clock, onFrame, photo, pickPhoto]);
+  }, [timeline, trackIndex, clock, onFrame, photo, bassPhoto, pickPhoto]);
 
   function panel(id: PanelId) {
     const seekable = id === 'tab';
@@ -95,9 +115,12 @@ export function Stage({
           role="img"
           aria-label={PANEL_NAMES[id]}
           title={seekable ? 'Click a bar to jump there, drag across bars to loop them' : undefined}
-          {...(seekable ? barSelect('tab') : {})}
+          {...(seekable ? barSelect('tab', trackOf(id)) : {})}
         />
         <div className="panel-tools">
+          {id === layout.bottom && (
+            <SlotTrackPicker tracks={timeline.tracks} value={layout.bottomTrack} onChange={onBottomTrackChange} />
+          )}
           {isGuitarPanel(id) && (
             <button
               type="button"

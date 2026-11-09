@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeEngine, engineStateLine, readEngineStatus, shouldStartSetup, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
+import { describeEngine, engineStateLine, readEngineStatus, setupBar, startEngineSetup, type ShellEngineStatus } from '../../src/app/engine-state';
 
 const status = (s: Partial<ShellEngineStatus> & { phase: ShellEngineStatus['phase'] }): ShellEngineStatus => s as ShellEngineStatus;
 
@@ -115,19 +115,6 @@ describe('R25: setup never blocks practice', () => {
     expect(read).toBeInstanceOf(Promise);
     expect(start).toBeInstanceOf(Promise);
     await Promise.allSettled([read, start]); // no shell in Node: both reject, neither throws synchronously
-  });
-});
-
-describe('shouldStartSetup (KTD4)', () => {
-  it('covers AE1: is true only when setup has never run', () => {
-    expect(shouldStartSetup(describeEngine(status({ phase: 'setup-needed' })))).toBe(true);
-  });
-
-  it('is false in every other state, so setup is never started twice or retried by itself', () => {
-    for (const phase of ['setting-up', 'starting', 'ready', 'restarting', 'engine-error', 'setup-failed'] as const) {
-      expect(shouldStartSetup(describeEngine(status({ phase, url: 'u', secret: 's' })))).toBe(false);
-    }
-    expect(shouldStartSetup(describeEngine(null))).toBe(false);
   });
 });
 

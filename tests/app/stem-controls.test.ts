@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { describeEngine } from '../../src/app/engine-state';
-import { passNote, scheduleChoice, scheduleForChoice, SCHEDULE_CHOICES, formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, rankByLength, searchRow, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
+import { passNote, scheduleChoice, scheduleForChoice, SCHEDULE_CHOICES, formatDuration, guitarAmount, guitarAmountLabel, setGuitarAmount, rankByLength, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from '../../src/app/stem-controls';
 import { initialMix, stemGains } from '../../src/audio/mix-gains';
 
 const ready = describeEngine({ phase: 'ready', url: 'http://127.0.0.1:1', secret: 's' });
@@ -95,20 +95,6 @@ describe('formatDuration', () => {
     expect(formatDuration(3725)).toBe('1:02:05');
     expect(formatDuration(59.6)).toBe('1:00');
     expect(formatDuration(null)).toBe('');
-  });
-});
-
-describe('searchRow', () => {
-  it('shows title, uploader and length', () => {
-    const r = searchRow({ url: 'u', title: 'Song', duration: 200, uploader: 'Band', too_long: false });
-    expect(r).toEqual({ title: 'Song', detail: 'Band · 3:20', disabled: false, note: '' });
-  });
-
-  it('disables a result over the engine length limit and says why', () => {
-    const r = searchRow({ url: 'u', title: 'Mix', duration: 9000, uploader: null, too_long: true });
-    expect(r.disabled).toBe(true);
-    expect(r.note).toMatch(/too long/i);
-    expect(r.detail).toBe('2:30:00');
   });
 });
 

@@ -30,8 +30,12 @@ export function startExport(args: {
   /** The panels each frame shows, top to bottom. */
   panels: readonly PanelId[];
   view: ExportViewOptions;
-  /** The guitar photo; needed when the real guitar is one of the panels. */
+  /** The track each panel draws, top first; every panel draws `trackIndex` when absent. */
+  panelTracks?: readonly number[];
+  /** The guitar photo; needed when the real guitar is one of the panels, on a track that is not a 4-string bass. */
   photo?: ImageBitmap;
+  /** The bass photo; needed when a panel draws a 4-string track in the real guitar or pick view. */
+  bassPhoto?: ImageBitmap;
   /** The pick view's photo and the profile it was measured with; needed when the pick view is one of the panels. */
   pickPhoto?: { photo: ImageBitmap; profile: NeckProfile };
   /** Where the recording sits against the tab; the video lasts through any extra playing, with the tab waiting. */
@@ -73,19 +77,21 @@ export function startExport(args: {
     try {
       const start: StartMessage = {
         type: 'start',
-        data: serializeTimeline(args.timeline, args.trackIndex),
+        data: serializeTimeline(args.timeline, args.panelTracks ? [args.trackIndex, ...args.panelTracks] : args.trackIndex),
         trackIndex: args.trackIndex,
+        panelTracks: args.panelTracks ? [...args.panelTracks] : undefined,
         preset: args.preset,
         audio,
         panels: [...args.panels],
         view: args.view,
         photo: args.photo,
+        bassPhoto: args.bassPhoto,
         pickPhoto: args.pickPhoto,
         outputSeconds,
         alignment,
         watermark: args.watermark === true,
       };
-      worker.postMessage(start, [audio.left.buffer, audio.right.buffer, ...(args.photo ? [args.photo] : []), ...(args.pickPhoto ? [args.pickPhoto.photo] : [])]);
+      worker.postMessage(start, [audio.left.buffer, audio.right.buffer, ...(args.photo ? [args.photo] : []), ...(args.bassPhoto ? [args.bassPhoto] : []), ...(args.pickPhoto ? [args.pickPhoto.photo] : [])]);
     } catch (e) {
       worker.terminate();
       reject(e instanceof Error ? e : new Error(String(e)));

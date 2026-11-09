@@ -1,14 +1,6 @@
 import { useRef } from 'react';
 import { OFFSET_MAX_SECONDS, OFFSET_MIN_SECONDS } from '../audio/offset-range';
-import { nudgeOffset, offsetDirectionLabel } from './offset-controls';
-
-/** Visible text, step size, direction and spoken label for each nudge button, in display order. */
-const NUDGES = [
-  ['-100 ms', 'coarse', -1, '100 ms later'],
-  ['-10 ms', 'fine', -1, '10 ms later'],
-  ['+10 ms', 'fine', 1, '10 ms earlier'],
-  ['+100 ms', 'coarse', 1, '100 ms earlier'],
-] as const;
+import { NUDGES, nudgeOffset, offsetDirectionLabel } from './offset-controls';
 
 interface OffsetSliderProps {
   /** Null when no recording is loaded. */
@@ -22,18 +14,21 @@ interface OffsetSliderProps {
   onLoad: (file: File) => void;
   onOffsetChange: (seconds: number) => void;
   onRemove: () => void;
+  /** Why loading is unavailable right now, such as a recording with video being made; null when it is available. */
+  loadLockedReason?: string | null;
 }
 
-export function OffsetSlider({ offsetSeconds, offsetControl, autoPlaced = false, fileName, error, onLoad, onOffsetChange, onRemove }: OffsetSliderProps) {
+export function OffsetSlider({ offsetSeconds, offsetControl, autoPlaced = false, fileName, error, onLoad, onOffsetChange, onRemove, loadLockedReason = null }: OffsetSliderProps) {
   const input = useRef<HTMLInputElement>(null);
   // The controls show for a loaded recording and for the stems; the note below says which one they move.
   const loaded = offsetSeconds !== null;
 
   return (
     <div className="audio-sync" role="group" aria-label="Your recording">
-      <button type="button" onClick={() => input.current?.click()}>
+      <button type="button" disabled={loadLockedReason !== null} onClick={() => input.current?.click()}>
         {loaded ? 'Replace recording' : 'Load your recording'}
       </button>
+      {loadLockedReason && <span className="muted">{loadLockedReason}</span>}
       <input
         ref={input}
         type="file"

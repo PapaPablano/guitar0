@@ -1,3 +1,4 @@
+import { TEMPO_MAX, TEMPO_MIN, TEMPO_STEP } from './tempo-steps';
 import { seekMarks, type SeekMarksInput } from './transport-marks';
 
 interface TransportProps {
@@ -68,9 +69,9 @@ export function Transport({
         Tempo {tempoPercent}%
         <input
           type="range"
-          min={25}
-          max={125}
-          step={5}
+          min={TEMPO_MIN}
+          max={TEMPO_MAX}
+          step={TEMPO_STEP}
           value={tempoPercent}
           onChange={(e) => onTempoChange(Number(e.target.value))}
           disabled={disabled}

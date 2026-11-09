@@ -29,6 +29,8 @@ export type AnalysisResult =
       /** The bar-by-bar placement, for a first open whose whole-song result fails the check. */
       readonly perBarMap: AlignmentMap;
       readonly tier: OutcomeTier;
+      /** True when bar 1 was set to the recording's first sound instead of where the match put it before the recording. */
+      readonly startSet?: boolean;
     }
   | { readonly kind: 'not-found'; readonly reason: 'too-long' | 'silent' | 'not-confident' | 'out-of-range' }
   | { readonly kind: 'failed'; readonly reason: 'decode' | 'render' | 'worker' }
@@ -191,7 +193,7 @@ export function startAnalysis(args: AnalysisArgs, deps: AnalysisDeps = browserDe
       const perBarMap = answer.kind === 'aligned' ? AlignmentMap.normalize(answer.perBarData) : null;
       settle(
         map && perBarMap && answer.kind === 'aligned'
-          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched, sections: answer.sections, perBarMap, tier: answer.tier }
+          ? { kind: 'aligned', map, confidence: answer.confidence, matchedFraction: answer.matchedFraction, skippedStretches: answer.skippedStretches, barConfidence: answer.barConfidence, barMatched: answer.barMatched, sections: answer.sections, perBarMap, tier: answer.tier, startSet: answer.startSet }
           : answer.kind === 'not-found'
             ? { kind: 'not-found', reason: answer.reason }
             : { kind: 'failed', reason: 'worker' },

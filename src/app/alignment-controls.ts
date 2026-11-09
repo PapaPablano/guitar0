@@ -1,5 +1,5 @@
 import { OFFSET_MAX_SECONDS } from '../audio/offset-range';
-import type { AlignStatus, NotFoundReason } from './auto-align';
+import type { AlignBasis, AlignStatus, NotFoundReason } from './auto-align';
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
@@ -18,6 +18,12 @@ function notFoundText(reason: NotFoundReason): string {
   }
 }
 
+const basisName = (basis: AlignBasis): string => (basis === 'track' ? 'the track on screen' : 'the whole band');
+
+const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+const startText = (startSet: boolean | undefined): string => (startSet ? " Bar 1 was set to the recording's first sound." : '');
+
 const skippedText = (skipped: number): string =>
   skipped > 0 ? ` The tab jumps past ${skipped} ${plural(skipped, 'stretch the recording skips', 'stretches the recording skips')}.` : '';
 
@@ -33,9 +39,9 @@ export function statusText(status: AlignStatus): string {
         ? `Detecting this recording's timing again… ${Math.round(status.progress * 100)}%`
         : `Lining the recording up with the tab… ${Math.round(status.progress * 100)}%`;
     case 'lined-up':
-      return `Lined up with the tab.${skippedText(status.skipped)}`;
+      return `Lined up with the tab${status.basis ? `, using ${basisName(status.basis)}` : ''}.${startText(status.startSet)}${skippedText(status.skipped)}`;
     case 'roughly':
-      return `Roughly lined up: some bar lines may be off by more than a few hundredths of a second.${skippedText(status.skipped)}`;
+      return `Roughly lined up: some bar lines may be off by more than a few hundredths of a second.${status.basis ? ` ${capitalised(basisName(status.basis))} was used.` : ''}${startText(status.startSet)}${skippedText(status.skipped)}`;
     case 'not-found':
       return `${notFoundText(status.reason)} The recording plays against the offset alone.`;
     case 'failed':
@@ -62,11 +68,6 @@ export interface StateControls {
   readonly exportBlockedReason: string | null;
   /** Whether Re-analyse can be pressed. */
   readonly canReanalyse: boolean;
-}
-
-/** The controls while a YouTube take is on: it was lined up before it played, so the nudge only fine-tunes. */
-export function takeControls(): StateControls {
-  return controlsFor({ phase: 'idle' }, { hasTimeline: false, hasRecordingFile: false });
 }
 
 export function controlsFor(status: AlignStatus, ctx: { hasTimeline: boolean; hasRecordingFile: boolean }): StateControls {

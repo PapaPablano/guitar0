@@ -41,6 +41,7 @@ Status key: `[ ]` open, `[x]` done.
 | [ ] Origin of the existing neck photo (`src/assets/guitar-photo.jpg`) recorded in the notices | | | |
 | [ ] Licence of the All-In-One `harmonix-all` checkpoint confirmed | StemDeck states the project and runtime are MIT but not the checkpoint separately | | |
 | [ ] Legal review of the YouTube feature | Terms of service and copyright risk for downloading from YouTube once you charge | | |
+| [ ] Legal review of the "Record with video" export | It records YouTube's picture and audio into a file, which YouTube's API terms as understood when the embed was planned restrict. The owner chose to proceed without a written source on 2026-10-25. Get the source or a legal read before charging | | |
 | [ ] Terms, privacy and refund links added to the installer and the app | R20 | | |
 
 ## 4. Before the first paid release

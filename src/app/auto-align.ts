@@ -13,6 +13,9 @@ export type RedetectCause = 'tab-changed' | 'check-failed';
 
 export type NotFoundReason = 'too-long' | 'silent' | 'not-confident' | 'out-of-range' | 'inconsistent';
 
+/** What the recording was compared with: the track on screen alone, or every part of the tab. Unknown for a timeline restored from its file. */
+export type AlignBasis = 'track' | 'band';
+
 /** What the alignment panel says about the loaded recording. */
 export type AlignStatus =
   | { readonly phase: 'idle' }
@@ -21,9 +24,9 @@ export type AlignStatus =
   /** `again` is true when a saved timing from before is being detected again, and plays until the new one is committed. */
   | { readonly phase: 'analysing'; readonly progress: number; readonly again?: boolean }
   /** A timeline is committed and most bars are supported by onsets or by the whole-song pass. */
-  | { readonly phase: 'lined-up'; readonly skipped: number }
+  | { readonly phase: 'lined-up'; readonly skipped: number; readonly basis?: AlignBasis; readonly startSet?: boolean }
   /** A timeline is committed, but the accuracy target is not met for enough bars. */
-  | { readonly phase: 'roughly'; readonly skipped: number }
+  | { readonly phase: 'roughly'; readonly skipped: number; readonly basis?: AlignBasis; readonly startSet?: boolean }
   /** No timeline: the recording plays against the global offset alone. */
   | { readonly phase: 'not-found'; readonly reason: NotFoundReason }
   | { readonly phase: 'failed'; readonly reason: 'decode' | 'render' | 'worker' | 'no-sound' }
@@ -77,10 +80,11 @@ export function settleAnalysis(ctx: SettleContext, result: AnalysisResult): Sett
     case 'aligned': {
       if (ctx.offsetMovedSinceStart) return unchanged({ phase: 'idle' });
       const skipped = result.skippedStretches;
+      const startFlag = result.startSet ? { startSet: true } : {};
       const base = { sections: result.sections, barConfidence: result.barConfidence, barMatched: result.barMatched, remember: false };
       if (!failsCheck(result.map, ctx.bars)) {
         const tier = result.tier;
-        return { map: result.map, status: tier === 'lined-up' ? { phase: 'lined-up', skipped } : { phase: 'roughly', skipped }, tier, ...base };
+        return { map: result.map, status: tier === 'lined-up' ? { phase: 'lined-up', skipped, ...startFlag } : { phase: 'roughly', skipped, ...startFlag }, tier, ...base };
       }
       if (ctx.hasTimeline) return { ...unchanged({ phase: 'kept-previous' }), remember: true };
       if (!failsCheck(result.perBarMap, ctx.bars)) {
@@ -93,6 +97,28 @@ export function settleAnalysis(ctx: SettleContext, result: AnalysisResult): Sett
     case 'failed':
       return unchanged({ phase: 'failed', reason: result.reason });
   }
+}
+
+/** A track that has not played by now gives the line-up nothing to match at the start, where the offset is decided. */
+export const OPENING_SECONDS = 10;
+
+/** Whether a track has a note in the opening seconds of the tab. */
+export const playsInOpening = (notes: readonly { readonly startSeconds: number }[]): boolean => notes.some((n) => n.startSeconds < OPENING_SECONDS);
+
+/** What to line the recording up with: the viewed track, unless it is silent in the opening, when the whole band is the better reference. */
+export function referenceBasisFor(viewedNotes: readonly { readonly startSeconds: number }[]): AlignBasis {
+  return playsInOpening(viewedNotes) ? 'track' : 'band';
+}
+
+/**
+ * Whether a line-up on the viewed track alone should be tried again against the whole band: it committed no timeline because it
+ * was not confident or its map failed the check. A silent or too long recording, a failed run and a dropped result would not
+ * come out differently on the whole band.
+ */
+export function needsBandFallback(settled: Settled | null, result: AnalysisResult): boolean {
+  if (!settled || settled.map || settled.status.phase === 'idle') return false;
+  if (result.kind === 'not-found') return result.reason === 'not-confident';
+  return result.kind === 'aligned';
 }
 
 /** What a committed timeline rests on, bar by bar: where detection put it, the tab bar it was placed against, and how well it lined up. */

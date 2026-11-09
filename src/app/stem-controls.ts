@@ -1,7 +1,7 @@
 import { engineStateLine, type EngineView } from './engine-state';
 import { MAX_STEM_VOLUME, type MixState } from '../audio/mix-gains';
 import { fadeStep, FADE_OUT_STEPS, type PassSchedule } from '../audio/pass-schedule';
-import type { SearchItem, StemName } from '../stems/engine-client';
+import type { StemName } from '../stems/engine-client';
 
 export interface SeparateControl {
   readonly visible: boolean;
@@ -87,32 +87,13 @@ export function formatDuration(seconds: number | null): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-export interface SearchRow {
-  readonly title: string;
-  readonly detail: string;
-  readonly disabled: boolean;
-  readonly note: string;
-}
-
-/** What one search result shows. A result over the engine's length limit cannot be imported. */
-export function searchRow(item: SearchItem): SearchRow {
-  const detail = [item.uploader, formatDuration(item.duration)].filter(Boolean).join(' · ');
-  return {
-    title: item.title,
-    detail,
-    disabled: item.too_long,
-    note: item.too_long ? 'Too long to import' : '',
-  };
-}
-
 /**
  * Orders search results by how close their length is to the tab's, so the likeliest backing track comes first. Every result
- * stays in the list: one over the import limit is still shown (disabled), and one with no length goes last. Equal distances
- * keep the engine's own order. An unknown tab length (0 or less) leaves the order alone.
+ * stays in the list, and one with no length goes last. Equal distances keep the order the search gave. An unknown tab length (0 or less) leaves the order alone.
  */
-export function rankByLength(items: readonly SearchItem[], tabSeconds: number): SearchItem[] {
+export function rankByLength<T extends { readonly duration: number | null }>(items: readonly T[], tabSeconds: number): T[] {
   if (!(tabSeconds > 0)) return [...items];
-  const distance = (item: SearchItem) => (typeof item.duration === 'number' && Number.isFinite(item.duration) ? Math.abs(item.duration - tabSeconds) : Infinity);
+  const distance = (item: T) => (typeof item.duration === 'number' && Number.isFinite(item.duration) ? Math.abs(item.duration - tabSeconds) : Infinity);
   return items
     .map((item, index) => ({ item, index, distance: distance(item) }))
     .sort((a, b) => (a.distance === b.distance ? a.index - b.index : a.distance - b.distance))

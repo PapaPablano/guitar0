@@ -19,11 +19,3 @@ export function hashFile(file: File): Promise<string> {
   });
   return started;
 }
-
-/**
- * SHA-256 hex of a YouTube take's link, as the key its alignment is saved under. The desktop store wants 64
- * lowercase hex characters; the `youtube:` prefix keeps it apart from the hash of any file's bytes.
- */
-export function hashVideoLink(url: string): Promise<string> {
-  return sha256Hex(new TextEncoder().encode(`youtube:${url}`));
-}

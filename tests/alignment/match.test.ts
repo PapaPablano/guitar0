@@ -52,6 +52,16 @@ describe('matchRecording', { timeout: 30000 }, () => {
     expect(result.map.holds).toEqual([]);
   });
 
+  it('covers AE2: leaves the start as matched, and says so, when the recording really starts a bar or more into the song', () => {
+    const result = aligned(run(shifted(recordingOfSong, -2, R)));
+    expect(result.startSet).toBe(false);
+    expect(Math.abs(result.map.base + 2)).toBeLessThanOrEqual(0.03);
+  });
+
+  it('does not set the start for an ordinary recording with a lead-in', () => {
+    expect(aligned(run(shifted(recordingOfSong, 1.5, R))).startSet).toBe(false);
+  });
+
   it('gives a negative base offset for a recording that starts after the tab', () => {
     const result = aligned(run(shifted(recordingOfSong, -2, R)));
     expect(Math.abs(result.map.base + 2)).toBeLessThanOrEqual(0.03);

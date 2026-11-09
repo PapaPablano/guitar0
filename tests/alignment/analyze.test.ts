@@ -4,8 +4,6 @@ import { FEATURE_RATE } from '../../src/alignment/features';
 import { runMatchJob, type MatchJob, type MatchJobResult } from '../../src/alignment/job';
 import { initialMix } from '../../src/audio/mix-gains';
 import { stemAnalysisFeed, type StemSources } from '../../src/export/stem-audio';
-import { takeVerdict } from '../../src/app/take-align';
-import { AlignmentMap } from '../../src/audio/alignment-map';
 import { STEM_NAMES } from '../../src/stems/engine-client';
 import { makeTimeline } from '../helpers/make-timeline';
 import { barSpans, inserted, renderSong, shifted, songNotes, unrelatedMusic } from '../helpers/synthetic-audio';
@@ -64,6 +62,15 @@ describe('startAnalysis', () => {
     }
     for (let i = 1; i < seen.length; i++) expect(seen[i]).toBeGreaterThan(seen[i - 1]);
     expect(seen[seen.length - 1]).toBe(1);
+  });
+
+  it('carries the flag that bar 1 was set to the recording first sound through', async () => {
+    const { deps, answer } = fakes();
+    const job = startAnalysis(args(), deps);
+    await flush();
+    answer({ kind: 'aligned', data: { base: 0.1, holds: [] }, confidence: 6, matchedFraction: 1, skippedStretches: 0, barConfidence: [], barMatched: [], sections: [], perBarData: { base: 0.1, holds: [] }, tier: 'lined-up', startSet: true });
+    const result = await job.result;
+    expect(result.kind === 'aligned' && result.startSet).toBe(true);
   });
 
   it('carries the anchors, per-bar confidence and sections of the answer through', async () => {
@@ -291,19 +298,6 @@ describe('startAnalysis', () => {
         expect(Math.abs(result.map.base - 12)).toBeLessThanOrEqual(0.05);
         expect(result.map.holds).toHaveLength(0);
       }
-    });
-
-    it('turns the real matcher result into the offset a take is played at, within a bar-anchor tolerance of every bar', { timeout: 30000 }, async () => {
-      const bars = barSpans(24, 2);
-      const result = await judge(initialMix());
-      const verdict = takeVerdict(result, bars);
-      expect(verdict.kind).toBe('offset');
-      if (verdict.kind !== 'offset' || result.kind !== 'aligned') return;
-      expect(Math.abs(verdict.offset - 12)).toBeLessThanOrEqual(0.03);
-      const played = AlignmentMap.fromOffset(verdict.offset);
-      const anchors = result.map.anchorData!.anchors;
-      const worst = Math.max(...bars.map((bar, k) => Math.abs(played.toRec(bar.start, 'start') - anchors[k])));
-      expect(worst).toBeLessThanOrEqual(0.03);
     });
 
     it('also finds it from the mix without the guitar stem', { timeout: 30000 }, async () => {

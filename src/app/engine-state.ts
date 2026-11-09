@@ -53,11 +53,6 @@ export function describeEngine(status: ShellEngineStatus | null, proLocked = fal
   }
 }
 
-/** Whether a player's action (choosing YouTube, asking to split a recording) should start first-time setup now. */
-export function shouldStartSetup(view: EngineView): boolean {
-  return view.needsSetup;
-}
-
 /** One plain sentence saying what the stem engine is doing, for the Backing track section; empty on the web. */
 export function engineStateLine(view: EngineView): string {
   switch (view.kind) {

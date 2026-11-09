@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Visual sync of all the views</title>
+<style>
+:root{
+  --bg:#fbfaf7; --panel:#ffffff; --ink:#1d2127; --muted:#566070; --line:#dcd8cf;
+  --accent:#8a5a00; --accent-soft:#fdf1d6; --accent-text:#6b4600;
+  --info-soft:#e8f0fb; --info-text:#1f4a86; --warn-soft:#fbe9e7; --warn-text:#8a2a1e;
+  --ok-soft:#e6f3ea; --ok-text:#1f6a3a; --code-bg:#f1eee7;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#14161b; --panel:#1b1e26; --ink:#e8eaee; --muted:#a3acbb; --line:#2d323d;
+    --accent:#ffd43b; --accent-soft:#3a3115; --accent-text:#ffe58a;
+    --info-soft:#18283f; --info-text:#a9c8f5; --warn-soft:#3b1f1b; --warn-text:#f3b7ae;
+    --ok-soft:#173023; --ok-text:#9fe0b8; --code-bg:#242833;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Inter","Segoe UI",system-ui,sans-serif}
+main{max-width:56rem;margin-inline:auto;padding:2rem 1rem 4rem}
+h1{font-size:1.9rem;line-height:1.2;margin:.2rem 0 .6rem}
+h2{font-size:1.35rem;margin:2.4rem 0 .8rem;padding-top:.6rem;border-top:1px solid var(--line)}
+h3{font-size:1.1rem;margin:0 0 .5rem}
+p,li{max-width:72ch}
+code{background:var(--code-bg);padding:.05rem .3rem;border-radius:4px;font-size:.88em}
+.eyebrow{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:.2rem 1rem;margin:.8rem 0;font-size:.92rem}
+dl.meta dt{color:var(--muted)} dl.meta dd{margin:0}
+.chip{display:inline-block;border-radius:999px;padding:.1rem .65rem;font-size:.8rem;border:1px solid var(--line);background:var(--panel);margin-right:.3rem}
+.chip.id{background:var(--accent-soft);color:var(--accent-text);border-color:transparent;font-weight:600}
+.chip.hi{background:var(--ok-soft);color:var(--ok-text);border-color:transparent}
+.chip.mid{background:var(--info-soft);color:var(--info-text);border-color:transparent}
+.chip.lo{background:var(--warn-soft);color:var(--warn-text);border-color:transparent}
+article.idea{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.1rem 1.2rem;margin:1.1rem 0}
+article.idea dl{margin:.7rem 0 0}
+article.idea dt{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-top:.7rem}
+article.idea dd{margin:.15rem 0 0}
+.callout{background:var(--info-soft);color:var(--info-text);border-radius:8px;padding:.7rem .9rem;margin:1rem 0}
+.callout.warn{background:var(--warn-soft);color:var(--warn-text)}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--panel)}
+nav ol{margin:.4rem 0 0;padding-left:1.3rem}
+figure{margin:1rem 0}
+figure svg{width:100%;height:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.3rem}
+svg text{font-family:inherit;fill:var(--ink)}
+footer.composition-signal{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<header>
+<p class="eyebrow">Ideation</p>
+<h1>Ideation: Visual sync of all the views</h1>
+<dl class="meta">
+<dt>Date</dt><dd><time datetime="2026-10-18">2026-10-18</time></dd>
+<dt>Topic</dt><dd>visual-sync-of-views</dd>
+<dt>Focus</dt><dd>visual sync of all of the different views for easier viewing</dd>
+<dt>Mode</dt><dd>repo-grounded</dd>
+</dl>
+<nav aria-label="Sections">
+<strong>Contents</strong>
+<ol>
+<li><a href="#grounding-context">Grounding Context</a></li>
+<li><a href="#topic-axes">Topic Axes</a></li>
+<li><a href="#ranked-ideas">Ranked Ideas</a></li>
+<li><a href="#rejection-summary">Rejection Summary</a></li>
+</ol>
+</nav>
+</header>
+
+<section id="grounding-context">
+<h2>Grounding Context</h2>
+<h3>Codebase Context</h3>
+<p>Tab Highway shows one song in five switchable views: the note <strong>highway</strong>, the <strong>tab strip</strong>, the <strong>fretboard</strong>, and the photographic <strong>neck</strong> and <strong>pick</strong> views, plus a slim <strong>bar timeline</strong> that appears when no panel is the tab strip. Two panels show at once (a top and a bottom slot). Every on-page canvas draws from one clock time per animation frame, so the views are already in step in time. They are not yet in step in how they look.</p>
+<ul>
+<li><strong>Different "now" markers.</strong> The highway pins the sounding gem to a white strikeline at 18% of its width. The tab strip uses a yellow cursor behind a fixed clef gutter. The bar timeline uses the same yellow, with no shared colour token. Both yellow lines hardcode <code>#ffd43b</code> (<code>src/render/tab-strip.ts:300</code>, <code>src/render/bar-timeline.ts:154</code>).</li>
+<li><strong>Different verdicts on "what is sounding".</strong> The highway adds a 0.3 s hold, a layout helper uses <code>t &lt; endSeconds</code>, the neck cues use <code>t &lt;= endSeconds</code> plus a linger, and the fretboard holds the last started step until the next one starts. The verifier counted at least five definitions.</li>
+<li><strong>Look-ahead means different things.</strong> "Notes ahead" (1 to 8 groups, default 4) reaches the fretboard and neck but not the highway, which keeps a fixed 3 s window (<code>src/app/panel-draw.ts:37</code> passes it no options).</li>
+<li><strong>Different time axes.</strong> The highway is linear in seconds. The tab strip now spaces notes by note value. The fretboard and neck have no time axis at all. The same moment is at a different x in each.</li>
+<li><strong>Page, fullscreen and export disagree.</strong> The export duplicates the panel switch and hardcodes its background (<code>src/render/stage-frame.ts:70,78</code>). Fullscreen shows the bar strip only for the fretboard (<code>src/app/PanelFullscreen.tsx:65</code>), while the page and export show it whenever no panel is the tab strip.</li>
+<li><strong>Interaction stops at the tab canvas.</strong> Click-to-seek and drag-to-loop are limited to the tab strip (<code>Stage.tsx:86</code>). No hover or selection state is shared between views.</li>
+<li><strong>Colour.</strong> Nobody passes a theme, so every view falls back to <code>DEFAULT_THEME</code>. The fretboard, neck and calibration each carry their own palette. An earlier plan notes that changing canvas colours changes exported video.</li>
+</ul>
+<h3>External context</h3>
+<p>Moderate confidence; a few searches only. Soundslice drives every view from one clock, lights notes in notation and fretboard together, makes every view a seek control, and snaps loops to note or bar boundaries. Rocksmith reuses one string-colour mapping across its highway and on-screen guitar, backs colour with height cues, and players complain notes blend into the string colour at the strike line. Nothing found shows a photographic neck view or one visual language shared across five views.</p>
+</section>
+
+<section id="topic-axes">
+<h2>Topic Axes</h2>
+<ol>
+<li>How each view marks "now" and the note to play</li>
+<li>Time scales and look-ahead</li>
+<li>Colour and visual language</li>
+<li>Layout, focus and export</li>
+<li>Cross-view interaction</li>
+</ol>
+</section>
+
+<section id="ranked-ideas">
+<h2>Ranked Ideas</h2>
+<p>Seven survivors from about 40 raw ideas (19 merged candidates, 7 kept). One fresh-context verifier checked the bases against the code and confirmed every <code>file:line</code> quote it spot-checked. Ideas 1 to 4 are the sync foundation; 5 to 7 build on it.</p>
+<nav aria-label="Ranked ideas">
+<ol>
+<li><a href="#idea-1">One Moment object for every view</a></li>
+<li><a href="#idea-2">One "now" language: shared colour roles and marker</a></li>
+<li><a href="#idea-3">One look-ahead that every view honours</a></li>
+<li><a href="#idea-4">One stage renderer for page, fullscreen and export</a></li>
+<li><a href="#idea-5">One note lifecycle with a next-note cue everywhere</a></li>
+<li><a href="#idea-6">Seek and loop from any view</a></li>
+<li><a href="#idea-7">Strikeline as fretboard: when and where in one place</a></li>
+</ol>
+</nav>
+
+<article class="idea" id="idea-1">
+<h3><span class="chip id">1.</span> One Moment object for every view</h3>
+<p><span class="chip">Axis 1: now and the note to play</span><span class="chip hi">Confidence 90%</span><span class="chip mid">Complexity Medium</span></p>
+<dl>
+<dt>Description</dt>
+<dd>Build one frozen <code>Moment</code> per animation frame in the stage, the fullscreen view and the export: time, playback bar, sounding notes per track, the next step, loop range and look-ahead. Pass it to every draw function so no view re-derives what is sounding or upcoming. The hold, linger and inclusive-versus-exclusive rules collapse into one definition. Add a parity test that renders every view at fixed moments and checks they agree.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>highway.ts:116</code> uses <code>emphasisAt(...).sounding</code> with a 0.3 s hold (<code>emphasis.ts:8</code>); <code>layout.ts:57-59</code> <code>isActive</code> is <code>t &lt; endSeconds</code>; <code>neck-cue-model.ts:135</code> uses <code>&lt;= endSeconds</code> and <code>:150</code> adds a linger; <code>fretboard-steps.ts:11</code> keeps the last started step until the next one starts. The verifier counted five divergent rules. <code>Stage.tsx</code> and <code>PanelFullscreen.tsx</code> each already have one place that calls <code>drawSurface</code>.</dd>
+<dt>Rationale</dt>
+<dd>Sync is the user's ask, and today the views share the clock but not the verdict, so a note can be lit in one view and finished in another at exactly the instant the eye is checking. Ideas 2, 3, 5 and 7 all read from the Moment, so it makes each of them cheap.</dd>
+<dt>Downsides</dt>
+<dd>It changes the draw signature for every view and changes how "sounding" feels in some of them (a one-time behaviour change the team has to accept). It is the riskiest idea to land last, which is why it ranks first.</dd>
+</dl>
+<figure>
+<svg viewBox="0 0 640 210" role="img" aria-label="Five separate sounding rules become one Moment feeding every view">
+<text x="12" y="22" font-size="12" font-weight="600">Today: five answers</text>
+<g font-size="11">
+<rect x="12" y="32" width="190" height="24" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="20" y="48">highway: t &lt; end + 0.3 s hold</text>
+<rect x="12" y="62" width="190" height="24" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="20" y="78">layout: t &lt; end</text>
+<rect x="12" y="92" width="190" height="24" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="20" y="108">neck cues: t &lt;= end + linger</text>
+<rect x="12" y="122" width="190" height="24" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="20" y="138">fretboard: last started step</text>
+<rect x="12" y="152" width="190" height="24" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="20" y="168">neck/pick camera: step model</text>
+</g>
+<text x="250" y="22" font-size="12" font-weight="600">Proposed: one Moment</text>
+<rect x="250" y="70" width="130" height="64" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="268" y="98" font-size="13" font-weight="600">Moment</text>
+<text x="262" y="116" font-size="10">sounding, next, loop</text>
+<g font-size="11">
+<rect x="450" y="30" width="170" height="22" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="458" y="45">highway</text>
+<rect x="450" y="58" width="170" height="22" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="458" y="73">tab strip</text>
+<rect x="450" y="86" width="170" height="22" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="458" y="101">fretboard</text>
+<rect x="450" y="114" width="170" height="22" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="458" y="129">neck and pick</text>
+<rect x="450" y="142" width="170" height="22" rx="4" fill="none" stroke="currentColor" opacity=".5"/><text x="458" y="157">bar timeline and export</text>
+</g>
+<path d="M380 102 L448 41 M380 102 L448 69 M380 102 L448 97 M380 102 L448 125 M380 102 L448 153" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".7"/>
+<path d="M205 104 L246 102" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)" opacity=".7"/>
+<defs><marker id="a1" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="currentColor"/></marker></defs>
+</svg>
+<figcaption>Illustrative: several local definitions of "sounding" become one state that every view only draws.</figcaption>
+</figure>
+</article>
+
+<article class="idea" id="idea-2">
+<h3><span class="chip id">2.</span> One "now" language: shared colour roles and marker</h3>
+<p><span class="chip">Axis 3: colour and visual language</span><span class="chip hi">Confidence 85%</span><span class="chip lo">Complexity Low</span></p>
+<dl>
+<dt>Description</dt>
+<dd>Add role tokens to <code>theme.ts</code> (NOW, NEXT, SOUNDING, LOOP, BACKGROUND), kept out of the six string colours so a string colour only ever means "which string". Replace the white strikeline, the two hardcoded yellows and the export background with them, and draw the three markers with one helper (same weight, glow and cap). Give any note touching the marker a luminance-safe outline so it cannot vanish into its own string colour.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>tab-strip.ts:300</code> and <code>bar-timeline.ts:154</code> both hardcode <code>'#ffd43b'</code>; the highway strikeline is separate (<code>highway.ts:107-108</code>); <code>stage-frame.ts:70</code> hardcodes <code>'#101216'</code>; nobody passes a theme, so everything falls back to <code>DEFAULT_THEME</code>. <code>external:</code> Rocksmith players report notes blending into the string colour at the strike line (web research, moderate confidence); aviation displays reserve colours by meaning, not by data series.</dd>
+<dt>Rationale</dt>
+<dd>The eye learns one symbol for "this instant" and finds it in whichever two panels are showing. It is the cheapest change that is visible on every screen, and it makes a high-contrast or colour-blind mode one edit later.</dd>
+<dt>Downsides</dt>
+<dd>An earlier layout plan flagged that changing canvas colours changes exported video, so this needs an explicit decision (or an opt-in version) on whether exports may change. The contrast outline is a design call that needs a look at real string colours.</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-3">
+<h3><span class="chip id">3.</span> One look-ahead that every view honours</h3>
+<p><span class="chip">Axis 2: time scales and look-ahead</span><span class="chip hi">Confidence 80%</span><span class="chip mid">Complexity Medium</span></p>
+<dl>
+<dt>Description</dt>
+<dd>Make "Notes ahead" one app-wide quantity (a number of note groups, with the equivalent seconds at the current tempo, clamped so fast passages stay readable). The highway window, the tab strip's visible span and the fretboard and neck steps all derive from it. Each view draws a faint horizon edge where "ahead" ends, and the bar timeline can bracket the span each view currently shows.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>layout.ts:24</code> sets <code>DEFAULT_LOOKAHEAD_SECONDS = 3</code>; <code>panel-draw.ts:37</code> calls <code>renderHighway(...)</code> with no options while <code>:43</code> passes <code>lookahead</code> to the fretboard; <code>fretboard-steps.ts:19-21</code> bounds steps at 1 to 8, default 4. <code>external:</code> map locator insets and overview-plus-detail interfaces show what a detail view covers.</dd>
+<dt>Rationale</dt>
+<dd>A player who lowers "Notes ahead" to 2 for a hard passage today still sees a flood of notes on the highway, so the setting silently fails on the view they are most likely to be watching.</dd>
+<dd>It forces one decision worth having: whether look-ahead is measured in notes or in time.</dd>
+<dt>Downsides</dt>
+<dd>Notes and seconds do not convert cleanly; the mapping has to adapt to tempo and could make the highway window jump on tempo changes. Export captures look-ahead at export start and would need the same treatment.</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-4">
+<h3><span class="chip id">4.</span> One stage renderer for page, fullscreen and export</h3>
+<p><span class="chip">Axis 4: layout, focus and export</span><span class="chip hi">Confidence 85%</span><span class="chip mid">Complexity Medium</span></p>
+<dl>
+<dt>Description</dt>
+<dd>Have the export call <code>drawSurface</code> instead of its own copy of the panel switch, and move the "when does the bar strip show" rule into one function used by the page, fullscreen and export. What the player tunes on screen is then what they get in the video, and every sync change lands once instead of three times.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>stage-frame.ts:78</code> calls <code>renderHighway</code> directly and <code>:108</code> draws the bar strip with only time and loop; <code>PanelFullscreen.tsx:65</code> has <code>withBar = panel === 'fretboard'</code> while <code>stage-layout.ts:68</code> <code>needsBarStrip</code> (tested at <code>stage-layout.test.ts:73-77</code>) shows it whenever no panel is the tab.</dd>
+<dt>Rationale</dt>
+<dd>It is the precondition for shipping any export-visible sync change safely, and it removes a standing source of drift.</dd>
+<dd>The part worth a team decision is the single bar-strip rule, since the three surfaces disagree today.</dd>
+<dt>Downsides</dt>
+<dd>Largely a refactor, so low novelty on its own; the export's equal-height split and slim-strip geometry may need care so the video does not change shape.</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-5">
+<h3><span class="chip id">5.</span> One note lifecycle with a next-note cue everywhere</h3>
+<p><span class="chip">Axis 1: now and the note to play</span><span class="chip mid">Confidence 65%</span><span class="chip mid">Complexity Medium</span></p>
+<dl>
+<dt>Description</dt>
+<dd>Define one note envelope (upcoming, next, sounding, released) with fixed timings, drawn with one visual grammar in every view: a ring that tightens on the next note, a fill while it sounds, a short afterimage when it ends. The highway gem, the tab fret number, the fretboard halo and the neck dot become the same gesture in different geometry. The highway and tab strip gain the next-note cue they lack today.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>fretboard.ts:148</code> "The next marker swells as its moment nears."; <code>fretboard-steps.ts:13</code> exposes <code>upcoming</code>, nearest first; the highway pins the sounding gem with <code>const cx = e.sounding ? layout.strikeX : noteX(layout, note, t)</code>. <code>external:</code> karaoke wipes and VU-meter ballistics (one envelope across very different displays; analogy only).</dd>
+<dt>Rationale</dt>
+<dd>The same moment currently lights for different durations in different panels, which the eye reads as lag. One envelope means "this note is happening" looks the same wherever the player looks, and shows how long the note has left.</dd>
+<dt>Downsides</dt>
+<dd>Depends on idea 1. It is a visual-language call that needs prototyping on real songs, and extra rings add clutter to dense passages. A shared beat pulse was considered and left out as polish.</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-6">
+<h3><span class="chip id">6.</span> Seek and loop from any view</h3>
+<p><span class="chip">Axis 5: cross-view interaction</span><span class="chip mid">Confidence 65%</span><span class="chip mid">Complexity Medium</span></p>
+<dl>
+<dt>Description</dt>
+<dd>Extend click-to-seek and drag-to-loop beyond the tab canvas to the bar timeline and the other views that have a meaningful position (the highway by time, the fretboard and neck by step). Draw the loop with one shared tint everywhere so a loop set in one panel is visible in all. Linked hover (a ghost "now" in the other views) is a possible follow-up, not part of this idea.</dd>
+<dt>Basis</dt>
+<dd><code>direct:</code> <code>Stage.tsx:86</code> has <code>const seekable = id === 'tab'</code>, and the interaction scout found no shared hover or selection state in the render layer; the shared <code>use-bar-select</code> hook already does the work for the tab. <code>external:</code> Soundslice makes every view a seek control and snaps loops to note or barline.</dd>
+<dt>Rationale</dt>
+<dd>Interaction is part of "reads as one picture": if the player can only navigate from one view, the others stay passive. It is the only idea on this axis, so it keeps the survivor set across all five axes.</dd>
+<dt>Downsides</dt>
+<dd>The photo views may not hit-test cleanly, and clicks on the highway currently toggle play, so the gesture needs a decision. The verifier rated the bundled hover idea weak, so only the seek and loop half was kept.</dd>
+</dl>
+</article>
+
+<article class="idea" id="idea-7">
+<h3><span class="chip id">7.</span> Strikeline as fretboard: when and where in one place</h3>
+<p><span class="chip">Axis 1: now and the note to play</span><span class="chip lo">Confidence 45%</span><span class="chip lo">Complexity High</span></p>
+<dl>
+<dt>Description</dt>
+<dd>At the highway's strikeline, draw the six strings with the fret numbers so an arriving gem lands on its string at the right fret, in the NOW colour. The fretboard's sounding state becomes the same marker, mirrored. The highway then shows where the hands go as well as when, at the one point the eye is already fixed on.</dd>
+<dt>Basis</dt>
+<dd><code>external:</code> Rocksmith reuses one string-colour mapping across its highway and on-screen guitar, but players report notes blending into the string colour at the strike line, which a distinct landing zone avoids. <code>reasoned:</code> the highway already has a strikeline and string lanes, and the fretboard already has a sounding halo, so the two "now" points can be merged rather than kept as separate panels.</dd>
+<dt>Rationale</dt>
+<dd>It is the one idea here that is a visible differentiator rather than consistency work: it merges the "when" view and the "where" view at the point of attention.</dd>
+<dt>Downsides</dt>
+<dd>Changes what the highway is. A strikeline carrying fret numbers on six lanes is dense and may clash with the existing neck and fretboard panels. Needs a throwaway prototype before any commitment.</dd>
+</dl>
+<figure>
+<svg viewBox="0 0 640 170" role="img" aria-label="Highway gems arriving at a strikeline that also shows the fretboard strings and fret numbers">
+<text x="12" y="20" font-size="12" font-weight="600">Highway with a fretboard at the strikeline</text>
+<g stroke="currentColor" opacity=".35"><line x1="20" y1="45" x2="620" y2="45"/><line x1="20" y1="70" x2="620" y2="70"/><line x1="20" y1="95" x2="620" y2="95"/><line x1="20" y1="120" x2="620" y2="120"/><line x1="20" y1="145" x2="620" y2="145"/></g>
+<rect x="330" y="32" width="120" height="126" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="352" y="28" font-size="11">strikeline zone: strings and frets</text>
+<g font-size="11" text-anchor="middle">
+<circle cx="150" cy="70" r="11" fill="none" stroke="currentColor"/><text x="150" y="74">5</text>
+<circle cx="230" cy="120" r="11" fill="none" stroke="currentColor"/><text x="230" y="124">7</text>
+<circle cx="300" cy="95" r="11" fill="none" stroke="currentColor"/><text x="300" y="99">3</text>
+<circle cx="390" cy="95" r="12" fill="var(--accent)" stroke="var(--accent)"/><text x="390" y="99" style="fill:#14161b">3</text>
+</g>
+<g font-size="10" fill="currentColor" opacity=".8"><text x="338" y="58">fret 1</text><text x="396" y="58">fret 3</text><text x="338" y="152">fret 5</text></g>
+<path d="M175 70 L230 70 M255 120 L300 120" stroke="currentColor" stroke-dasharray="3 3" opacity=".5" fill="none"/>
+</svg>
+<figcaption>Illustrative only: notes scroll in from the left and land on a string-and-fret grid at the strikeline.</figcaption>
+</figure>
+</article>
+</section>
+
+<section id="rejection-summary">
+<h2>Rejection Summary</h2>
+<p>About 33 of the raw ideas merged into the survivors above (the five convergent clusters in ideas 1 to 4 and the next-note, beat-pulse and horizon-bracket variants). The rest were considered and cut:</p>
+<table>
+<thead><tr><th>#</th><th>Idea</th><th>Reason rejected</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>One literal "now" column across stacked panels, with a shared ruler</td><td>The tab strip's clef gutter and different panel widths force different x positions, so a single column conflicts with the layout; the useful part (the marker looks the same everywhere) is in idea 2.</td></tr>
+<tr><td>2</td><td>Shared beat pulse on every now marker</td><td>Polish with little legibility gain, and it fails the meeting test alone; it can be added as a field of the Moment later.</td></tr>
+<tr><td>3</td><td>Bar timeline playhead uses the tab strip's note-anchor mapping</td><td>Sound and cheap, but bug-fix sized rather than a direction; it rides along as an early consumer of idea 1.</td></tr>
+<tr><td>4</td><td>Golden-moment parity test harness</td><td>An engineering enabler rather than a product idea; folded into idea 1 as its verification plan.</td></tr>
+<tr><td>5</td><td>Auto-pair layout ("Follow" mode)</td><td>Takes layout control away from the user and is mostly subsumed by idea 4's single rule.</td></tr>
+<tr><td>6</td><td>Single-stage mode with the other views as ghosts, and layers instead of panels</td><td>Speculative redesigns with no repo basis beyond "two slots"; the premise that the eye jumping between panels is the pain is unverified. Better framed as an experiment than an idea.</td></tr>
+<tr><td>7</td><td>Time-scale morph slider between linear and note-value spacing</td><td>Speculative control that adds complexity; the useful part is the mapping fix in rejection 3.</td></tr>
+<tr><td>8</td><td>Focus panel with peripheral rendering for the others</td><td>Basis is purely reasoned and unverified, and degrading the other views works against syncing all of them.</td></tr>
+<tr><td>9</td><td>Neck and pick camera easing tied to the highway's time</td><td>Thin basis ("arrives as the gem reaches the strikeline" is not grounded) and depends on ideas 1 and 3.</td></tr>
+<tr><td>10</td><td>Persistent "scorebug" readout strip</td><td>A new feature whose repo basis is only the bar-strip divergence that idea 4 already covers.</td></tr>
+<tr><td>11</td><td>Overview-plus-detail brackets on the bar timeline</td><td>Duplicates idea 3; kept there as an optional visual device.</td></tr>
+<tr><td>12</td><td>Linked hover and ghost playhead skimming</td><td>Verifier rated it weak: speculative and separable from seek and loop; left as a follow-up to idea 6.</td></tr>
+<tr><td>13</td><td>Bundles of ideas 1, 3 and 6 (aligned time, linked navigation)</td><td>Scope beyond what the evidence supports; their solid parts survive as ideas 3 and 6.</td></tr>
+</tbody>
+</table>
+<p>No axis ended with zero survivors, so there is no coverage gap to record. Verification budgets were per agent and not uniform: one generation agent opened three files, several opened none, so bases tagged <code>direct:</code> are verified only where the verifier or the agent read the line.</p>
+</section>
+
+<footer class="composition-signal">Composed <time datetime="2026-10-18T18:45">2026-10-18</time> by ce-ideate from the repository <code>Guitar0</code> and the focus "visual sync of all of the different views for easier viewing".</footer>
+</main>
+</body>
+</html>

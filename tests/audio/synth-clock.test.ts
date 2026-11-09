@@ -189,6 +189,39 @@ describe('SynthClock', () => {
       expect(options.trackVolume.size).toBe(0);
     });
 
+    it('renders only the named track when asked', async () => {
+      const { clock, api } = setup();
+      await clock.exportAudio(undefined, { onlyTrack: 1 });
+      const options = api.exportAudio.mock.calls[0]![0] as alphaTab.synth.AudioExportOptions;
+      expect(options.trackVolume.get(0)).toBe(0);
+      expect(options.trackVolume.get(2)).toBe(0);
+      expect(options.trackVolume.has(1)).toBe(false);
+    });
+
+    it('renders the named track even when it is the one Play along silences', async () => {
+      const { clock, api } = setup();
+      clock.setSilentTrack(1);
+      await clock.exportAudio(undefined, { onlyTrack: 1 });
+      const options = api.exportAudio.mock.calls[0]![0] as alphaTab.synth.AudioExportOptions;
+      expect(options.trackVolume.has(1)).toBe(false);
+    });
+
+    it('renders the whole band when the named track is not in the score', async () => {
+      const { clock, api } = setup();
+      await clock.exportAudio(undefined, { onlyTrack: 9 });
+      const options = api.exportAudio.mock.calls[0]![0] as alphaTab.synth.AudioExportOptions;
+      expect(options.trackVolume.size).toBe(0);
+    });
+
+    it('lets the named track win over the full band option', async () => {
+      const { clock, api } = setup();
+      await clock.exportAudio(undefined, { onlyTrack: 2, fullBand: true });
+      const options = api.exportAudio.mock.calls[0]![0] as alphaTab.synth.AudioExportOptions;
+      expect(options.trackVolume.get(0)).toBe(0);
+      expect(options.trackVolume.get(1)).toBe(0);
+      expect(options.trackVolume.has(2)).toBe(false);
+    });
+
     it('keeps the export length and rate unchanged', async () => {
       const { clock } = setup();
       clock.setSilentTrack(1);

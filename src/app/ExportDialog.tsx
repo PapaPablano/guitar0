@@ -6,10 +6,11 @@ import { browserExportEnvironment, checkExportSupport, type ExportSupport } from
 import { ExportCancelled, startExport, type ExportJob } from '../export/exporter';
 import { loadNeckPhoto } from '../export/neck-photo';
 import { loadPickPhoto } from '../export/pick-photo';
+import { photosNeeded } from '../export/photos-needed';
 import { browserDownload, openExportFolder, saveExport, type SaveResult } from '../export/save-export';
 import { estimateMegabytes, PRESETS, presetById, type ExportPreset } from '../export/presets';
 import type { ExportViewOptions } from '../render/stage-frame';
-import { isGuitarPanel, panelsOf, PANEL_NAMES, type StageLayout } from './stage-layout';
+import { isGuitarPanel, panelsOf, PANEL_NAMES, trackForSlot, type StageLayout } from './stage-layout';
 import { isPro, useTier } from './tier';
 import type { Timeline } from '../model/score';
 
@@ -36,6 +37,14 @@ interface ExportDialogProps {
   /** Where the recording sits against the tab; the export lasts through any extra playing, with the tab waiting. */
   alignment?: AlignmentMap | null;
   onClose: () => void;
+  /** Starts the recorded export that includes the YouTube video; the button shows only when this is given. */
+  onRecordWithVideo?: () => void;
+  /** Runs the sound check again without recording; given only when Record with video is offered. */
+  onRecheckCapture?: () => void;
+  /** Why Re-check and Record with video are unavailable right now, such as a recording already running; null when they are available. */
+  recordBusyReason?: string | null;
+  /** A line to show at the top of the dialog, such as what the export leaves out; nothing when null. */
+  notice?: string | null;
 }
 
 function safeFilename(title: string): string {
@@ -48,10 +57,12 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose }: ExportDialogProps) {
+export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCuesChange, getAudio, loopRange = null, alignment = null, onClose, onRecordWithVideo, onRecheckCapture, recordBusyReason = null, notice = null }: ExportDialogProps) {
   const [presetId, setPresetId] = useState<ExportPreset['id']>('landscape');
   const [support, setSupport] = useState<ExportSupport | null>(null);
   const panels = panelsOf(stageLayout);
+  /** The track each panel draws, top first, as on the page. */
+  const panelTracks = panels.map((_, i) => trackForSlot(stageLayout, i === 0 ? 'top' : 'bottom', trackIndex, timeline.tracks));
   const tier = useTier();
   const [loopOnly, setLoopOnly] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
@@ -121,28 +132,39 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
     try {
       const audio = await getAudio((fraction) => current() && setPhase({ name: 'preparing', fraction }));
       if (!current()) return;
-      const photo = panels.includes('neck') ? await loadNeckPhoto() : undefined;
+      // the photos the panels need, each from its own track: a 4-string track draws on the bass photo, any other on the guitar photo
+      const needed = photosNeeded(panels, panelTracks, timeline);
+      const opened: ImageBitmap[] = [];
+      const closeOpened = () => opened.forEach((b) => b.close());
+      let photo: ImageBitmap | undefined;
+      let bassPhoto: ImageBitmap | undefined;
       let pick: Awaited<ReturnType<typeof loadPickPhoto>> | undefined;
       try {
-        pick = panels.includes('pick') ? await loadPickPhoto() : undefined;
+        if (needed.guitar) opened.push((photo = await loadNeckPhoto('guitar')));
+        if (needed.bass) opened.push((bassPhoto = await loadNeckPhoto('bass')));
+        if (needed.pick) {
+          pick = await loadPickPhoto();
+          opened.push(pick.photo);
+        }
       } catch (e) {
-        photo?.close();
+        closeOpened();
         throw e;
       }
       if (!current()) {
-        photo?.close();
-        pick?.photo.close();
+        closeOpened();
         return;
       }
       setPhase({ name: 'exporting', fraction: 0 });
       const running = startExport({
         timeline,
         trackIndex,
+        panelTracks,
         preset,
         audio,
         panels,
         view,
         photo,
+        bassPhoto,
         pickPhoto: pick,
         alignment,
         watermark: !isPro(tier),
@@ -180,6 +202,7 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
     <div className="overlay">
       <section className="dialog" role="dialog" aria-modal="true" aria-label="Export video">
         <h2>Export video</h2>
+        {notice && <p className="muted note">{notice}</p>}
 
         {phase.name === 'idle' && (
           <>
@@ -276,6 +299,35 @@ export function ExportDialog({ timeline, trackIndex, stageLayout, view, onNeckCu
               Save audio (WAV)
             </button>
           )}
+          {phase.name === 'idle' && onRecordWithVideo && (
+            <button
+              type="button"
+              disabled={recordBusyReason !== null}
+              title="Records this window live, with the video player and its sound, for as long as the song lasts"
+              onClick={() => {
+                // Called first, in the click, so the browser still treats the share picker as user-initiated.
+                onRecordWithVideo();
+                onClose();
+              }}
+            >
+              Record with video
+            </button>
+          )}
+          {phase.name === 'idle' && onRecordWithVideo && onRecheckCapture && (
+            <button
+              type="button"
+              disabled={recordBusyReason !== null}
+              title="Plays a short test sound through the screen share to check how well the recording will sound"
+              onClick={() => {
+                // Also called first, in the click, for the share picker.
+                onRecheckCapture();
+                onClose();
+              }}
+            >
+              Re-check recording sound
+            </button>
+          )}
+          {phase.name === 'idle' && onRecordWithVideo && recordBusyReason && <span className="muted">{recordBusyReason}</span>}
           {phase.name === 'failed' && (
             <button type="button" onClick={() => void (lastKind.current === 'audio' ? saveAudio() : start())}>
               Retry
