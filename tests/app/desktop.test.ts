@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DesktopUnavailable, getShell, invokeShell, invokeShellBytes, invokeShellRaw, isDesktop, openExternal } from '../../src/app/desktop';
+import { DesktopUnavailable, getShell, invokeShell, invokeShellBytes, invokeShellRaw, isDesktop, listenShell, openExternal } from '../../src/app/desktop';
 
 describe('desktop bridge', () => {
   it('reports web when no shell global is present', () => {
@@ -64,5 +64,58 @@ describe('openExternal', () => {
     const open = vi.fn();
     await openExternal('https://www.songsterr.com/?pattern=x', { open });
     expect(open).toHaveBeenCalledWith('https://www.songsterr.com/?pattern=x', '_blank', 'noopener,noreferrer');
+  });
+});
+
+describe('listenShell', () => {
+  function shellWithEvents() {
+    const unlisten = vi.fn();
+    const handlers = new Map<string, () => void>();
+    const listen = vi.fn((event: string, handler: () => void) => {
+      handlers.set(event, handler);
+      return Promise.resolve(unlisten);
+    });
+    return { host: { __TAURI__: { core: { invoke: vi.fn() }, event: { listen } } }, listen, unlisten, handlers };
+  }
+
+  it('registers the handler through the shell and calls it on the event', async () => {
+    const { host, listen, handlers } = shellWithEvents();
+    const handler = vi.fn();
+    listenShell('close-requested', handler, host);
+    expect(listen).toHaveBeenCalledWith('close-requested', expect.any(Function));
+    handlers.get('close-requested')?.();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an unlisten that removes the registration, even before it has finished', async () => {
+    const { host, unlisten } = shellWithEvents();
+    const stop = listenShell('close-requested', () => undefined, host);
+    stop();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    stop();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the unlisten at once when the registration has already finished', async () => {
+    const { host, unlisten } = shellWithEvents();
+    const stop = listenShell('close-requested', () => undefined, host);
+    await Promise.resolve();
+    await Promise.resolve();
+    stop();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing on the web', () => {
+    const handler = vi.fn();
+    const stop = listenShell('close-requested', handler, {});
+    expect(() => stop()).not.toThrow();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the shell has no event surface', () => {
+    const stop = listenShell('close-requested', () => undefined, { __TAURI__: { core: { invoke: vi.fn() } } });
+    expect(() => stop()).not.toThrow();
   });
 });

@@ -83,7 +83,8 @@ import { audioContext } from '../stems/load-stems';
 import { backingSourceFor, createLibrarySession, entryTuningId, libraryRecordingHashes } from './library-session';
 import { hashFile } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
-import { isDesktop, openExternal } from './desktop';
+import { invokeShell, isDesktop, listenShell, openExternal } from './desktop';
+import { createCloseHandler } from './window-close';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { BackingTrack } from './BackingTrack';
 import { VideoPanel } from './VideoPanel';
@@ -540,6 +541,26 @@ export function App() {
       flush();
     };
   }, []);
+
+  // Closing the desktop window saves the open song's position first (KTD6, R7): the shell holds the close and emits
+  // `close-requested`, and exits itself after 2 s if this never answers. The latest render's park is used.
+  const parkOnClose = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    parkOnClose.current = () => parkSong();
+  });
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const close = createCloseHandler({
+      park: () => parkOnClose.current(),
+      flush: () => profileSaver.current?.flush(),
+      settled: () => {
+        const tabHash = openSong.current?.tabHash;
+        return tabHash ? librarySession.settled(tabHash) : Promise.resolve();
+      },
+      ready: () => invokeShell('app_close_ready'),
+    });
+    return listenShell('close-requested', () => void close());
+  }, [librarySession]);
 
   /** Forgets the loaded recording's profile state, saving any pending change for it first. */
   function resetProfile() {

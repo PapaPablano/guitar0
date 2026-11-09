@@ -23,6 +23,32 @@ export function isDesktop(host: object = globalThis): boolean {
   return getShell(host) !== null;
 }
 
+type Listen = (event: string, handler: () => void) => Promise<() => void>;
+
+/**
+ * Runs `handler` each time the shell emits `event`, through the shell's global event surface. Returns a function that
+ * stops listening, safe to call before the registration has finished and more than once. Does nothing on the web.
+ */
+export function listenShell(event: string, handler: () => void, host: object = globalThis): () => void {
+  const listen = getShell(host) && (host as { __TAURI__: { event?: { listen?: unknown } } }).__TAURI__.event?.listen;
+  if (typeof listen !== 'function') return () => undefined;
+  let stopped = false;
+  let unlisten: (() => void) | null = null;
+  void (listen as Listen)(event, () => handler()).then(
+    (stop) => {
+      if (stopped) stop();
+      else unlisten = stop;
+    },
+    () => undefined,
+  );
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    unlisten?.();
+    unlisten = null;
+  };
+}
+
 /** Calls a shell command; rejects with DesktopUnavailable on the web. */
 export async function invokeShell<T>(command: string, args?: Record<string, unknown>, host: object = globalThis): Promise<T> {
   const shell = getShell(host);

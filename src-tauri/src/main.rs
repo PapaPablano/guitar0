@@ -17,11 +17,12 @@ mod setup;
 use std::collections::HashMap;
 use std::fs;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::RunEvent;
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 #[derive(Clone, Serialize, Default)]
 struct Status {
@@ -344,6 +345,40 @@ fn library_exists(kind: String, hash: String, extension: String) -> Result<bool,
     library::exists(&library_dir()?, &kind, &hash, &extension)
 }
 
+/// How long a closing window waits for the page to say it has saved before the app exits anyway (KTD6).
+const CLOSE_FALLBACK: Duration = Duration::from_secs(2);
+
+/// Whether a window close is already waiting on the page, so a second close request starts no second fallback.
+#[derive(Default)]
+struct Closing(AtomicBool);
+
+impl Closing {
+    /// True for the first close request only; later ones join the one in flight.
+    fn begin(&self) -> bool {
+        !self.0.swap(true, Ordering::SeqCst)
+    }
+}
+
+/// The page has saved what it needs after `close-requested`; exit now. `RunEvent::Exit` still runs the engine shutdown.
+#[tauri::command]
+fn app_close_ready(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// Holds a close of the main window so the page can save the open song's position (R7): the page is told with
+/// `close-requested` and answers with `app_close_ready`; if it never does, the app exits after `CLOSE_FALLBACK`.
+fn hold_close(app: &tauri::AppHandle) {
+    if !app.state::<Closing>().begin() {
+        return;
+    }
+    let _ = app.emit_to("main", "close-requested", ());
+    let fallback = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_FALLBACK);
+        fallback.exit(0);
+    });
+}
+
 /// Removes the temp files `write_atomic` leaves when the app is closed between a write and its rename. Only names of
 /// the shape `<name>.json.<pid>-<n>.tmp` are touched, so nothing else in the folder is ever deleted.
 fn sweep_atomic_temps(dir: &std::path::Path) -> usize {
@@ -379,8 +414,9 @@ fn main() {
         .manage(state.clone())
         .manage(exports::Exports::default())
         .manage(library::Writes::default())
+        .manage(Closing::default())
         .manage(entitlement::Entitlements::load(engine::Layout::locate().ok().map(|layout| layout.data)))
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder, library_index_read, library_index_write, library_write_begin, library_write_append, library_write_finish, library_write_cancel, library_read, library_exists])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder, library_index_read, library_index_write, library_write_begin, library_write_append, library_write_finish, library_write_cancel, library_read, library_exists, app_close_ready])
         .setup({
             let state = state.clone();
             move |_app| {
@@ -395,10 +431,13 @@ fn main() {
         .expect("failed to build the Tab Highway shell");
 
     let exit_state = state.clone();
-    app.run(move |_handle, event| {
-        if let RunEvent::Exit = event {
-            shutdown(&exit_state);
+    app.run(move |handle, event| match event {
+        RunEvent::WindowEvent { label, event: WindowEvent::CloseRequested { api, .. }, .. } if label == "main" => {
+            api.prevent_close();
+            hold_close(handle);
         }
+        RunEvent::Exit => shutdown(&exit_state),
+        _ => {}
     });
 }
 
@@ -408,6 +447,14 @@ mod tests {
 
     fn ready() -> Status {
         Status { phase: "ready".to_string(), progress: None, message: None, url: Some("http://127.0.0.1:1".to_string()), secret: Some("s".to_string()) }
+    }
+
+    #[test]
+    fn only_the_first_close_request_starts_the_close() {
+        let closing = Closing::default();
+        assert!(closing.begin());
+        assert!(!closing.begin());
+        assert!(!closing.begin());
     }
 
     #[test]
