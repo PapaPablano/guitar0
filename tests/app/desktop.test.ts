@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DesktopUnavailable, getShell, invokeShell, invokeShellRaw, isDesktop, openExternal } from '../../src/app/desktop';
+import { DesktopUnavailable, getShell, invokeShell, invokeShellBytes, invokeShellRaw, isDesktop, openExternal } from '../../src/app/desktop';
 
 describe('desktop bridge', () => {
   it('reports web when no shell global is present', () => {
@@ -31,6 +31,23 @@ describe('desktop bridge', () => {
     await invokeShellRaw('export_append', bytes, { 'x-save-id': '7' }, host);
     expect(invoke).toHaveBeenCalledWith('export_append', bytes, { headers: { 'x-save-id': '7' } });
     await expect(invokeShellRaw('export_append', bytes, {}, {})).rejects.toBeInstanceOf(DesktopUnavailable);
+  });
+
+  it('returns a raw binary answer as bytes, and rejects on the web', async () => {
+    const invoke = vi.fn().mockResolvedValue(new Uint8Array([4, 5, 6]).buffer);
+    const host = { __TAURI__: { core: { invoke } } };
+    await expect(invokeShellBytes('library_read', { offset: 0 }, host)).resolves.toEqual(new Uint8Array([4, 5, 6]));
+    expect(invoke).toHaveBeenCalledWith('library_read', { offset: 0 });
+    await expect(invokeShellBytes('library_read', {}, {})).rejects.toBeInstanceOf(DesktopUnavailable);
+  });
+
+  it('accepts a byte view or a number list as a binary answer, and rejects anything else', async () => {
+    const host = (answer: unknown) => ({ __TAURI__: { core: { invoke: vi.fn().mockResolvedValue(answer) } } });
+    const view = new Uint8Array([0, 1, 2, 3]).subarray(1, 3);
+    await expect(invokeShellBytes('x', {}, host(view))).resolves.toEqual(new Uint8Array([1, 2]));
+    await expect(invokeShellBytes('x', {}, host([7, 8]))).resolves.toEqual(new Uint8Array([7, 8]));
+    await expect(invokeShellBytes('x', {}, host('text'))).rejects.toThrow();
+    await expect(invokeShellBytes('x', {}, host(null))).rejects.toThrow();
   });
 });
 

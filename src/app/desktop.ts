@@ -45,3 +45,14 @@ export async function invokeShellRaw(command: string, bytes: Uint8Array, headers
   if (!shell) throw new DesktopUnavailable();
   await shell.core.invoke(command, bytes, { headers });
 }
+
+/** Calls a shell command whose answer is raw bytes (a `tauri::ipc::Response`), returned as a byte array; rejects on the web. */
+export async function invokeShellBytes(command: string, args: Record<string, unknown>, host: object = globalThis): Promise<Uint8Array> {
+  const shell = getShell(host);
+  if (!shell) throw new DesktopUnavailable();
+  const answer = await shell.core.invoke(command, args);
+  if (answer instanceof ArrayBuffer) return new Uint8Array(answer);
+  if (ArrayBuffer.isView(answer)) return new Uint8Array(answer.buffer.slice(answer.byteOffset, answer.byteOffset + answer.byteLength));
+  if (Array.isArray(answer) && answer.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) return Uint8Array.from(answer as number[]);
+  throw new Error(`${command} did not answer with bytes.`);
+}
