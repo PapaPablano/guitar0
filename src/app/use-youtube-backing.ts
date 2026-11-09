@@ -18,6 +18,13 @@ interface Options {
   /** Changes when a loaded recording or stems replace what plays without the video; the video is muted then. */
   ownIdentity: unknown;
   store: YoutubeVideoStore;
+  /**
+   * Called when the player attaches, removes or moves the video, with the video and offset now in use. A tab opening with
+   * the video its store remembers is not a change the player made, so it is not reported (KTD4).
+   */
+  onPlayerVideoChange?: (video: { videoId: string; offsetSeconds: number } | null) => void;
+  /** Called when the player chooses which audio is heard, or a recording they load takes over from the video. */
+  onPlayerSourceChange?: (source: AudioSource) => void;
 }
 
 export interface YoutubeBacking {
@@ -58,6 +65,12 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
   opts.current = options;
   const clockRef = useRef<YoutubeClock | null>(null);
   const sourceRef = useRef<AudioSource>('original');
+  /** The attached video, for callbacks with no dependencies. */
+  const videoIdRef = useRef<string | null>(null);
+  const applyVideo = useCallback((id: string | null) => {
+    videoIdRef.current = id;
+    setVideoId(id);
+  }, []);
 
   /** Records which audio is heard; the ref lets callbacks with no dependencies read the latest choice. */
   const applySource = useCallback((next: AudioSource) => {
@@ -91,8 +104,8 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
   useEffect(() => {
     setMessage(null);
     applySource('original');
-    setVideoId(tabKey ? store.videoFor(tabKey) : null);
-  }, [tabKey, store, applySource]);
+    applyVideo(tabKey ? store.videoFor(tabKey) : null);
+  }, [tabKey, store, applySource, applyVideo]);
 
   // A recording or stems loaded while the video's audio plays take over, and the video is muted.
   const previousOwn = useRef(options.ownIdentity);
@@ -104,6 +117,7 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
       video.park();
       applySource('synth');
       setMessage('Your recording is playing now, so the video is muted. Choose Original to hear the video again.');
+      opts.current.onPlayerSourceChange?.('synth');
     }
   }, [options.ownIdentity, applySource]);
 
@@ -155,10 +169,15 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
       other?.seek(position);
       if (wasPlaying) other?.play();
     }
-    if (key) videos.attach(key, id);
     setMessage(null);
-    setVideoId(id);
-  }, []);
+    applyVideo(id);
+    if (key) {
+      videos.attach(key, id);
+      const { onPlayerVideoChange, onPlayerSourceChange } = opts.current;
+      onPlayerVideoChange?.({ videoId: id, offsetSeconds: videos.offsetFor(key) ?? 0 });
+      onPlayerSourceChange?.(sourceRef.current);
+    }
+  }, [applyVideo]);
 
   const attachLink = useCallback(
     (text: string) => {
@@ -180,19 +199,33 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
       if (wasPlaying) other?.play();
     }
     const { tabKey: key, store: videos } = opts.current;
-    if (key) videos.detach(key);
     applySource('original');
     setMessage(null);
-    setVideoId(null);
-  }, [applySource]);
+    applyVideo(null);
+    if (key) {
+      videos.detach(key);
+      opts.current.onPlayerVideoChange?.(null);
+    }
+  }, [applySource, applyVideo]);
 
   const setOffset = useCallback((seconds: number) => {
     const value = clampOffset(seconds);
     clockRef.current?.setOffset(value);
     setOffsetState(value);
-    const { tabKey: key, store: videos } = opts.current;
+    const { tabKey: key, store: videos, onPlayerVideoChange } = opts.current;
     if (key) videos.saveOffset(key, value);
+    const id = videoIdRef.current;
+    if (key && id) onPlayerVideoChange?.({ videoId: id, offsetSeconds: value });
   }, []);
+
+  /** The player's own choice of audio, which is remembered; a hand-over after a playback error is not. */
+  const chooseSource = useCallback(
+    (next: AudioSource) => {
+      changeSource(next);
+      opts.current.onPlayerSourceChange?.(next);
+    },
+    [changeSource],
+  );
 
   const syncHere = useCallback(
     (firstNoteSeconds: number) => {
@@ -226,7 +259,7 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
     attachLink,
     attachId,
     remove,
-    setSource: changeSource,
+    setSource: chooseSource,
     setOffset,
     syncHere,
     onPlayer,

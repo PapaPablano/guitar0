@@ -6,6 +6,7 @@ import {
   PROFILE_CAP,
   PROFILE_VERSION,
   normalizeProfile,
+  withProfile,
   type ProfileFileBackend,
 } from '../../src/audio/recording-profile';
 
@@ -83,6 +84,33 @@ describe('FileProfileStore', () => {
     await expect(store.load('a')).resolves.toBeNull();
     await expect(store.load('d')).resolves.not.toBeNull();
     await expect(store.load('b')).resolves.not.toBeNull();
+  });
+
+  it('with 201 profiles where the oldest belongs to a library song, keeps that one and drops the next oldest (KTD6)', async () => {
+    const entries = Array.from({ length: PROFILE_CAP }, (_, i) => ({ hash: `h${i}`, profile: { version: PROFILE_VERSION, offset: 1 } }));
+    const store = new FileProfileStore(memoryBackend({ version: PROFILE_VERSION, entries }));
+    store.keepHashes(async () => ['h0']);
+    await store.save('new', { version: PROFILE_VERSION, offset: 1 });
+    await expect(store.load('h0')).resolves.not.toBeNull();
+    await expect(store.load('h1')).resolves.toBeNull();
+    await expect(store.load('h2')).resolves.not.toBeNull();
+    await expect(store.load('new')).resolves.not.toBeNull();
+  });
+
+  it('keeps every library profile even past the cap, and still keeps the newest', () => {
+    const file = { version: PROFILE_VERSION, entries: ['a', 'b'].map((hash) => ({ hash, profile: { version: PROFILE_VERSION, offset: 1 } })) };
+    const next = withProfile(file, 'c', { version: PROFILE_VERSION, offset: 1 }, 2, new Set(['a', 'b']));
+    expect(next.entries.map((e) => e.hash)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('trims as before when the list of library hashes cannot be had', async () => {
+    const store = new FileProfileStore(memoryBackend(), 2);
+    store.keepHashes(async () => {
+      throw new Error('library unreadable');
+    });
+    for (const h of ['a', 'b', 'c']) await store.save(h, { version: PROFILE_VERSION, offset: 1 });
+    await expect(store.load('a')).resolves.toBeNull();
+    await expect(store.load('c')).resolves.not.toBeNull();
   });
 
   it('re-saving a hash refreshes it so it is not the next evicted', async () => {

@@ -54,6 +54,9 @@ import type { LandingReport } from '../audio/user-audio';
 import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
+import { SongLibrary } from './library';
+import { desktopLibraryShell, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
+import { backingSourceFor, createLibrarySession, entryTuningId, libraryRecordingHashes } from './library-session';
 import { hashFile } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
 import { isDesktop, openExternal } from './desktop';
@@ -126,6 +129,8 @@ export function App() {
   const [upgradeFor, setUpgradeFor] = useState<ProFeature | null>(null);
   /** Whether the back up and restore dialog is open (desktop only). */
   const [backupOpen, setBackupOpen] = useState(false);
+  /** A note about the open song's library copy (R13, R14), shown in the player view until dismissed or a recording loads. */
+  const [libraryNote, setLibraryNote] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     const refresh = () => {
@@ -229,6 +234,29 @@ export function App() {
   const profileStore = useMemo<ProfileStore>(() => (isDesktop() ? shellProfileStore : new WebProfileStore()), []);
   /** Where each recording's alignment is remembered: its own readable file on the desktop, browser storage on the web. */
   const alignmentStore = useMemo<AlignmentStore>(() => (isDesktop() ? shellAlignmentStore : new WebAlignmentStore()), []);
+  /** The saved songs, desktop only (R17). */
+  const library = useMemo(() => (isDesktop() ? new SongLibrary(shellLibraryBackend()) : null), []);
+  /** Keeps the open song's library entry current; on the web it saves nothing. */
+  const librarySession = useMemo(() => {
+    const shell = library ? desktopLibraryShell() : null;
+    return createLibrarySession(
+      library && shell
+        ? {
+            library,
+            files: { saveTab: (bytes) => saveTab(shell, bytes), saveRecording: (file) => saveRecording(shell, file) },
+            now: Date.now,
+            onNote: setLibraryNote,
+          }
+        : null,
+    );
+  }, [library]);
+  /** The file tuning chosen for each track this session, as the library stores it; a track not listed is as written. */
+  const fileTunings = useRef(new Map<number, string>());
+  // A saved song's recording keeps its offset and mix however many other recordings are opened (KTD6).
+  useEffect(() => {
+    if (!library) return;
+    shellProfileStore.keepHashes(async () => libraryRecordingHashes((await library.list()).map((listing) => listing.entry)));
+  }, [library]);
   // The strip and its line follow the store as parts become exact, a few times a second at most.
   useEffect(() => {
     if (!exactSession) return;
@@ -603,13 +631,18 @@ export function App() {
     setPlaying(false);
     setSeconds(0);
     setError(null);
+    setLibraryNote(null);
+    fileTunings.current = new Map();
   }
 
   async function onFile(file: File) {
     setLoading(true);
     try {
-      const { score, timeline } = openTabBytes(new Uint8Array(await file.arrayBuffer()));
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const { score, timeline } = openTabBytes(bytes);
       startSession(score, timeline);
+      // Saved in the background on the desktop; it never rejects, so it cannot get in the way of opening (R1, R12).
+      void librarySession.openTab(bytes, { title: timeline.title, fileName: file.name, fingerprint: tabFingerprint(barSpansOf(timeline)) });
     } catch (e) {
       // keep the previous session; just report the problem
       setError(e instanceof Error && e.message ? e.message : 'Could not open that file.');
@@ -622,6 +655,8 @@ export function App() {
     try {
       const score = loadAlphaTex(SAMPLE_ALPHATEX);
       startSession(score, buildTimeline(score));
+      // The sample is never saved, and nothing done with it changes a saved song (R1).
+      librarySession.closeSong();
     } catch {
       setError('Could not load the sample.');
     }
@@ -676,6 +711,8 @@ export function App() {
     own: () => ownClock({ stems: stems?.clock, userClock, session: session?.clock }),
     ownIdentity: stems?.clock ?? userClock ?? null,
     store: videoStore,
+    onPlayerVideoChange: (video) => void librarySession.videoChanged(video),
+    onPlayerSourceChange: (source) => void librarySession.sourceChanged(backingSourceFor(source)),
   });
   /** The clock the page follows now, which may be the video's; stems take their starting position from it. */
   const followedClock = useRef<Clock | undefined>(undefined);
@@ -786,6 +823,9 @@ export function App() {
       stopExactCopy.current = startExactCopy(file, next, setCopyState, undefined, setExactSession);
       resetProfile();
       void restoreProfile(file, next);
+      // Copied into the library in the background, so playback never waits for it (R3, R14).
+      setLibraryNote(null);
+      void librarySession.recordingLoaded(file);
     } catch (e) {
       // keep whatever was playing before
       if (!loadRuns.current.isCurrent(run)) return;
@@ -798,6 +838,7 @@ export function App() {
     replaceUserClock(null);
     resetProfile();
     session?.clock.seek(position);
+    void librarySession.recordingRemoved();
   }
 
   /** Sets the tuning the file is really in; the sound is rebuilt from the changed score. */
@@ -813,6 +854,9 @@ export function App() {
     setTuningId(FILE_TUNING);
     playingRef.current = false;
     setPlaying(false);
+    const saved = entryTuningId(id);
+    fileTunings.current.set(trackIndex, saved);
+    void librarySession.trackAndTuningChanged(trackIndex, saved);
   }
 
   function retryAudio() {
@@ -1050,6 +1094,7 @@ export function App() {
             onChange={(i) => {
               setTrackIndex(i);
               setTuningId(FILE_TUNING);
+              void librarySession.trackAndTuningChanged(i, fileTunings.current.get(i) ?? FILE_TUNING);
             }}
           />
           {!userClock && !stems && !videoHeard && canPlayAlong(timeline.tracks, trackIndex) && (
@@ -1115,6 +1160,7 @@ export function App() {
                 session.clock.dispose();
                 replaceUserClock(null);
                 setSession(null);
+                librarySession.closeSong();
               }}
             >
               Open another file
@@ -1129,6 +1175,14 @@ export function App() {
         {track && !track.hasTabData && (
           <p className="notice" role="status">
             This file has no tab data for this track, so fret positions were chosen automatically and may differ from a real tab.
+          </p>
+        )}
+        {libraryNote && (
+          <p className="notice" role="status">
+            {libraryNote}{' '}
+            <button type="button" onClick={() => setLibraryNote(null)}>
+              Dismiss
+            </button>
           </p>
         )}
         <Stage

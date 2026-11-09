@@ -150,11 +150,26 @@ export function findProfile(file: ProfileFile, hash: string): RecordingProfile |
   return file.entries.find((e) => e.hash === hash)?.profile ?? null;
 }
 
-/** A new file with this profile as the newest entry (replacing any earlier one for the hash), trimmed oldest-first to the cap. */
-export function withProfile(file: ProfileFile, hash: string, profile: RecordingProfile, cap: number = PROFILE_CAP): ProfileFile {
+/**
+ * A new file with this profile as the newest entry (replacing any earlier one for the hash), trimmed oldest-first to the
+ * cap. Hashes in `keep` (recordings a saved song uses, KTD6) are never trimmed, so the file can then exceed the cap.
+ */
+export function withProfile(
+  file: ProfileFile,
+  hash: string,
+  profile: RecordingProfile,
+  cap: number = PROFILE_CAP,
+  keep: ReadonlySet<string> = new Set(),
+): ProfileFile {
   const entries = file.entries.filter((e) => e.hash !== hash);
   entries.push({ hash, profile });
-  return { version: PROFILE_VERSION, entries: entries.slice(Math.max(0, entries.length - cap)) };
+  let excess = entries.length - cap;
+  const kept = entries.filter((e, i) => {
+    if (excess <= 0 || i === entries.length - 1 || keep.has(e.hash)) return true;
+    excess -= 1;
+    return false;
+  });
+  return { version: PROFILE_VERSION, entries: kept };
 }
 
 /** Where a whole profile file lives. read returns whatever was stored (parsed leniently here); write replaces it. */
@@ -167,11 +182,18 @@ export interface ProfileFileBackend {
 export class FileProfileStore implements ProfileStore {
   /** Saves read the whole file, change one entry and write it back, so two at once would drop one: each waits for the one before it. */
   private queue: Promise<void> = Promise.resolve();
+  /** The hashes a trim must keep; none until the app supplies them. */
+  private keep: () => Promise<Iterable<string>> = async () => [];
 
   constructor(
     private readonly backend: ProfileFileBackend,
     private readonly cap: number = PROFILE_CAP,
   ) {}
+
+  /** Names the recordings whose profiles the cap must never trim. When the list cannot be had, the trim keeps none. */
+  keepHashes(source: () => Promise<Iterable<string>>): void {
+    this.keep = source;
+  }
 
   async load(hash: string): Promise<RecordingProfile | null> {
     try {
@@ -185,7 +207,8 @@ export class FileProfileStore implements ProfileStore {
     const run = async (): Promise<void> => {
       try {
         const file = parseProfileFile(await this.backend.read());
-        await this.backend.write(withProfile(file, hash, profile, this.cap));
+        const keep = new Set(await this.keep().catch(() => []));
+        await this.backend.write(withProfile(file, hash, profile, this.cap, keep));
       } catch {
         // Saved state is a convenience; a failed save must never reach the user.
       }
