@@ -203,16 +203,24 @@ export interface RemovalContext {
   beforeWrite?: (removal: CommittedRemoval) => void;
 }
 
-/** Whether any of these stored entries, readable or not, mentions the hash anywhere in its JSON. */
-function namedBy(entries: readonly unknown[], hash: string): boolean {
-  return entries.some((e) => {
+/**
+ * Each stored entry's JSON, made once for `namedBy`: undefined when it has none, null when it cannot be serialized (so it
+ * counts as naming every file).
+ */
+function entryTexts(entries: readonly unknown[]): (string | undefined | null)[] {
+  return entries.map((e) => {
     try {
-      return JSON.stringify(e)?.includes(hash) ?? false;
+      return JSON.stringify(e);
     } catch {
-      // An entry that cannot be serialized cannot be checked, so it counts as naming the file.
-      return true;
+      return null;
     }
   });
+}
+
+/** Whether any of these stored entries, readable or not, mentions the hash anywhere in its JSON (from `entryTexts`). */
+function namedBy(texts: readonly (string | undefined | null)[], hash: string): boolean {
+  // An entry that cannot be serialized cannot be checked, so it counts as naming the file.
+  return texts.some((text) => text === null || (text?.includes(hash) ?? false));
 }
 
 /** The song library over a backend. Changes run one at a time, so two quick changes never overwrite each other. */
@@ -298,20 +306,8 @@ export class SongLibrary {
    * title shows again. False when the song is not saved or the index cannot be read or written.
    */
   rename(tabHash: string, title: string): Promise<boolean> {
-    const customTitle = cleanTitle(title);
-    return this.serial(async () => {
-      const entries = await this.readEntries();
-      const at = entries.findIndex((e) => isSong(e, tabHash));
-      if (at < 0) return false;
-      const stored = entries[at] as LibraryEntry;
-      if ((stored.customTitle ?? '') === customTitle) return true;
-      const next: LibraryEntry = { ...stored };
-      if (customTitle === '') delete next.customTitle;
-      else next.customTitle = customTitle;
-      entries[at] = next;
-      await this.backend.write({ version: 1, entries });
-      return true;
-    }, false);
+    const cleaned = cleanTitle(title);
+    return this.change(tabHash, { customTitle: cleaned === '' ? undefined : cleaned });
   }
 
   /**
@@ -330,12 +326,13 @@ export class SongLibrary {
       if (at < 0) return null;
       const entry = entries[at] as LibraryEntry;
       const remaining = entries.filter((_, i) => i !== at);
+      const texts = entryTexts(remaining);
       const recordingHash = entry.recording?.hash;
       const deleteRecording =
         recordingHash !== undefined &&
         !context.storingHashes.has(recordingHash) &&
-        !namedBy(remaining, recordingHash);
-      const deleteTab = !context.storingHashes.has(tabHash) && !namedBy(remaining, tabHash);
+        !namedBy(texts, recordingHash);
+      const deleteTab = !context.storingHashes.has(tabHash) && !namedBy(texts, tabHash);
       const removal = { entry, deleteTab, deleteRecording };
       context.beforeWrite?.(removal);
       await this.backend.write({ version: 1, entries: remaining });

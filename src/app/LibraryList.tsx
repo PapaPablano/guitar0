@@ -236,8 +236,6 @@ export function RenameInput({ edit, onChange, onKeyDown, onBlur }: RenameInputPr
 }
 
 const NO_HASHES: ReadonlySet<string> = new Set();
-/** The focus target after removing the last row. */
-const HEADING = '';
 
 /**
  * The saved songs, on the start screen and in the player's Songs menu. Renders nothing when there are none unless given
@@ -267,9 +265,9 @@ export function LibraryList({
   const openingNow = useRef<string | null>(null);
   /**
    * The row to give focus to: one whose song could not be opened, once the rows are enabled again (`wait`), or the row
-   * after a removed one, at once (`HEADING` for the heading).
+   * after a removed one, at once (`tabHash` null for the heading, after removing the last row).
    */
-  const [refocus, setRefocus] = useState<{ tabHash: string; wait: boolean } | null>(null);
+  const [refocus, setRefocus] = useState<{ tabHash: string | null; wait: boolean } | null>(null);
   /** The row menu button to give focus to after a rename ends with Enter or Escape. */
   const [refocusMenu, setRefocusMenu] = useState<string | null>(null);
   const [renameFailed, setRenameFailed] = useState<string | null>(null);
@@ -304,7 +302,7 @@ export function LibraryList({
   useEffect(() => {
     if (refocus === null || (refocus.wait && disabled)) return;
     setRefocus(null);
-    if (refocus.tabHash === HEADING) {
+    if (refocus.tabHash === null) {
       heading.current?.focus();
       return;
     }
@@ -338,7 +336,7 @@ export function LibraryList({
   }
 
   function remove(entry: LibraryEntry) {
-    setRefocus({ tabHash: focusAfterRemove(songs.map((song) => song.entry.tabHash), entry.tabHash) ?? HEADING, wait: false });
+    setRefocus({ tabHash: focusAfterRemove(songs.map((song) => song.entry.tabHash), entry.tabHash), wait: false });
     void onRemove?.(entry);
   }
 

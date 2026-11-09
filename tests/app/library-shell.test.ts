@@ -7,9 +7,11 @@ import {
   readRecording,
   readTab,
   recordingExtension,
+  sameChecks,
   saveRecording,
   saveTab,
   shellLibraryBackend,
+  type FileCheck,
   type LibraryShell,
 } from '../../src/app/library-shell';
 import { hashFile } from '../../src/stems/file-hash';
@@ -282,6 +284,28 @@ describe('deleteFile (KTD3)', () => {
       throw new Error('access denied');
     };
     expect(await deleteFile(fake.shell, 'recording', 'a'.repeat(64), 'mp3')).toBe('failed');
+  });
+});
+
+describe('sameChecks', () => {
+  const checks = (...pairs: [string, FileCheck][]) => new Map<string, FileCheck>(pairs);
+  const ok: FileCheck = { tab: 'ok', recording: null };
+
+  it('is true for the same checks by tab hash, in any order', () => {
+    const a = checks(['a', ok], ['b', { tab: 'missing', recording: 'ok' }]);
+    const b = checks(['b', { tab: 'missing', recording: 'ok' }], ['a', { ...ok }]);
+    expect(sameChecks(a, b)).toBe(true);
+    expect(sameChecks(checks(), checks())).toBe(true);
+  });
+
+  it('is false when a song is added, removed or replaced, or a tab or recording check changes', () => {
+    const a = checks(['a', ok]);
+    expect(sameChecks(a, checks())).toBe(false);
+    expect(sameChecks(checks(), a)).toBe(false);
+    expect(sameChecks(a, checks(['b', ok]))).toBe(false);
+    expect(sameChecks(a, checks(['a', { tab: 'missing', recording: null }]))).toBe(false);
+    expect(sameChecks(a, checks(['a', { tab: 'ok', recording: 'ok' }]))).toBe(false);
+    expect(sameChecks(checks(['a', { tab: 'ok', recording: 'ok' }]), checks(['a', { tab: 'ok', recording: 'missing' }]))).toBe(false);
   });
 });
 

@@ -162,10 +162,13 @@ export async function saveRecording(shell: LibraryShell, file: File, options: St
   }
 }
 
-/** Copies a tab file's bytes into the library. Their hash (the song's identity), or null when not saved. */
-export async function saveTab(shell: LibraryShell, bytes: Uint8Array, options: StoreOptions = {}): Promise<string | null> {
+/**
+ * Copies a tab file's bytes into the library. Their hash (the song's identity), or null when not saved. `knownHash`, when
+ * given, is `hashBytes` of these same bytes already worked out, so they are not hashed again; the shell still checks it.
+ */
+export async function saveTab(shell: LibraryShell, bytes: Uint8Array, options: StoreOptions = {}, knownHash?: string): Promise<string | null> {
   try {
-    const hash = await hashBytes(bytes);
+    const hash = knownHash ?? (await hashBytes(bytes));
     return (await store(shell, 'tab', hash, TAB_EXTENSION, new Blob([bytes as BlobPart]), options)) ? hash : null;
   } catch {
     return null;
@@ -224,4 +227,14 @@ export async function checkFiles(shell: LibraryShell, entry: Pick<LibraryEntry, 
     recording ? present('recording', recording.hash, recording.extension) : Promise.resolve(null),
   ]);
   return { tab: tab ? 'ok' : 'missing', recording: stored === null ? null : stored ? 'ok' : 'missing' };
+}
+
+/** Whether two sets of file checks say the same thing for the same songs, so a list read again can keep the old one. */
+export function sameChecks(a: ReadonlyMap<string, FileCheck>, b: ReadonlyMap<string, FileCheck>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [tabHash, check] of b) {
+    const was = a.get(tabHash);
+    if (!was || was.tab !== check.tab || was.recording !== check.recording) return false;
+  }
+  return true;
 }

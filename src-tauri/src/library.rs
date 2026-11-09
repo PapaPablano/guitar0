@@ -165,10 +165,11 @@ fn naming_text(library: &Path) -> Option<String> {
     let index = String::from_utf8(fs::read(library.join(INDEX_FILE)).ok()?).ok()?;
     parse_index(&index)?;
     let mut text = index;
+    let backup = format!("{INDEX_FILE}.bak");
     for entry in fs::read_dir(library).ok()? {
         let entry = entry.ok()?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(QUARANTINE_FILE) || name == format!("{INDEX_FILE}.bak") {
+        if name.starts_with(QUARANTINE_FILE) || name == backup {
             // A set-aside file may not be UTF-8; the hashes in it are ASCII either way.
             text.push('\n');
             text.push_str(&String::from_utf8_lossy(&fs::read(entry.path()).ok()?));

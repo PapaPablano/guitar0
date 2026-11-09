@@ -56,7 +56,7 @@ import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
 import { SongLibrary, displayTitle, type LibraryEntry, type LibraryListing } from './library';
-import { checkFiles, deleteFile, desktopLibraryShell, hashBytes, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend, type FileCheck } from './library-shell';
+import { checkFiles, deleteFile, desktopLibraryShell, hashBytes, readRecording, readTab, sameChecks, saveRecording, saveTab, shellLibraryBackend, type FileCheck } from './library-shell';
 import { createDeleteGuard, createRemovalCommit, createRemovals, guardedStore, type PendingRemoval } from './library-removals';
 import {
   createResumeTracker,
@@ -286,6 +286,8 @@ export function App() {
     else damagedHashes.current.delete(hash);
     setDamaged(new Set(damagedHashes.current));
   }, []);
+  /** Hashes `onFile` already worked out for the bytes it opened, by those bytes, so saving them does not hash them again. */
+  const openedTabHashes = useRef(new WeakMap<Uint8Array, string>());
   /** Keeps the open song's library entry current; on the web it saves nothing. */
   const librarySession = useMemo(() => {
     const shell = libraryShell;
@@ -299,7 +301,12 @@ export function App() {
             library,
             files: {
               saveTab: async (bytes, storing) => {
-                const hash = await saveTab(shell, bytes, guardedStore(deleteGuard, storing, damagedHashes.current));
+                const hash = await saveTab(
+                  shell,
+                  bytes,
+                  guardedStore(deleteGuard, storing, damagedHashes.current),
+                  openedTabHashes.current.get(bytes),
+                );
                 stored(hash);
                 return hash;
               },
@@ -378,7 +385,9 @@ export function App() {
       const shell = libraryShell;
       if (!shell) return;
       void Promise.all(listing.map(async ({ entry }) => [entry.tabHash, await checkFiles(shell, entry)] as const)).then((checks) => {
-        if (run === songsRead.current) setFileChecks(new Map(checks));
+        if (run !== songsRead.current) return;
+        const next = new Map(checks);
+        setFileChecks((prev) => (sameChecks(prev, next) ? prev : next));
       });
     });
   }, [library, libraryShell, removals]);
@@ -906,6 +915,7 @@ export function App() {
           const parsed = openTabBytes(read);
           // The song's library identity, so a pending removal of this tab can be cancelled before it is saved (R6).
           const hash = removals ? await hashBytes(read).catch(() => null) : null;
+          if (hash) openedTabHashes.current.set(read, hash);
           return { bytes: read, tabHash: hash, ...parsed };
         },
         releaseSong,
