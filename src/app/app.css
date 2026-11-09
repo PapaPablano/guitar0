@@ -676,6 +676,30 @@ button.primary:hover:not(:disabled) {
   width: 100%;
 }
 
+/* The Songs menu's panel hangs from the header's right edge, not its own button, which can wrap to the start of a header
+   row; at the 720px minimum width a panel anchored there would run off the left of the window. */
+.topbar {
+  position: relative;
+}
+
+.songs-menu {
+  position: static;
+}
+
+.songs-menu .menu-panel {
+  width: min(360px, calc(100vw - 20px));
+}
+
+.songs-menu .library {
+  margin-top: 0;
+}
+
+.library-notice {
+  margin: 0 0 8px;
+  color: var(--accent-warm);
+  font-size: 0.85rem;
+}
+
 .practice-tools {
   display: flex;
   flex-direction: column;

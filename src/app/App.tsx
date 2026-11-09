@@ -16,6 +16,7 @@ import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/f
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
+import { SongsMenu } from './LibraryList';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording, exportLength, outputWindow } from '../export/audio';
 import { slicePcm } from '../export/audio-file';
@@ -292,22 +293,30 @@ export function App() {
   const resume = useMemo(() => createResumeTracker(), []);
   /** Cancels the separation running in the stem panel, while one runs; leaving the song calls it (KTD1). */
   const cancelSeparation = useRef<(() => void) | null>(null);
-  /** Whether stems are being separated or loaded; the Songs menu (U4) reads it to warn that switching cancels it (R4). */
-  const [, setSeparating] = useState(false);
-  // The list is read whenever the start screen shows, and again after the back up and restore dialog closes.
-  const onStartScreen = session === null;
-  useEffect(() => {
-    if (!library || !onStartScreen || backupOpen) return;
-    let alive = true;
+  /** Whether stems are being separated or loaded; the Songs menu reads it to warn that switching cancels it (R4). */
+  const [separating, setSeparating] = useState(false);
+  /** Which read of the saved songs is the latest; an earlier one that lands later is dropped. */
+  const songsRead = useRef(0);
+  /** Reads the saved songs and their saved stems again; the last-read list shows until this one lands. */
+  const refreshSongs = useCallback(() => {
+    if (!library) return;
+    const run = ++songsRead.current;
     void Promise.all([library.list(), shellStemIndex.read().catch(() => ({}))]).then(([listing, stemIndex]) => {
-      if (!alive) return;
+      if (run !== songsRead.current) return;
       setSongs(listing);
       setStemHashes(new Set(Object.keys(stemIndex)));
     });
+  }, [library]);
+  // The list is read whenever the start screen shows, and again after the back up and restore dialog closes. The player's
+  // Songs menu reads it each time it opens.
+  const onStartScreen = session === null;
+  useEffect(() => {
+    if (!onStartScreen || backupOpen) return;
+    refreshSongs();
     return () => {
-      alive = false;
+      songsRead.current += 1;
     };
-  }, [library, onStartScreen, backupOpen]);
+  }, [refreshSongs, onStartScreen, backupOpen]);
   // A saved song's recording keeps its offset and mix however many other recordings are opened (KTD6).
   useEffect(() => {
     if (!library) return;
@@ -1475,7 +1484,19 @@ export function App() {
               </button>
             )}
           </Menu>
+          <SongsMenu
+            library={library ? { songs, stemHashes, onOpen: onReopen } : undefined}
+            currentTabHash={openSong.current?.tabHash ?? undefined}
+            lockedReason={locks.reason}
+            separating={separating}
+            onMenuOpen={refreshSongs}
+          />
         </header>
+        {loadingText && (
+          <p className="notice" role="status">
+            {loadingText}
+          </p>
+        )}
         {track && !track.hasTabData && (
           <p className="notice" role="status">
             This file has no tab data for this track, so fret positions were chosen automatically and may differ from a real tab.
