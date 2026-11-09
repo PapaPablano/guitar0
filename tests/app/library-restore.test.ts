@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SongLibrary, type LibraryEntry, type LibraryIndex, type RecordingRef } from '../../src/app/library';
 import {
   createResumeTracker,
@@ -9,7 +9,6 @@ import {
   parkSong,
   planRestore,
   positionAt,
-  positionToSave,
   prepareReopen,
   resumeFor,
   shouldSaveOnPause,
@@ -17,6 +16,7 @@ import {
   type PendingResume,
   type ReopenDeps,
   RECORDING_MISSING,
+  SETTLED_CAP_MS,
   restoreTrack,
   resumeSeconds,
   restoreTuning,
@@ -169,49 +169,34 @@ describe('resumeSeconds', () => {
   });
 });
 
-describe('positionToSave', () => {
-  const timeline = makeTimeline([], 2, 4);
-
-  it('saves the played bar the tab time is in (R7)', () => {
-    expect(positionToSave(timeline, 0, false)).toBe(0);
-    expect(positionToSave(timeline, 5.9, false)).toBe(2);
-    expect(positionToSave(timeline, 6, false)).toBe(3);
-  });
-
-  it('saves bar 1 at the end of the song (R7)', () => {
-    expect(positionToSave(timeline, 7.5, true)).toBe(0);
-    expect(positionToSave(timeline, timeline.durationSeconds, true)).toBe(0);
-  });
-
-  it('saves bar 1 before the first bar starts or for a tab with no bars', () => {
-    expect(positionToSave(timeline, -1, false)).toBe(0);
-    expect(positionToSave(makeTimeline([], 2, 0), 3, false)).toBe(0);
-  });
-
-  it('counts the second pass through a repeat as a later bar, and round-trips through resumeSeconds', () => {
-    const played = buildTimeline(loadAlphaTex(REPEATS));
-    const t = played.bars[7].startSeconds + 0.1;
-    const index = positionToSave(played, t, false);
-    expect(index).toBe(7);
-    expect(resumeSeconds(entryWith({ position: index }), played)).toBe(played.bars[7].startSeconds);
-  });
-});
-
 describe('positionAt', () => {
   const timeline = makeTimeline([], 2, 4);
 
-  it('saves the played bar before the end of the song (R7)', () => {
+  it('saves the played bar the tab time is in, before the end of the song (R7)', () => {
+    expect(positionAt(timeline, 0)).toBe(0);
     expect(positionAt(timeline, 5.9)).toBe(2);
+    expect(positionAt(timeline, 6)).toBe(3);
+    expect(positionAt(timeline, 7.5)).toBe(3);
     expect(positionAt(timeline, 7.9)).toBe(3);
   });
 
   it('saves bar 1 within 50 ms of the end of the song or past it (R7)', () => {
     expect(positionAt(timeline, 7.96)).toBe(0);
     expect(positionAt(timeline, timeline.durationSeconds)).toBe(0);
+    expect(positionAt(timeline, timeline.durationSeconds + 1)).toBe(0);
   });
 
-  it('saves bar 1 for a tab with no bars', () => {
+  it('saves bar 1 before the first bar starts or for a tab with no bars', () => {
+    expect(positionAt(timeline, -1)).toBe(0);
     expect(positionAt(makeTimeline([], 2, 0), 3)).toBe(0);
+  });
+
+  it('counts the second pass through a repeat as a later bar, and round-trips through resumeSeconds', () => {
+    const played = buildTimeline(loadAlphaTex(REPEATS));
+    const t = played.bars[7].startSeconds + 0.1;
+    const index = positionAt(played, t);
+    expect(index).toBe(7);
+    expect(resumeSeconds(entryWith({ position: index }), played)).toBe(played.bars[7].startSeconds);
   });
 });
 
@@ -649,6 +634,25 @@ describe('prepareReopen', () => {
     };
     expect(await prepareReopen(target, deps(log, { settled, isCurrent: () => current }))).toEqual({ kind: 'stale' });
     expect(log.some((l) => l.startsWith('read-recording'))).toBe(false);
+  });
+
+  it("reads B's entry anyway once the cap passes when B's saves never settle, so a hung save cannot stall switching", async () => {
+    vi.useFakeTimers();
+    try {
+      const log: string[] = [];
+      const settled = () => {
+        log.push('settled');
+        return new Promise<void>(() => undefined);
+      };
+      const done = prepareReopen(target, deps(log, { settled }));
+      await vi.advanceTimersByTimeAsync(SETTLED_CAP_MS - 1);
+      expect(log).not.toContain('find');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await done).toEqual({ kind: 'ready', bytes: new Uint8Array([1]), parsed: { parsed: 1 }, entry: fresh, recording: file });
+      expect(log).toEqual(['park', 'read-tab', 'parse', 'release', 'settled', 'find', 'read-recording newer.mp3']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives no recording for a song without one, and falls back to the picked entry if the library no longer has it', async () => {

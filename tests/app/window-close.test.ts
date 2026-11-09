@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CLOSE_SAVE_CAP_MS, createCloseHandler, type CloseSteps } from '../../src/app/window-close';
+import { CLOSE_SAVE_CAP_MS, createCloseHandler, openSongSettled, type CloseSteps } from '../../src/app/window-close';
 
 function steps(overrides: Partial<CloseSteps> = {}) {
   const order: string[] = [];
@@ -88,5 +88,37 @@ describe('createCloseHandler', () => {
     await Promise.all([first, second]);
     expect(all.park).toHaveBeenCalledTimes(1);
     expect(all.ready).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('openSongSettled', () => {
+  const hashA = 'a'.repeat(64);
+
+  it("waits for the song's saves by its tab hash once it is known", async () => {
+    const settled = vi.fn(() => Promise.resolve());
+    await openSongSettled({ tabHash: hashA }, settled);
+    expect(settled).toHaveBeenCalledWith(hashA);
+  });
+
+  it('waits for the hash of a song whose tab is still being saved, then for its saves', async () => {
+    const order: string[] = [];
+    let saveTab = (_hash: string | null) => undefined as void;
+    const hash = new Promise<string | null>((resolve) => (saveTab = resolve));
+    const settled = vi.fn(async (tabHash: string) => void order.push(`settled ${tabHash}`));
+    const done = openSongSettled({ tabHash: undefined, hash }, settled).then(() => void order.push('done'));
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    order.push('tab saved');
+    saveTab(hashA);
+    await done;
+    expect(order).toEqual(['tab saved', `settled ${hashA}`, 'done']);
+  });
+
+  it('waits for nothing with no song, an unsaved song, or a tab save that failed', async () => {
+    const settled = vi.fn(() => Promise.resolve());
+    await openSongSettled(null, settled);
+    await openSongSettled({ tabHash: null }, settled);
+    await openSongSettled({ tabHash: undefined, hash: Promise.resolve(null) }, settled);
+    expect(settled).not.toHaveBeenCalled();
   });
 });

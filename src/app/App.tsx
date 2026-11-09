@@ -83,7 +83,7 @@ import { backingSourceFor, createLibrarySession, entryTuningId, libraryRecording
 import { hashFile } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
 import { invokeShell, isDesktop, listenShell, openExternal } from './desktop';
-import { createCloseHandler } from './window-close';
+import { createCloseHandler, openSongSettled } from './window-close';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { BackingTrack } from './BackingTrack';
 import { VideoPanel } from './VideoPanel';
@@ -552,10 +552,8 @@ export function App() {
     const close = createCloseHandler({
       park: () => parkOnClose.current(),
       flush: () => profileSaver.current?.flush(),
-      settled: () => {
-        const tabHash = openSong.current?.tabHash;
-        return tabHash ? librarySession.settled(tabHash) : Promise.resolve();
-      },
+      // A song whose tab is still being saved waits for its hash, so the parked position queued behind it lands (KTD6).
+      settled: () => openSongSettled(openSong.current, (tabHash) => librarySession.settled(tabHash)),
       ready: () => invokeShell('app_close_ready'),
     });
     return listenShell('close-requested', () => void close());
@@ -747,7 +745,12 @@ export function App() {
     parkWith(
       { fromReopen, song: openSong.current, pending: resume.pending, timeline: live.current.session?.timeline ?? null },
       {
-        invalidateReopen: () => reopenRuns.current.invalidate(),
+        invalidateReopen: () => {
+          reopenRuns.current.invalidate();
+          // The reopen made stale no longer clears its loading notice; a newer reopen or file sets its own (onFile after this park).
+          setLoading(false);
+          setLoadingText(undefined);
+        },
         pause: pauseAll,
         tabSeconds: () => followedClock.current?.time() ?? 0,
         save: saveSongPosition,
@@ -801,11 +804,14 @@ export function App() {
 
   /** Leaves the open song for a file the player opened or dropped; a file that fails to open leaves the song parked (KTD1). */
   async function onFile(file: File) {
-    setLoadingText(undefined);
-    setLoading(true);
     try {
       const { bytes, score, timeline } = await leaveThenOpen(
-        () => parkSong(),
+        () => {
+          // After the park, which clears a stale reopen's loading notice.
+          parkSong();
+          setLoadingText(undefined);
+          setLoading(true);
+        },
         async () => {
           const read = new Uint8Array(await file.arrayBuffer());
           return { bytes: read, ...openTabBytes(read) };
@@ -816,9 +822,10 @@ export function App() {
       // Saved in the background on the desktop; it never rejects, so it cannot get in the way of opening (R1, R12). A new song
       // starts with the video the YouTube store already has for the tab, so its first reopen does not detach it.
       const fingerprint = tabFingerprint(barSpansOf(timeline));
-      const song: OpenSong = { tabHash: undefined };
+      const hash = librarySession.openTab(bytes, { title: timeline.title, fileName: file.name, fingerprint }, storedVideo(videoStore, fingerprint));
+      const song: OpenSong = { tabHash: undefined, hash };
       openSong.current = song;
-      void librarySession.openTab(bytes, { title: timeline.title, fileName: file.name, fingerprint }, storedVideo(videoStore, fingerprint)).then((tabHash) => {
+      void hash.then((tabHash) => {
         song.tabHash = tabHash;
       });
     } catch (e) {
@@ -1212,6 +1219,15 @@ export function App() {
 
   const closeFullscreen = useCallback(() => setFullscreenPanel(null), []);
 
+  /** A seek the player made: a reopen's resume no longer applies (KTD4). */
+  const userSeek = useCallback(
+    (seconds: number) => {
+      resume.clear();
+      clock?.seek(seconds);
+    },
+    [clock, resume],
+  );
+
   const setLoopRange = useCallback((next: LoopBars | null) => {
     setLoop(next);
     setLoopOn(next !== null);
@@ -1230,12 +1246,10 @@ export function App() {
           togglePlay();
           break;
         case 'seek-back':
-          resume.clear();
-          clock.seek(seekByBar(timeline, clock.time(), -1));
+          userSeek(seekByBar(timeline, clock.time(), -1));
           break;
         case 'seek-forward':
-          resume.clear();
-          clock.seek(seekByBar(timeline, clock.time(), 1));
+          userSeek(seekByBar(timeline, clock.time(), 1));
           break;
         case 'tempo-up':
           requestTempo(stepTempo(live.current.tempoPercent, 1));
@@ -1253,7 +1267,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top, requestTempo]);
+  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top, requestTempo, userSeek]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
@@ -1295,11 +1309,6 @@ export function App() {
   }
 
   const track = timeline.tracks[trackIndex];
-  /** A seek the player made: a reopen's resume no longer applies (KTD4). */
-  const userSeek = (seconds: number) => {
-    resume.clear();
-    clock.seek(seconds);
-  };
 
   const toolPanels: Record<ToolId, ReactNode> = {
     loop: (

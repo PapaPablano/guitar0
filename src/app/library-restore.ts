@@ -52,15 +52,16 @@ export function hookSourceFor(source: BackingSource): AudioSource {
   return source === 'video' ? 'original' : 'synth';
 }
 
-/** Where a reopened song starts, in tab seconds: the start of its saved played bar, or 0 when it has none or the bar is gone (R8, R9). */
-export function resumeSeconds(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline): number {
-  const bar = entry.position === undefined ? undefined : timeline.bars[entry.position];
-  return bar?.startSeconds ?? 0;
+/** The saved played bar a song resumes at, and its start in tab seconds; bar 1 at 0 s when it has none or the bar is gone (R8, R9). */
+function savedBar(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline): { index: number; tabSeconds: number } {
+  const { position } = entry;
+  const bar = position === undefined ? undefined : timeline.bars[position];
+  return bar ? { index: position as number, tabSeconds: bar.startSeconds } : { index: 0, tabSeconds: 0 };
 }
 
-/** The position to save for a song at `tabSeconds`: its played bar (repeats expanded), or bar 1 at the end of the song (R7). */
-export function positionToSave(timeline: Timeline, tabSeconds: number, atEnd: boolean): number {
-  return atEnd ? 0 : playbackBarIndexAt(timeline, tabSeconds);
+/** Where a reopened song starts, in tab seconds: the start of its saved played bar, or 0 when it has none or the bar is gone (R8, R9). */
+export function resumeSeconds(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline): number {
+  return savedBar(entry, timeline).tabSeconds;
 }
 
 /**
@@ -135,6 +136,8 @@ export async function runRestore(
  */
 export interface OpenSong {
   tabHash: string | null | undefined;
+  /** The tab save's result while `tabHash` is undefined, so a close can wait for the hash (KTD6); absent for a reopened song. */
+  readonly hash?: Promise<string | null>;
 }
 
 /** Whether the song with this tab hash is the one open, so picking it does nothing (R3). */
@@ -152,9 +155,7 @@ export interface PendingResume {
 
 /** The resume for a reopened song: its saved bar, or bar 1 when it has none or the bar is gone (R8, R9). */
 export function resumeFor(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline, run: number): PendingResume {
-  const { position } = entry;
-  const bar = position === undefined ? undefined : timeline.bars[position];
-  return bar ? { index: position as number, tabSeconds: bar.startSeconds, run } : { index: 0, tabSeconds: 0, run };
+  return { ...savedBar(entry, timeline), run };
 }
 
 /** Whether playback stopped at the end of the song, which saves bar 1 (R7). */
@@ -162,9 +163,9 @@ export function atSongEnd(tabSeconds: number, durationSeconds: number): boolean 
   return durationSeconds > 0 && tabSeconds >= durationSeconds - 0.05;
 }
 
-/** The position to save for a song stopped at `tabSeconds`: its played bar, or bar 1 when it stopped at the end (R7). */
+/** The position to save for a song stopped at `tabSeconds`: its played bar (repeats expanded), or bar 1 when it stopped at the end (R7). */
 export function positionAt(timeline: Timeline, tabSeconds: number): number {
-  return positionToSave(timeline, tabSeconds, atSongEnd(tabSeconds, timeline.durationSeconds));
+  return atSongEnd(tabSeconds, timeline.durationSeconds) ? 0 : playbackBarIndexAt(timeline, tabSeconds);
 }
 
 export interface ParkDeps {
@@ -220,11 +221,25 @@ export interface ReopenDeps<T> {
   /** Parses the tab bytes; throws for a tab that cannot be opened. */
   parse(bytes: Uint8Array): T;
   release(): void;
+  /** Resolves once the picked song's pending saves have landed; waited for at most SETTLED_CAP_MS. */
   settled(tabHash: string): Promise<void>;
   find(tabHash: string): Promise<LibraryEntry | null>;
   readRecording(ref: RecordingRef): Promise<File | null>;
   /** Whether this reopen is still the latest (R11). */
   isCurrent(): boolean;
+}
+
+/** How long a reopen waits for the picked song's pending saves before reading its entry anyway, so a hung save cannot stall switching. */
+export const SETTLED_CAP_MS = 3000;
+
+/** Settles when `wait` does, or resolves after `capMs`, whichever comes first. */
+async function capped(wait: Promise<void>, capMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([wait, new Promise<void>((resolve) => (timer = setTimeout(resolve, capMs)))]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export type ReopenPrep<T> =
@@ -235,17 +250,17 @@ export type ReopenPrep<T> =
 /**
  * Everything a reopen does before the restore (KTD1, KTD3): park the open song, read and parse the picked song's tab (a
  * failure stops here with the open song parked, not released; R10), release the open song, wait for the picked song's
- * pending saves, then read its entry afresh and its recording from that entry. Only the tab bytes, which the hash fixes,
+ * pending saves (for at most SETTLED_CAP_MS), then read its entry afresh and its recording from that entry. Only the tab bytes, which the hash fixes,
  * are read before the wait. A parse failure rejects.
  */
-export async function prepareReopen<T>(target: LibraryEntry, deps: ReopenDeps<T>): Promise<ReopenPrep<T>> {
+export async function prepareReopen<T>(target: LibraryEntry, deps: ReopenDeps<T>, settledCapMs = SETTLED_CAP_MS): Promise<ReopenPrep<T>> {
   deps.park();
   const bytes = await deps.readTab(target.tabHash);
   if (!deps.isCurrent()) return { kind: 'stale' };
   if (!bytes) return { kind: 'tab-missing' };
   const parsed = deps.parse(bytes);
   deps.release();
-  await deps.settled(target.tabHash);
+  await capped(Promise.resolve().then(() => deps.settled(target.tabHash)), settledCapMs);
   if (!deps.isCurrent()) return { kind: 'stale' };
   const entry = (await deps.find(target.tabHash)) ?? target;
   if (!deps.isCurrent()) return { kind: 'stale' };

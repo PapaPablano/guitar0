@@ -4,6 +4,8 @@
  * so every step here is best effort and the shell is always told, whatever fails.
  */
 
+import type { OpenSong } from './library-restore';
+
 /** How long the open song's pending saves get before the shell is told to exit anyway; under the shell's 2 s fallback. */
 export const CLOSE_SAVE_CAP_MS = 1500;
 
@@ -16,6 +18,15 @@ export interface CloseSteps {
   settled(): Promise<void>;
   /** Tells the shell the page is done (`app_close_ready`), which exits. */
   ready(): Promise<unknown>;
+}
+
+/**
+ * Waits for the open song's saves: a song whose tab is still being saved waits for its hash first, so a position queued
+ * behind the tab save is waited for too. Nothing to wait for with no song or an unsaved one.
+ */
+export async function openSongSettled(song: OpenSong | null, settled: (tabHash: string) => Promise<void>): Promise<void> {
+  const tabHash = song && song.tabHash === undefined ? await song.hash : song?.tabHash;
+  if (tabHash) await settled(tabHash);
 }
 
 function attempt(step: () => void) {
