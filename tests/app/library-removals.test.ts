@@ -456,3 +456,34 @@ describe('removal commits against the library', () => {
     expect(files.has('recording', r, 'mp3')).toBe(true);
   });
 });
+
+describe('guardedStore with the damaged set (KTD6, R11)', () => {
+  it('forces a fresh copy for a hash found damaged this session, and not for others', async () => {
+    const damaged = new Set([hashA]);
+    const storing = vi.fn();
+    const options = guardedStore(createDeleteGuard(), storing, damaged);
+    expect(await options.forceCopy?.(hashA)).toBe(true);
+    expect(await options.forceCopy?.(hashB)).toBe(false);
+    expect(storing).toHaveBeenCalledWith(hashA);
+    expect(storing).toHaveBeenCalledWith(hashB);
+  });
+
+  it('reads the set live, so a hash marked damaged after the options were made still forces a copy', async () => {
+    const damaged = new Set<string>();
+    const options = guardedStore(createDeleteGuard(), () => undefined, damaged);
+    damaged.add(hashA);
+    expect(await options.forceCopy?.(hashA)).toBe(true);
+  });
+
+  it('still waits out a delete of a damaged file before copying', async () => {
+    const deleting = createDeleteGuard();
+    const end = deleting.begin(hashA);
+    const answer = guardedStore(deleting, () => undefined, new Set([hashA])).forceCopy?.(hashA);
+    let settled = false;
+    void Promise.resolve(answer).then(() => (settled = true));
+    await flush();
+    expect(settled).toBe(false);
+    end();
+    expect(await answer).toBe(true);
+  });
+});

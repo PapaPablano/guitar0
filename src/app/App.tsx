@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
@@ -16,7 +16,7 @@ import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/f
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
-import { SongsMenu } from './LibraryList';
+import { SongsMenu, UndoNotices } from './LibraryList';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording, exportLength, outputWindow } from '../export/audio';
 import { slicePcm } from '../export/audio-file';
@@ -56,8 +56,8 @@ import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
 import { SongLibrary, displayTitle, type LibraryEntry, type LibraryListing } from './library';
-import { deleteFile, desktopLibraryShell, hashBytes, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
-import { createDeleteGuard, createRemovalCommit, createRemovals, guardedStore } from './library-removals';
+import { checkFiles, deleteFile, desktopLibraryShell, hashBytes, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend, type FileCheck } from './library-shell';
+import { createDeleteGuard, createRemovalCommit, createRemovals, guardedStore, type PendingRemoval } from './library-removals';
 import {
   createResumeTracker,
   createStemsAutoStart,
@@ -137,6 +137,11 @@ interface Session {
   /** Every staff's open strings as the file wrote them, so a tuning choice always starts from the file. */
   written: WrittenTunings;
 }
+
+/** Stands in for the removals' store on the web, which has none. */
+const noSubscribe = () => () => {};
+const NO_REMOVALS: readonly PendingRemoval[] = [];
+const noRemovals = () => NO_REMOVALS;
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -269,26 +274,50 @@ export function App() {
   const libraryShell = useMemo(() => (library ? desktopLibraryShell() : null), [library]);
   /** The stored files a removal is deleting right now; a copy of one waits for its delete and copies afresh (KTD3). */
   const deleteGuard = useMemo(() => createDeleteGuard(), []);
+  /**
+   * Stored copies found damaged when a song opened this session, by content hash (KTD7, R9): the lists badge them, and
+   * loading the same file again copies it afresh, which replaces the damaged copy and clears the badge (KTD6, R11).
+   */
+  const damagedHashes = useRef(new Set<string>());
+  const [damaged, setDamaged] = useState<ReadonlySet<string>>(() => new Set());
+  const markDamaged = useCallback((hash: string, isDamaged: boolean) => {
+    if (damagedHashes.current.has(hash) === isDamaged) return;
+    if (isDamaged) damagedHashes.current.add(hash);
+    else damagedHashes.current.delete(hash);
+    setDamaged(new Set(damagedHashes.current));
+  }, []);
   /** Keeps the open song's library entry current; on the web it saves nothing. */
   const librarySession = useMemo(() => {
     const shell = libraryShell;
+    /** A copy that landed replaced any damaged copy of the same file. */
+    const stored = (hash: string | null | undefined) => {
+      if (hash) markDamaged(hash, false);
+    };
     return createLibrarySession(
       library && shell
         ? {
             library,
             files: {
-              saveTab: (bytes, storing) => saveTab(shell, bytes, guardedStore(deleteGuard, storing)),
-              saveRecording: (file, storing) => saveRecording(shell, file, guardedStore(deleteGuard, storing)),
+              saveTab: async (bytes, storing) => {
+                const hash = await saveTab(shell, bytes, guardedStore(deleteGuard, storing, damagedHashes.current));
+                stored(hash);
+                return hash;
+              },
+              saveRecording: async (file, storing) => {
+                const ref = await saveRecording(shell, file, guardedStore(deleteGuard, storing, damagedHashes.current));
+                stored(ref?.hash);
+                return ref;
+              },
             },
             now: Date.now,
             onNote: setLibraryNote,
           }
         : null,
     );
-  }, [library, libraryShell, deleteGuard]);
+  }, [library, libraryShell, deleteGuard, markDamaged]);
   /**
    * Songs removed with an undo window (KTD2, R2–R7), desktop only: hidden from both lists until they commit, when the
-   * timer runs out, Back up and restore opens, or the window closes. U4's notices read `items` and call undo, pause, resume.
+   * timer runs out, Back up and restore opens, or the window closes. The undo notices read `items` and call undo, pause, resume.
    */
   const removals = useMemo(() => {
     const shell = libraryShell;
@@ -304,11 +333,16 @@ export function App() {
       dropEntries: (pending) => library.removeEntries(pending),
     });
   }, [library, libraryShell, librarySession, deleteGuard]);
+  const pendingRemovals = useSyncExternalStore(removals?.subscribe ?? noSubscribe, removals?.items ?? noRemovals);
   /** The file tuning chosen for each track this session, as the library stores it; a track not listed is as written. */
   const fileTunings = useRef(new Map<number, string>());
   /** The saved songs on the start screen, and the recordings among them with saved stems (R7). */
   const [songs, setSongs] = useState<LibraryListing[]>([]);
   const [stemHashes, setStemHashes] = useState<ReadonlySet<string>>(() => new Set());
+  /** Whether each listed song's stored files were there when the list was last read (KTD7, R8), by tab hash. */
+  const [fileChecks, setFileChecks] = useState<ReadonlyMap<string, FileCheck>>(() => new Map());
+  /** The library file was set aside this session (R10, KTD5); the start screen says so until dismissed. */
+  const [setAside, setSetAside] = useState<'no' | 'shown' | 'dismissed'>('no');
   /** What the start screen's status line says while a song reopens. */
   const [loadingText, setLoadingText] = useState<string | undefined>(undefined);
   /** Which reopen is the latest; opening another file or song makes an earlier one stale (R15). */
@@ -339,8 +373,15 @@ export function App() {
       const pending = removals?.pendingHashes();
       setSongs(pending ? listing.filter((song) => !pending.has(song.entry.tabHash)) : listing);
       setStemHashes(new Set(Object.keys(stemIndex)));
+      if (library.quarantined) setSetAside((was) => (was === 'no' ? 'shown' : was));
+      // The cheap exists checks run after the rows show; a check that fails reads as present (KTD7).
+      const shell = libraryShell;
+      if (!shell) return;
+      void Promise.all(listing.map(async ({ entry }) => [entry.tabHash, await checkFiles(shell, entry)] as const)).then((checks) => {
+        if (run === songsRead.current) setFileChecks(new Map(checks));
+      });
     });
-  }, [library, removals]);
+  }, [library, libraryShell, removals]);
   // The list is read again whenever the pending removals change: an undo brings a song back, and a finished commit makes
   // any read that started before it stale. A pause or resume changes nothing here.
   const pendingRead = useRef('');
@@ -1143,19 +1184,23 @@ export function App() {
       // song's entry is read again after its pending saves land, so a quick A→B→A sees them (KTD3).
       const prep = await prepareReopen(entry, {
         park: () => parkSong(true),
-        // Missing and damaged both open as before for now; the damaged marks come with the row badges.
+        // Missing and damaged both keep the start screen with the error; a damaged copy is marked for the session (R9).
         readTab: async (tabHash) => {
           const read = await readTab(libraryShell, tabHash);
+          if (read.kind === 'damaged') markDamaged(tabHash, true);
           return read.kind === 'ok' ? read.value : null;
         },
         parse: openTabBytes,
         release: releaseSong,
         settled: (tabHash) => librarySession.settled(tabHash),
         find: (tabHash) => library.find(tabHash),
-        // A recording that can't be read opens the tab with the R13 note, as a missing one does.
+        // A recording that can't be read opens the tab with the R13 note, as a missing one does; a damaged one is marked (R9).
         readRecording: (ref) =>
           readRecording(libraryShell, ref).then(
-            (read) => (read.kind === 'ok' ? read.value : null),
+            (read) => {
+              if (read.kind === 'damaged') markDamaged(ref.hash, true);
+              return read.kind === 'ok' ? read.value : null;
+            },
             () => null,
           ),
         isCurrent,
@@ -1222,8 +1267,9 @@ export function App() {
 
   /**
    * Removes a saved song with an undo window (R2, R5): it leaves both lists at once and commits later. Removing the open
-   * song leaves it first, so nothing more is saved to it and no "not saved" note shows for it; removing a song that is
-   * still reopening abandons that reopen. The open song can't be removed while a recording with video is captured.
+   * song leaves it for the start screen, as "Open another file" does, so nothing more is saved to it and no "not saved"
+   * note shows for it; removing a song that is still reopening abandons that reopen. The open song can't be removed while
+   * a recording with video is captured.
    */
   async function onRemoveSong(entry: LibraryEntry) {
     if (!removals) return;
@@ -1233,13 +1279,21 @@ export function App() {
     const isOpen = song !== null && song === openSong.current && openHash === entry.tabHash;
     if (isOpen && locks.locked) return;
     if (isOpen) {
-      leaveSong();
+      toStartScreen();
       setLibraryNote(null);
     } else if (reopening.current?.tabHash === entry.tabHash && reopenRuns.current.isCurrent(reopening.current.run)) {
       // Parking invalidates the reopen and clears its loading notice; the song open before it stays parked.
       parkSong();
     }
     if (removals.remove(entry)) setSongs((list) => list.filter((listing) => listing.entry.tabHash !== entry.tabHash));
+  }
+
+  /** Leaves the open song for the start screen (R6): its position is saved and its recording, stems and video let go. */
+  function toStartScreen() {
+    leaveSong();
+    sessionToken.current += 1;
+    live.current.session?.clock.dispose();
+    setSession(null);
   }
 
   /** Renames a saved song (R1); an empty name brings back the tab's own title. False when it could not be saved. */
@@ -1391,8 +1445,19 @@ export function App() {
     );
   }
 
-  /** Both song lists' songs and actions; U4's row menus call onRemove and onRename. */
-  const libraryProps = library ? { songs, stemHashes, onOpen: onReopen, onRemove: onRemoveSong, onRename: onRenameSong } : undefined;
+  /** Both song lists' songs, badges and actions; the row menus call onRemove and onRename. */
+  const libraryProps = library
+    ? { songs, stemHashes, onOpen: onReopen, onRemove: onRemoveSong, onRename: onRenameSong, fileChecks, damaged }
+    : undefined;
+  /** The undo notices of pending removals, one stack per screen (KTD8); desktop only. */
+  const undoNotices = removals ? (
+    <UndoNotices
+      items={pendingRemovals}
+      onUndo={(hash) => removals.undo(hash)}
+      onPause={(hash) => removals.pause(hash)}
+      onResume={(hash) => removals.resume(hash)}
+    />
+  ) : null;
 
   if (!session || !clock || !timeline) {
     return (
@@ -1408,8 +1473,12 @@ export function App() {
           error={error}
           loading={loading}
           loadingText={loadingText}
+          // Only a song reopening sets the loading text; while one does, the rows stay enabled (KTD8).
+          songOpening={loadingText !== undefined}
           onBackup={isDesktop() ? openBackup : undefined}
           library={libraryProps}
+          undoNotices={undoNotices}
+          setAside={setAside === 'shown' ? { onDismiss: () => setSetAside('dismissed') } : null}
         />
         {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} preparing={backupPreparing} />}
       <Notices />
@@ -1610,13 +1679,7 @@ export function App() {
             )}
             <button
               type="button"
-              onClick={() => {
-                // Leaving for the start screen (R6): the song's position is saved and its recording, stems and video let go.
-                leaveSong();
-                sessionToken.current += 1;
-                session.clock.dispose();
-                setSession(null);
-              }}
+              onClick={toStartScreen}
             >
               Open another file
             </button>
@@ -1639,6 +1702,7 @@ export function App() {
             {loadingText}
           </p>
         )}
+        {undoNotices}
         {track && !track.hasTabData && (
           <p className="notice" role="status">
             This file has no tab data for this track, so fret positions were chosen automatically and may differ from a real tab.

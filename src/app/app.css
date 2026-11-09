@@ -700,6 +700,108 @@ button.primary:hover:not(:disabled) {
   font-size: 0.85rem;
 }
 
+/* A saved song: its row button (or the rename field in its place), and its "⋯" menu beside it, not inside it (KTD8). */
+.library-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.library-row > .library-song,
+.library-row > .library-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.library-rename {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+}
+
+.library-badge {
+  color: var(--accent-warm);
+}
+
+.row-menu {
+  flex: none;
+}
+
+.row-menu > summary {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 6px 10px;
+}
+
+.row-menu > summary::after {
+  content: none;
+}
+
+/* The row menu opens to the left of its button, over its own row, so at the 720px minimum width it stays inside the
+   list's scroll box in both the start screen (about 490px wide) and the Songs menu (about 330px). Placed after the
+   Songs menu's panel rule, which would otherwise size it too. */
+.row-menu > .menu-panel {
+  top: 0;
+  right: calc(100% + 6px);
+  left: auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  min-width: 0;
+  max-width: 260px;
+  padding: 8px;
+}
+
+.library-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Undo notices for removed songs, newest first (KTD8): under the start screen's actions and the player's status line. */
+.undo-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The region stays in the page while empty, so the first notice is announced; this takes back the page's flex gap. */
+.app > .undo-notices:empty {
+  margin-top: -10px;
+}
+
+.undo-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 6px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.undo-notice > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropzone .undo-notices:not(:empty),
+.dropzone .set-aside {
+  margin-top: 12px;
+  text-align: left;
+}
+
 .practice-tools {
   display: flex;
   flex-direction: column;

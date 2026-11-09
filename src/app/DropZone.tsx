@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { openExternal } from './desktop';
-import { LibraryList, type LibraryListProps } from './LibraryList';
+import { LibraryList, SetAsideMessage, type LibraryListProps } from './LibraryList';
 import { songsterrSearchUrl } from './songsterr';
 
 interface DropZoneProps {
@@ -14,9 +14,15 @@ interface DropZoneProps {
   library?: LibraryListProps;
   /** What the status line says while loading, such as the song being reopened. */
   loadingText?: string;
+  /** True when the loading is a saved song reopening, which leaves the rows enabled; a file opening disables them (KTD8). */
+  songOpening?: boolean;
+  /** Desktop only: the undo notices of removed songs, shown under the actions (KTD8). */
+  undoNotices?: ReactNode;
+  /** Set when the library file was set aside this session and the message is not dismissed (R10). */
+  setAside?: { onDismiss: () => void } | null;
 }
 
-export function DropZone({ onFile, onSample, error, loading, onBackup, library, loadingText = 'Loading…' }: DropZoneProps) {
+export function DropZone({ onFile, onSample, error, loading, onBackup, library, loadingText = 'Loading…', songOpening = false, undoNotices, setAside }: DropZoneProps) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [query, setQuery] = useState('');
@@ -53,7 +59,9 @@ export function DropZone({ onFile, onSample, error, loading, onBackup, library, 
           </button>
         )}
       </div>
-      {library && <LibraryList {...library} disabled={loading} now={Date.now()} />}
+      {undoNotices}
+      {setAside && <SetAsideMessage onDismiss={setAside.onDismiss} />}
+      {library && <LibraryList {...library} disabled={loading && !songOpening} now={Date.now()} />}
       <form
         className="song-search"
         onSubmit={(e) => {

@@ -225,13 +225,15 @@ export function createDeleteGuard(): DeleteGuard {
 
 /**
  * The store options for one library copy (KTD3): says the copy has started, so its hash joins the storing set before
- * the shell's exists check, then waits out any delete of the same file.
+ * the shell's exists check, then waits out any delete of the same file. A hash in `damaged` (the session's live set of
+ * stored copies found damaged) always copies afresh, so the shell's finish replaces the damaged file (KTD6, R11).
  */
-export function guardedStore(deleting: DeleteGuard, storing: (hash: string) => void): StoreOptions {
+export function guardedStore(deleting: DeleteGuard, storing: (hash: string) => void, damaged?: ReadonlySet<string>): StoreOptions {
   return {
     forceCopy(hash) {
       storing(hash);
-      return deleting.forceCopy(hash);
+      const afterDelete = deleting.forceCopy(hash);
+      return afterDelete === false && damaged?.has(hash) ? true : afterDelete;
     },
   };
 }
