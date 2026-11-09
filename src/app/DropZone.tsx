@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { openExternal } from './desktop';
+import { LibraryList, type LibraryListProps } from './LibraryList';
 import { songsterrSearchUrl } from './songsterr';
 
 interface DropZoneProps {
@@ -9,9 +10,13 @@ interface DropZoneProps {
   loading: boolean;
   /** Desktop only: opens the back up and restore dialog. */
   onBackup?: () => void;
+  /** Desktop only: the saved songs, listed under the actions (R7). */
+  library?: LibraryListProps;
+  /** What the status line says while loading, such as the song being reopened. */
+  loadingText?: string;
 }
 
-export function DropZone({ onFile, onSample, error, loading, onBackup }: DropZoneProps) {
+export function DropZone({ onFile, onSample, error, loading, onBackup, library, loadingText = 'Loading…' }: DropZoneProps) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [query, setQuery] = useState('');
@@ -48,6 +53,7 @@ export function DropZone({ onFile, onSample, error, loading, onBackup }: DropZon
           </button>
         )}
       </div>
+      {library && <LibraryList {...library} disabled={loading} now={Date.now()} />}
       <form
         className="song-search"
         onSubmit={(e) => {
@@ -81,7 +87,7 @@ export function DropZone({ onFile, onSample, error, loading, onBackup }: DropZon
           e.target.value = '';
         }}
       />
-      {loading && <p role="status">Loading…</p>}
+      {loading && <p role="status">{loadingText}</p>}
       {error && (
         <p role="alert" className="error">
           {error}

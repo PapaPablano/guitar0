@@ -39,3 +39,11 @@ export function videoIsHeard(attached: boolean, source: AudioSource): boolean {
 
 /** The switch the player sees for Original and Synth. */
 export const SOURCE_LABELS: Record<AudioSource, string> = { original: 'Original', synth: 'Synth' };
+
+/**
+ * Whether a recording or stems that just appeared take over from the video: only while the video's own audio is heard, and
+ * not while a reopened song is coming back with the video as its saved source (AE2).
+ */
+export function takesOverFromVideo(state: { videoReady: boolean; ownLoaded: boolean; source: AudioSource; restoring: boolean }): boolean {
+  return state.videoReady && state.ownLoaded && state.source === 'original' && !state.restoring;
+}

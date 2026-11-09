@@ -54,8 +54,11 @@ import type { LandingReport } from '../audio/user-audio';
 import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
-import { SongLibrary } from './library';
-import { desktopLibraryShell, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
+import { SongLibrary, type LibraryEntry, type LibraryListing } from './library';
+import { desktopLibraryShell, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
+import { createStemsAutoStart, planRestore, runRestore, seedVideoStore, TAB_MISSING, tabWithTuning } from './library-restore';
+import { shellStemIndex } from '../stems/saved-stems';
+import { audioContext } from '../stems/load-stems';
 import { backingSourceFor, createLibrarySession, entryTuningId, libraryRecordingHashes } from './library-session';
 import { hashFile } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
@@ -236,9 +239,11 @@ export function App() {
   const alignmentStore = useMemo<AlignmentStore>(() => (isDesktop() ? shellAlignmentStore : new WebAlignmentStore()), []);
   /** The saved songs, desktop only (R17). */
   const library = useMemo(() => (isDesktop() ? new SongLibrary(shellLibraryBackend()) : null), []);
+  /** The shell's library files, desktop only. */
+  const libraryShell = useMemo(() => (library ? desktopLibraryShell() : null), [library]);
   /** Keeps the open song's library entry current; on the web it saves nothing. */
   const librarySession = useMemo(() => {
-    const shell = library ? desktopLibraryShell() : null;
+    const shell = libraryShell;
     return createLibrarySession(
       library && shell
         ? {
@@ -249,9 +254,32 @@ export function App() {
           }
         : null,
     );
-  }, [library]);
+  }, [library, libraryShell]);
   /** The file tuning chosen for each track this session, as the library stores it; a track not listed is as written. */
   const fileTunings = useRef(new Map<number, string>());
+  /** The saved songs on the start screen, and the recordings among them with saved stems (R7). */
+  const [songs, setSongs] = useState<LibraryListing[]>([]);
+  const [stemHashes, setStemHashes] = useState<ReadonlySet<string>>(() => new Set());
+  /** What the start screen's status line says while a song reopens. */
+  const [loadingText, setLoadingText] = useState<string | undefined>(undefined);
+  /** Which reopen is the latest; opening another file or song makes an earlier one stale (R15). */
+  const reopenRuns = useRef(createRunGuard());
+  /** A reopened recording's saved stems, started once the engine is ready unless the player changes the mix first (KTD8). */
+  const stemsAuto = useMemo(() => createStemsAutoStart(), []);
+  // The list is read whenever the start screen shows, and again after the back up and restore dialog closes.
+  const onStartScreen = session === null;
+  useEffect(() => {
+    if (!library || !onStartScreen || backupOpen) return;
+    let alive = true;
+    void Promise.all([library.list(), shellStemIndex.read().catch(() => ({}))]).then(([listing, stemIndex]) => {
+      if (!alive) return;
+      setSongs(listing);
+      setStemHashes(new Set(Object.keys(stemIndex)));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [library, onStartScreen, backupOpen]);
   // A saved song's recording keeps its offset and mix however many other recordings are opened (KTD6).
   useEffect(() => {
     if (!library) return;
@@ -609,16 +637,28 @@ export function App() {
     setStems(null);
     userClockRef.current?.dispose();
     userClockRef.current = next;
+    live.current.userClock = next;
     setUserClock(next);
   }
 
-  function startSession(score: AlphaModel.Score, timeline: Timeline) {
-    session?.clock.dispose();
+  /**
+   * Opens a tab as the new session. A reopened song passes its track and file tuning, which is applied before the timeline
+   * and synth are built (KTD7). The new session is in `live` at once, so a recording loaded straight after, before the page
+   * renders again, plays against this tab (KTD5).
+   */
+  function startSession(score: AlphaModel.Score, opened: Timeline, overrides?: { trackIndex: number; tuningId: string }): Session {
+    live.current.session?.clock.dispose();
     replaceUserClock(null);
     resetProfile();
     setUserAudioError(null);
-    setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
-    setTrackIndex(firstPlayableTrack(timeline));
+    stemsAuto.cancel();
+    const tuned = overrides && overrides.tuningId !== FILE_TUNING ? tabWithTuning(score, overrides.trackIndex, overrides.tuningId) : null;
+    const timeline = tuned?.timeline ?? opened;
+    const next: Session = { timeline, score, clock: connectAudio(score, timeline), written: tuned?.written ?? captureTunings(score) };
+    const track = overrides?.trackIndex ?? firstPlayableTrack(timeline);
+    setSession(next);
+    live.current = { ...live.current, session: next, trackIndex: track, tempoPercent: 100, userClock: null, offset: 0, mix: initialMix() };
+    setTrackIndex(track);
     setPlayAlong(false);
     setTones({});
     setLookahead(initialViewState().lookahead);
@@ -632,10 +672,13 @@ export function App() {
     setSeconds(0);
     setError(null);
     setLibraryNote(null);
-    fileTunings.current = new Map();
+    fileTunings.current = new Map(overrides ? [[track, overrides.tuningId]] : []);
+    return next;
   }
 
   async function onFile(file: File) {
+    reopenRuns.current.invalidate();
+    setLoadingText(undefined);
     setLoading(true);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -652,6 +695,7 @@ export function App() {
   }
 
   function onSample() {
+    reopenRuns.current.invalidate();
     try {
       const score = loadAlphaTex(SAMPLE_ALPHATEX);
       startSession(score, buildTimeline(score));
@@ -795,20 +839,24 @@ export function App() {
     if (audioReady) clock?.setRate(tempoPercent / 100);
   }, [clock, tempoPercent, audioReady]);
 
+  /**
+   * Loads a recording against the open tab. The session, clock and tempo come from `live` and the followed-clock ref, not
+   * this render, because a reopen calls it from the start screen's render straight after startSession (KTD5).
+   */
   async function onLoadRecording(file: File) {
     setUserAudioError(null);
     const token = sessionToken.current;
     const run = loadRuns.current.begin();
     try {
-      const next = await loadUserAudio(file, session?.timeline.durationSeconds ?? 0);
+      const next = await loadUserAudio(file, live.current.session?.timeline.durationSeconds ?? 0);
       if (token !== sessionToken.current || !loadRuns.current.isCurrent(run)) {
         // another song was opened, or a newer recording was picked, while this recording loaded
         next.dispose();
         return;
       }
-      const position = clock?.time() ?? 0;
-      session?.clock.pause();
-      next.setRate(tempoPercent / 100);
+      const position = followedClock.current?.time() ?? 0;
+      live.current.session?.clock.pause();
+      next.setRate(live.current.tempoPercent / 100);
       next.seek(position);
       replaceUserClock(next);
       next.setLandingListener(recordLanding);
@@ -839,6 +887,74 @@ export function App() {
     resetProfile();
     session?.clock.seek(position);
     void librarySession.recordingRemoved();
+  }
+
+  /**
+   * Reopens a saved song: its tab on the saved track and tuning, its video and source, then its recording, whose offset,
+   * alignment, sections and mix come back through the per-recording restore (R8-R11). A tab that cannot be read keeps the
+   * start screen with an error; a recording that cannot be read opens the tab with the R13 note. Opening another file or
+   * song abandons the rest (R15). False when the song did not open.
+   */
+  async function onReopen(entry: LibraryEntry): Promise<boolean> {
+    if (!libraryShell) return false;
+    const run = reopenRuns.current.begin();
+    const isCurrent = () => reopenRuns.current.isCurrent(run);
+    const name = entry.title.trim() === '' ? entry.fileName : entry.title;
+    // Saved stems start later, once the engine is ready and long after this click; the click is what lets their audio play.
+    if (entry.recording) void audioContext().resume().catch(() => undefined);
+    setError(null);
+    setLoadingText(`Opening ${name}…`);
+    setLoading(true);
+    try {
+      const [bytes, recording] = await Promise.all([
+        readTab(libraryShell, entry.tabHash),
+        entry.recording ? readRecording(libraryShell, entry.recording) : Promise.resolve(null),
+      ]);
+      if (!isCurrent()) return false;
+      if (!bytes) {
+        setError(TAB_MISSING);
+        return false;
+      }
+      const { score, timeline } = openTabBytes(bytes);
+      let fingerprint = '';
+      await runRestore(
+        planRestore(entry, timeline, recording),
+        (step) => {
+          switch (step.kind) {
+            case 'tab': {
+              const opened = startSession(score, timeline, { trackIndex: step.trackIndex, tuningId: step.tuningId });
+              fingerprint = tabFingerprint(barSpansOf(opened.timeline));
+              setLoading(false);
+              // Updates the song's last-opened time and makes it the song later changes are saved to.
+              void librarySession.openTab(bytes, { title: opened.timeline.title, fileName: entry.fileName, fingerprint });
+              return;
+            }
+            case 'seed-video':
+              seedVideoStore(videoStore, fingerprint, step.video);
+              return;
+            case 'select-source':
+              ytBacking.restore(fingerprint, step.source);
+              return;
+            case 'note':
+              setLibraryNote(step.text);
+              return;
+            case 'load-recording':
+              stemsAuto.arm(step.file);
+              return onLoadRecording(step.file);
+          }
+        },
+        isCurrent,
+      );
+      return true;
+    } catch (e) {
+      if (isCurrent()) setError(e instanceof Error && e.message ? e.message : 'Could not open that song.');
+      return false;
+    } finally {
+      if (isCurrent()) {
+        setLoading(false);
+        setLoadingText(undefined);
+      }
+    }
   }
 
   /** Sets the tuning the file is really in; the sound is rebuilt from the changed score. */
@@ -970,7 +1086,15 @@ export function App() {
             {support.notice}
           </p>
         )}
-        <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} onBackup={isDesktop() ? () => setBackupOpen(true) : undefined} />
+        <DropZone
+          onFile={onFile}
+          onSample={onSample}
+          error={error}
+          loading={loading}
+          loadingText={loadingText}
+          onBackup={isDesktop() ? () => setBackupOpen(true) : undefined}
+          library={library ? { songs, stemHashes, onOpen: onReopen } : undefined}
+        />
         {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
       <Notices />
       </main>
@@ -1012,7 +1136,12 @@ export function App() {
             offsetControl={stateControls.showOffset}
             fileName={userClock?.file?.name ?? stems?.title ?? null}
             error={userAudioError}
-            onLoad={(file) => (locks.locked ? undefined : void onLoadRecording(file))}
+            onLoad={(file) => {
+              if (locks.locked) return;
+              // A recording the player loads takes over from the video as usual, even on a reopened song.
+              ytBacking.endRestore();
+              void onLoadRecording(file);
+            }}
             loadLockedReason={locks.reason}
             onOffsetChange={(raw) => {
               const seconds = clampOffset(raw);
@@ -1034,12 +1163,18 @@ export function App() {
             onMixChange={(next) => {
               setMix(next);
               mixMoved.current = true;
+              stemsAuto.cancel();
               if (isDesktop()) {
                 profileMix.current = next;
                 scheduleProfileSave(live.current.offset);
               }
             }}
-            onActivate={activateStems}
+            onActivate={(next, auto) => {
+              // Stems the player starts or leaves take over from the video as usual; a reopened song's own stems do not.
+              if (!auto) ytBacking.endRestore();
+              activateStems(next);
+            }}
+            autoStart={stemsAuto}
           />
         )}
       />
@@ -1156,6 +1291,7 @@ export function App() {
             <button
               type="button"
               onClick={() => {
+                reopenRuns.current.invalidate();
                 sessionToken.current += 1;
                 session.clock.dispose();
                 replaceUserClock(null);

@@ -183,6 +183,66 @@ button[aria-pressed='true'] {
   margin-top: 20px;
 }
 
+.library {
+  margin-top: 24px;
+  text-align: left;
+}
+
+.library h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+/* Capped so a long list scrolls inside the start screen instead of pushing the search below the fold. */
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  /* Room for the focus outline, which the scroll box would otherwise clip. */
+  padding: 2px;
+}
+
+/* Rows keep their own background, so the drop zone's drag-over tint does not restyle them. */
+.library-song {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  background: var(--panel);
+}
+
+.library-title,
+.library-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-file,
+.library-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.library-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.library-backing {
+  color: var(--accent-cool);
+}
+
 .audio-sync {
   display: flex;
   align-items: center;
