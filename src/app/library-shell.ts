@@ -5,7 +5,7 @@
  */
 
 import { SLICE_BYTES } from '../export/save-export';
-import { hashFile } from '../stems/file-hash';
+import { hashFile, sha256Hex } from '../stems/file-hash';
 import { getShell, invokeShell, invokeShellBytes, invokeShellRaw } from './desktop';
 import type { LibraryBackend, LibraryIndex, RecordingRef } from './library';
 
@@ -55,8 +55,7 @@ export function desktopLibraryShell(host: object = globalThis): LibraryShell | n
 
 /** SHA-256 of some bytes as lowercase hex: the same hash `hashFile` gives a File with these bytes. */
 export async function hashBytes(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  return sha256Hex(bytes as BufferSource);
 }
 
 /** The extension a recording is stored under: its own, lowercased, when the shell accepts it, otherwise `bin`. */

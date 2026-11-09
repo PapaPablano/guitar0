@@ -207,7 +207,9 @@ export class FileProfileStore implements ProfileStore {
     const run = async (): Promise<void> => {
       try {
         const file = parseProfileFile(await this.backend.read());
-        const keep = new Set(await this.keep().catch(() => []));
+        // withProfile consults `keep` only when it trims, so the source is asked only then (the same test as its `excess`).
+        const trims = !(file.entries.filter((e) => e.hash !== hash).length + 1 - this.cap <= 0);
+        const keep = trims ? new Set(await this.keep().catch(() => [])) : new Set<string>();
         await this.backend.write(withProfile(file, hash, profile, this.cap, keep));
       } catch {
         // Saved state is a convenience; a failed save must never reach the user.

@@ -109,7 +109,7 @@ export function isLibraryEntry(value: unknown): value is LibraryEntry {
   );
 }
 
-function displayTitle(entry: LibraryEntry): string {
+export function displayTitle(entry: Pick<LibraryEntry, 'title' | 'fileName'>): string {
   return entry.title.trim() === '' ? entry.fileName : entry.title;
 }
 
@@ -126,6 +126,19 @@ export function listSongs(entries: readonly LibraryEntry[]): LibraryListing[] {
       const title = displayTitle(entry);
       return { entry, title, showFileName: (counts.get(title) ?? 0) > 1 };
     });
+}
+
+function isSong(e: unknown, tabHash: string): e is LibraryEntry {
+  return isLibraryEntry(e) && e.tabHash === tabHash;
+}
+
+/** Shallow equality for a patch value: primitives by ===, objects (or null) by the same keys with === values. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && (a as Record<string, unknown>)[k] === (b as Record<string, unknown>)[k]);
 }
 
 function entriesOf(index: unknown): unknown[] {
@@ -146,7 +159,7 @@ export class SongLibrary {
 
   /** The saved song for this tab hash, or null when there is none or the index cannot be read. */
   async find(tabHash: string): Promise<LibraryEntry | null> {
-    return this.serial(async () => (await this.readEntries()).find((e): e is LibraryEntry => isLibraryEntry(e) && e.tabHash === tabHash) ?? null, null);
+    return this.serial(async () => (await this.readEntries()).find((e): e is LibraryEntry => isSong(e, tabHash)) ?? null, null);
   }
 
   /**
@@ -155,11 +168,11 @@ export class SongLibrary {
    */
   async open(tab: OpenedTab, now: number): Promise<LibraryEntry | null> {
     if (!isContentHash(tab.tabHash)) return null;
-    const title = tab.title.trim() === '' ? tab.fileName : tab.title;
+    const title = displayTitle(tab);
     const details = { title, fileName: tab.fileName, fingerprint: tab.fingerprint, openedAt: now };
     return this.serial(async () => {
       const entries = await this.readEntries();
-      const at = entries.findIndex((e) => isLibraryEntry(e) && e.tabHash === tab.tabHash);
+      const at = entries.findIndex((e) => isSong(e, tab.tabHash));
       const saved: LibraryEntry =
         at >= 0
           ? { ...(entries[at] as LibraryEntry), ...details }
@@ -198,9 +211,11 @@ export class SongLibrary {
   private change(tabHash: string, patch: Partial<LibraryEntry>): Promise<boolean> {
     return this.serial(async () => {
       const entries = await this.readEntries();
-      const at = entries.findIndex((e) => isLibraryEntry(e) && e.tabHash === tabHash);
+      const at = entries.findIndex((e) => isSong(e, tabHash));
       if (at < 0) return false;
-      const next = { ...(entries[at] as LibraryEntry), ...patch };
+      const stored = entries[at] as LibraryEntry;
+      if ((Object.keys(patch) as (keyof LibraryEntry)[]).every((k) => sameValue(stored[k], patch[k]))) return true;
+      const next = { ...stored, ...patch };
       if (!isLibraryEntry(next)) return false;
       entries[at] = next;
       await this.backend.write({ version: 1, entries });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { clampOffset } from '../audio/offset-range';
 import { rateNotice, YoutubeClock } from '../audio/youtube-clock';
+import type { VideoRef } from './library';
 import { takesOverFromVideo } from './youtube-backing';
 import { dockRules, type AudioSource, type DockRules } from './youtube-dock';
 import { parseYoutubeLink } from './youtube-link';
@@ -23,7 +24,7 @@ interface Options {
    * Called when the player attaches, removes or moves the video, with the video and offset now in use. A tab opening with
    * the video its store remembers is not a change the player made, so it is not reported (KTD4).
    */
-  onPlayerVideoChange?: (video: { videoId: string; offsetSeconds: number } | null) => void;
+  onPlayerVideoChange?: (video: VideoRef | null) => void;
   /** Called when the player chooses which audio is heard, or a recording they load takes over from the video. */
   onPlayerSourceChange?: (source: AudioSource) => void;
 }

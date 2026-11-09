@@ -85,13 +85,6 @@ fn library_file(name: &str) -> Option<(Kind, &str, &str)> {
     (crate::alignments::is_valid_hash(hash) && library::is_allowed_extension(kind, extension)).then_some((kind, hash, extension))
 }
 
-fn kind_name(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Tab => "tab",
-        Kind::Recording => "recording",
-    }
-}
-
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -214,7 +207,7 @@ fn stage(entry: &mut impl Read, temp: &Path, hash: &str) -> Result<bool, String>
         file.write_all(&buffer[..read]).map_err(|e| format!("could not restore the library: {e}"))?;
     }
     file.sync_all().map_err(|e| format!("could not restore the library: {e}"))?;
-    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let digest = library::hex(&hasher.finalize());
     Ok(digest == hash)
 }
 
@@ -284,7 +277,7 @@ pub fn restore_backup(data: &Path, archive: &Path) -> Result<Summary, String> {
             if entry.size() > MAX_BINARY_BYTES {
                 continue;
             }
-            let target = library::file_path(&library_dir, kind_name(kind), hash, extension)?;
+            let target = library::file_path_for(&library_dir, kind, hash, extension)?;
             let dir = target.parent().ok_or_else(|| "no library folder".to_string())?;
             fs::create_dir_all(dir).map_err(|e| format!("could not create the library folder: {e}"))?;
             let temp = dir.join(format!("{hash}.restore-{}-{}.tmp", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
@@ -584,7 +577,7 @@ mod tests {
 
     fn sha(bytes: &[u8]) -> String {
         use sha2::{Digest, Sha256};
-        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+        library::hex(&Sha256::digest(bytes))
     }
 
     fn library_index(entries: &[(&str, &str)]) -> String {

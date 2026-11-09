@@ -19,7 +19,8 @@ pub const INDEX_VERSION: u64 = 1;
 pub const INDEX_FILE: &str = "library.json";
 pub const QUARANTINE_FILE: &str = "library.json.bad";
 const TEMP_EXTENSION: &str = "tmp";
-const DIRS: [&str; 2] = ["tabs", "recordings"];
+const TABS_DIR: &str = "tabs";
+const RECORDINGS_DIR: &str = "recordings";
 /// Tabs are stored as their raw bytes, whatever format they came in.
 const TAB_EXTENSIONS: [&str; 1] = ["bin"];
 /// The recording types the page accepts, plus `bin` for a recording whose name carries no usable extension.
@@ -44,8 +45,8 @@ impl Kind {
 
     fn dir(self) -> &'static str {
         match self {
-            Kind::Tab => DIRS[0],
-            Kind::Recording => DIRS[1],
+            Kind::Tab => TABS_DIR,
+            Kind::Recording => RECORDINGS_DIR,
         }
     }
 
@@ -64,6 +65,11 @@ pub fn is_allowed_extension(kind: Kind, extension: &str) -> bool {
 /// Where a stored file lives, or an error when the kind, hash or extension could name anything else.
 pub fn file_path(library: &Path, kind: &str, hash: &str, extension: &str) -> Result<PathBuf, String> {
     let kind = Kind::parse(kind).ok_or_else(|| "not a library file kind".to_string())?;
+    file_path_for(library, kind, hash, extension)
+}
+
+/// Where a stored file of a known kind lives, or an error when the hash or extension could name anything else.
+pub fn file_path_for(library: &Path, kind: Kind, hash: &str, extension: &str) -> Result<PathBuf, String> {
     if !crate::alignments::is_valid_hash(hash) {
         return Err("not a content hash".to_string());
     }
@@ -95,7 +101,7 @@ fn is_envelope(value: &Value) -> bool {
     value.get("version").and_then(Value::as_u64) == Some(INDEX_VERSION) && value.get("entries").map_or(false, Value::is_array)
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -129,7 +135,7 @@ pub fn read_index(library: &Path) -> Result<IndexRead, String> {
 /// it removed. Run at startup, before the page can begin a write.
 pub fn sweep_temp(library: &Path) -> usize {
     let mut removed = 0;
-    for dir in [library.to_path_buf(), library.join(DIRS[0]), library.join(DIRS[1])] {
+    for dir in [library.to_path_buf(), library.join(TABS_DIR), library.join(RECORDINGS_DIR)] {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -249,7 +255,7 @@ mod tests {
     }
 
     fn sha(bytes: &[u8]) -> String {
-        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+        hex(&Sha256::digest(bytes))
     }
 
     fn temp_files(dir: &Path) -> Vec<PathBuf> {

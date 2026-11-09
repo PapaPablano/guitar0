@@ -54,7 +54,7 @@ import type { LandingReport } from '../audio/user-audio';
 import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
-import { SongLibrary, type LibraryEntry, type LibraryListing } from './library';
+import { SongLibrary, displayTitle, type LibraryEntry, type LibraryListing } from './library';
 import { desktopLibraryShell, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
 import { createStemsAutoStart, planRestore, runRestore, seedVideoStore, TAB_MISSING, tabWithTuning } from './library-restore';
 import { shellStemIndex } from '../stems/saved-stems';
@@ -899,7 +899,7 @@ export function App() {
     if (!libraryShell) return false;
     const run = reopenRuns.current.begin();
     const isCurrent = () => reopenRuns.current.isCurrent(run);
-    const name = entry.title.trim() === '' ? entry.fileName : entry.title;
+    const name = displayTitle(entry);
     // Saved stems start later, once the engine is ready and long after this click; the click is what lets their audio play.
     if (entry.recording) void audioContext().resume().catch(() => undefined);
     setError(null);
