@@ -7,6 +7,7 @@ mod backup;
 mod engine;
 mod entitlement;
 mod exports;
+mod library;
 mod links;
 mod model_progress;
 mod profiles;
@@ -276,15 +277,77 @@ fn alignment_write(hash: String, alignment: serde_json::Value) -> Result<(), Str
     write_atomic(&path, text)
 }
 
+/// The song library folder. See library.rs for what lives there and how names are guarded.
+fn library_dir() -> Result<std::path::PathBuf, String> {
+    Ok(engine::Layout::locate()?.data.join("library"))
+}
+
+#[tauri::command]
+fn library_index_read() -> Result<library::IndexRead, String> {
+    library::read_index(&library_dir()?)
+}
+
+#[tauri::command]
+fn library_index_write(index: serde_json::Value) -> Result<(), String> {
+    let text = library::serialize_index(&index).ok_or_else(|| "not a library index".to_string())?;
+    write_atomic(&library_dir()?.join(library::INDEX_FILE), text)
+}
+
+#[tauri::command]
+fn library_write_begin(writes: tauri::State<library::Writes>, kind: String, hash: String, extension: String) -> Result<u64, String> {
+    writes.begin(&library_dir()?, &kind, &hash, &extension)
+}
+
+/// Appends one slice of raw bytes to a library write. The handle travels in the `x-save-id` header, as for exports.
+#[tauri::command]
+fn library_write_append(request: tauri::ipc::Request<'_>, writes: tauri::State<library::Writes>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw bytes".to_string());
+    };
+    let id: u64 = request
+        .headers()
+        .get("x-save-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| "missing save handle".to_string())?;
+    writes.append(id, bytes)
+}
+
+#[tauri::command]
+fn library_write_finish(writes: tauri::State<library::Writes>, id: u64) -> Result<bool, String> {
+    writes.finish(id)
+}
+
+#[tauri::command]
+fn library_write_cancel(writes: tauri::State<library::Writes>, id: u64) {
+    writes.cancel(id)
+}
+
+/// One slice of a stored file as raw bytes. An empty slice means the end of the file.
+#[tauri::command]
+fn library_read(kind: String, hash: String, extension: String, offset: u64, len: u64) -> Result<tauri::ipc::Response, String> {
+    library::read_chunk(&library_dir()?, &kind, &hash, &extension, offset, len).map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
+fn library_exists(kind: String, hash: String, extension: String) -> Result<bool, String> {
+    library::exists(&library_dir()?, &kind, &hash, &extension)
+}
+
 fn main() {
     let state: State = Arc::new(Shared::default());
+    // A copy the app was closed in the middle of leaves only a temp file; remove it before the page can start another.
+    if let Ok(dir) = library_dir() {
+        library::sweep_temp(&dir);
+    }
     set(&state, "starting", None, Some("Starting".to_string()));
 
     let app = tauri::Builder::default()
         .manage(state.clone())
         .manage(exports::Exports::default())
+        .manage(library::Writes::default())
         .manage(entitlement::Entitlements::load(engine::Layout::locate().ok().map(|layout| layout.data)))
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder, library_index_read, library_index_write, library_write_begin, library_write_append, library_write_finish, library_write_cancel, library_read, library_exists])
         .setup({
             let state = state.clone();
             move |_app| {
