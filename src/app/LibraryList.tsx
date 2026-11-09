@@ -9,6 +9,10 @@ export interface LibraryListProps {
   stemHashes: ReadonlySet<string>;
   /** Reopens a song; false when it could not be opened, so focus goes back to its row. */
   onOpen: (entry: LibraryEntry) => Promise<boolean>;
+  /** Removes a song with an undo window (R2); the row menu that calls it comes with U4. */
+  onRemove?: (entry: LibraryEntry) => void | Promise<void>;
+  /** Renames a song (R1); false when it could not be saved. The row menu that calls it comes with U4. */
+  onRename?: (tabHash: string, title: string) => Promise<boolean>;
 }
 
 interface Props extends LibraryListProps {

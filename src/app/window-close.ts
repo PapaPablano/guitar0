@@ -1,6 +1,6 @@
 /**
  * What the page does when the desktop window is closed (KTD6): the shell holds the close and emits `close-requested`;
- * the page saves the open song's position and then tells the shell it may exit. The shell exits on its own after 2 s,
+ * the page drops pending removals from the index, saves the open song's position and then tells the shell it may exit. The shell exits on its own after 2 s,
  * so every step here is best effort and the shell is always told, whatever fails.
  */
 
@@ -10,6 +10,11 @@ import type { OpenSong } from './library-restore';
 export const CLOSE_SAVE_CAP_MS = 1500;
 
 export interface CloseSteps {
+  /**
+   * Removes every pending removal's entry from the index in one library step, without waiting on saves or deleting files;
+   * the startup sweep deletes them (KTD2). Started first, and waited for within the same cap as the saves.
+   */
+  removePending(): Promise<unknown>;
   /** Pauses every clock and saves the open song's position (App's parkSong). */
   park(): void;
   /** Writes the profile saver's pending change now; exiting through the shell may skip `pagehide`. */
@@ -41,12 +46,20 @@ function attempt(step: () => void) {
 export function createCloseHandler(steps: CloseSteps, capMs = CLOSE_SAVE_CAP_MS): () => Promise<void> {
   let running: Promise<void> | null = null;
   async function run() {
+    let removing: Promise<unknown>;
+    try {
+      // Queued before the park's position save, so the step runs first.
+      removing = Promise.resolve(steps.removePending()).catch(() => undefined);
+    } catch {
+      removing = Promise.resolve();
+    }
     attempt(steps.park);
     attempt(steps.flush);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const cap = new Promise<void>((resolve) => (timer = setTimeout(resolve, capMs)));
-      await Promise.race([Promise.resolve().then(steps.settled), cap]);
+      const saved = Promise.resolve().then(steps.settled).catch(() => undefined);
+      await Promise.race([Promise.all([removing, saved]), cap]);
     } catch {
       // a failed save still lets the app close
     } finally {

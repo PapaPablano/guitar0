@@ -541,3 +541,129 @@ describe("waiting for a song's pending saves (KTD3)", () => {
     expect(await isDone(session.settled(hashA))).toBe(true);
   });
 });
+
+describe('waiting for every save (KTD3)', () => {
+  it('waits for saves of every song, including ones started while it waits', async () => {
+    const { session, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    void session.videoChanged({ videoId: 'vid', offsetSeconds: 1 });
+    const all = session.settledAll();
+    expect(await isDone(all)).toBe(false);
+    void session.savePosition(hashB, 2);
+    release();
+    await all;
+    expect(await isDone(session.settledAll())).toBe(true);
+  });
+
+  it('resolves at once with nothing pending, and on the web', async () => {
+    expect(await isDone(setup().session.settledAll())).toBe(true);
+    expect(await isDone(createLibrarySession(null).settledAll())).toBe(true);
+    expect(createLibrarySession(null).storingHashes.size).toBe(0);
+  });
+});
+
+describe('the storing set (KTD3, R13)', () => {
+  it("holds a tab's hash from the start of its copy until the entry naming it is written", async () => {
+    const copied = deferred<string | null>();
+    const files = fakeFiles({
+      saveTab: (_bytes, storing) => {
+        storing(hashA);
+        return copied.promise;
+      },
+    });
+    const library = new SongLibrary(memoryBackend());
+    const written = deferred<void>();
+    const gated = {
+      ...gatedLibrary(library).gated,
+      open: async (...args: Parameters<SongLibrary['open']>) => {
+        await written.promise;
+        return library.open(...args);
+      },
+    };
+    const session = createLibrarySession({ library: gated, files, now: () => 1, onNote: () => undefined });
+    const opened = session.openTab(tabA, detailsA);
+    await Promise.resolve();
+    expect(session.storingHashes.has(hashA)).toBe(true);
+    copied.resolve(hashA);
+    expect(await isDone(opened)).toBe(false);
+    expect(session.storingHashes.has(hashA)).toBe(true);
+    written.resolve();
+    expect(await opened).toBe(hashA);
+    expect(session.storingHashes.has(hashA)).toBe(false);
+  });
+
+  it("drops a tab's hash when its copy fails", async () => {
+    const files = fakeFiles({
+      saveTab: async (_bytes, storing) => {
+        storing(hashA);
+        throw new Error('disk full');
+      },
+    });
+    const { session } = setup(files);
+    expect(await session.openTab(tabA, detailsA)).toBeNull();
+    expect(session.storingHashes.has(hashA)).toBe(false);
+  });
+
+  it("holds a recording's hash until setRecording settles, and drops it when the copy fails", async () => {
+    let fail = false;
+    const files = fakeFiles({
+      saveRecording: async (file, storing) => {
+        storing(recHash);
+        if (fail) return null;
+        return refFor(recHash, file.name);
+      },
+    });
+    const { session, release } = gatedSetup(files);
+    const opened = session.openTab(tabA, detailsA);
+    release();
+    await opened;
+    const loaded = session.recordingLoaded(recording());
+    await isDone(loaded);
+    expect(session.storingHashes.has(recHash)).toBe(true);
+    release();
+    await loaded;
+    expect(session.storingHashes.has(recHash)).toBe(false);
+    fail = true;
+    await session.recordingLoaded(recording());
+    expect(session.storingHashes.has(recHash)).toBe(false);
+  });
+
+  it('keeps a hash two copies hold until both have finished', async () => {
+    const first = deferred<RecordingRef | null>();
+    const second = deferred<RecordingRef | null>();
+    const copies = [first, second];
+    const files = fakeFiles({
+      saveRecording: (_file, storing) => {
+        storing(recHash);
+        return copies.shift()!.promise;
+      },
+    });
+    const { session } = setup(files);
+    await session.openTab(tabA, detailsA);
+    const a = session.recordingLoaded(recording());
+    await session.openTab(tabB, detailsB);
+    const b = session.recordingLoaded(recording());
+    await isDone(b);
+    first.resolve(refFor(recHash));
+    await a;
+    expect(session.storingHashes.has(recHash)).toBe(true);
+    second.resolve(refFor(recHash));
+    await b;
+    expect(session.storingHashes.has(recHash)).toBe(false);
+  });
+});
+
+describe('a removed song (R5)', () => {
+  it('shows no "not saved" note when its recording copy lands after the song was left and its entry removed', async () => {
+    const copy = deferred<RecordingRef | null>();
+    const { library, notes, session } = setup(fakeFiles({ saveRecording: () => copy.promise }));
+    await session.openTab(tabA, detailsA);
+    const loaded = session.recordingLoaded(recording());
+    // Removing the open song leaves it first; then its removal commits.
+    session.closeSong();
+    await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), storingHashes: new Set() });
+    copy.resolve(refFor(recHash));
+    await loaded;
+    expect(notes).not.toContain(RECORDING_NOT_SAVED);
+  });
+});

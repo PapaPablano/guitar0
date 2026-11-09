@@ -4,6 +4,10 @@ import { CLOSE_SAVE_CAP_MS, createCloseHandler, openSongSettled, type CloseSteps
 function steps(overrides: Partial<CloseSteps> = {}) {
   const order: string[] = [];
   const all: CloseSteps = {
+    removePending: vi.fn(() => {
+      order.push('remove');
+      return Promise.resolve();
+    }),
     park: vi.fn(() => void order.push('park')),
     flush: vi.fn(() => void order.push('flush')),
     settled: vi.fn(() => {
@@ -27,7 +31,7 @@ describe('createCloseHandler', () => {
   it('parks, flushes the profile, waits for the song to settle, then tells the shell it is ready', async () => {
     const { all, order } = steps();
     await createCloseHandler(all)();
-    expect(order).toEqual(['park', 'flush', 'settled', 'ready']);
+    expect(order).toEqual(['remove', 'park', 'flush', 'settled', 'ready']);
   });
 
   it('tells the shell only after the save has resolved', async () => {
@@ -59,7 +63,7 @@ describe('createCloseHandler', () => {
       },
     });
     await createCloseHandler(all)();
-    expect(order).toEqual(['flush', 'settled', 'ready']);
+    expect(order).toEqual(['remove', 'flush', 'settled', 'ready']);
   });
 
   it('still tells the shell when the flush throws or the save rejects', async () => {
@@ -88,6 +92,53 @@ describe('createCloseHandler', () => {
     await Promise.all([first, second]);
     expect(all.park).toHaveBeenCalledTimes(1);
     expect(all.ready).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('dropping pending removals at close (KTD2)', () => {
+  it('drops the pending entries first, before parking, even when the saves never settle', async () => {
+    vi.useFakeTimers();
+    const { all, order } = steps({ settled: () => new Promise<void>(() => undefined) });
+    const done = createCloseHandler(all)();
+    expect(order[0]).toBe('remove');
+    await vi.advanceTimersByTimeAsync(CLOSE_SAVE_CAP_MS);
+    await done;
+    expect(all.removePending).toHaveBeenCalledTimes(1);
+    expect(all.ready).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the drop to land before telling the shell', async () => {
+    let finish = () => undefined as void;
+    const { all } = steps({ removePending: () => new Promise<void>((resolve) => (finish = resolve)) });
+    const done = createCloseHandler(all)();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(all.ready).not.toHaveBeenCalled();
+    finish();
+    await done;
+    expect(all.ready).toHaveBeenCalledTimes(1);
+  });
+
+  it('still tells the shell within the cap when the drop hangs, throws or rejects', async () => {
+    vi.useFakeTimers();
+    const hung = steps({ removePending: () => new Promise<void>(() => undefined) });
+    const done = createCloseHandler(hung.all)();
+    await vi.advanceTimersByTimeAsync(CLOSE_SAVE_CAP_MS - 1);
+    expect(hung.all.ready).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+    expect(hung.all.ready).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    const thrown = steps({
+      removePending: () => {
+        throw new Error('no library');
+      },
+    });
+    await createCloseHandler(thrown.all)();
+    expect(thrown.order).toEqual(['park', 'flush', 'settled', 'ready']);
+    const rejected = steps({ removePending: () => Promise.reject(new Error('disk full')) });
+    await createCloseHandler(rejected.all)();
+    expect(rejected.all.ready).toHaveBeenCalledTimes(1);
   });
 });
 

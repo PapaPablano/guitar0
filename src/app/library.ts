@@ -196,6 +196,11 @@ export interface RemovalContext {
   pendingHashes: ReadonlySet<string>;
   /** Content hashes whose copy `store()` is writing right now; their files are never deleted (KTD3, R13). */
   storingHashes: ReadonlySet<string>;
+  /**
+   * Told which files the commit will delete, inside its step and before the index is written, so a copy of one of them
+   * that starts from here on can wait for the delete instead of taking the "already stored" shortcut (KTD3).
+   */
+  beforeWrite?: (removal: CommittedRemoval) => void;
 }
 
 /** Whether any of these stored entries, readable or not, mentions the hash anywhere in its JSON. */
@@ -331,9 +336,25 @@ export class SongLibrary {
         !context.storingHashes.has(recordingHash) &&
         !namedBy(remaining, recordingHash);
       const deleteTab = !context.storingHashes.has(tabHash) && !namedBy(remaining, tabHash);
+      const removal = { entry, deleteTab, deleteRecording };
+      context.beforeWrite?.(removal);
       await this.backend.write({ version: 1, entries: remaining });
-      return { entry, deleteTab, deleteRecording };
+      return removal;
     }, null);
+  }
+
+  /**
+   * Removes, in one step, every entry whose tab hash is pending when the step runs, for the window close (KTD2). Nothing
+   * is deleted: the startup sweep removes the files once nothing names them. Unreadable entries are kept. False when the
+   * index cannot be read or written.
+   */
+  removeEntries(pendingHashes: ReadonlySet<string>): Promise<boolean> {
+    return this.serial(async () => {
+      const entries = await this.readEntries();
+      const remaining = entries.filter((e) => !(isLibraryEntry(e) && pendingHashes.has(e.tabHash)));
+      if (remaining.length < entries.length) await this.backend.write({ version: 1, entries: remaining });
+      return true;
+    }, false);
   }
 
   /** Applies a change to a saved song. False when the song is not saved or the index cannot be read or written. */

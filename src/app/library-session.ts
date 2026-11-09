@@ -14,11 +14,14 @@ import type { AudioSource } from './youtube-dock';
 /** The one note shown when a recording plays but could not be copied into the library (R14). */
 export const RECORDING_NOT_SAVED = "This recording wasn't saved to your library. It plays now, but you'll need to load it again next time.";
 
-/** Copying files into the library; each gives null when not saved and never rejects. */
+/**
+ * Copying files into the library; each gives null when not saved and never rejects. Each calls `storing` with the file's
+ * hash as its copy starts, before the "already stored" check, so a removal committing meanwhile keeps that file (KTD3).
+ */
 export interface LibraryFiles {
   /** Stores the tab's bytes; their hash, or null. */
-  saveTab(bytes: Uint8Array): Promise<string | null>;
-  saveRecording(file: File): Promise<RecordingRef | null>;
+  saveTab(bytes: Uint8Array, storing: (hash: string) => void): Promise<string | null>;
+  saveRecording(file: File, storing: (hash: string) => void): Promise<RecordingRef | null>;
 }
 
 export interface LibraryDeps {
@@ -54,6 +57,13 @@ export interface LibrarySession {
    * read issued afterwards sees them (KTD3). Saves for other songs are not waited on. Never rejects.
    */
   settled(tabHash: string): Promise<void>;
+  /** Resolves once every save for every song has finished, including saves started while it waits (KTD3). Never rejects. */
+  settledAll(): Promise<void>;
+  /**
+   * Content hashes whose copy is being stored, each from the start of its copy until the entry write naming it settles
+   * (KTD3). A removal never deletes a file whose hash is here. Live: it changes as saves run.
+   */
+  readonly storingHashes: ReadonlySet<string>;
 }
 
 /** Which backing the song remembers for the YouTube hook's source: Original is the video's own audio. */
@@ -98,6 +108,8 @@ const webSession: LibrarySession = {
   positionChanged: () => DONE,
   savePosition: () => DONE,
   settled: () => DONE,
+  settledAll: () => DONE,
+  storingHashes: new Set<string>(),
 };
 
 /** Writes the latest value given, one write at a time: values given while a write runs collapse into the last one. */
@@ -136,6 +148,31 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
     return item.done;
   }
 
+  /** Hashes being stored, counted, since two saves can store the same file at once. */
+  const storingHashes = new Set<string>();
+  const storingCounts = new Map<string, number>();
+  /** Holds the hashes one save stores until `release`, called once the entry write naming them has settled. */
+  function holdStoring() {
+    const held: string[] = [];
+    return {
+      add(hash: string) {
+        held.push(hash);
+        storingCounts.set(hash, (storingCounts.get(hash) ?? 0) + 1);
+        storingHashes.add(hash);
+      },
+      release() {
+        for (const hash of held.splice(0)) {
+          const left = (storingCounts.get(hash) ?? 1) - 1;
+          if (left > 0) storingCounts.set(hash, left);
+          else {
+            storingCounts.delete(hash);
+            storingHashes.delete(hash);
+          }
+        }
+      },
+    };
+  }
+
   /** Runs a change against the open song's entry once its tab is saved. */
   function withSong(change: (hash: string) => Promise<unknown>): Promise<void> {
     const song = current;
@@ -148,13 +185,16 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
     const tabHash = await song.hash;
     if (!tabHash) return;
     let saved = false;
+    const storing = holdStoring();
     try {
-      const ref = await files.saveRecording(file);
+      const ref = await files.saveRecording(file, storing.add);
       // A newer recording, or the recording's removal, decides the song's recording instead.
       if (song.recordingRun !== run) return;
       saved = ref !== null && (await library.setRecording(tabHash, ref));
     } catch {
       saved = false;
+    } finally {
+      storing.release();
     }
     // The note is about the recording playing now, so it is not shown once another song is open.
     if (!saved && song === current && song.recordingRun === run) onNote(RECORDING_NOT_SAVED);
@@ -165,11 +205,14 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
       const song = { recordingRun: 0 } as TrackedSong;
       song.hash = (async () => {
         let saved: string | null = null;
+        const storing = holdStoring();
         try {
-          const tabHash = await files.saveTab(bytes);
+          const tabHash = await files.saveTab(bytes, storing.add);
           if (tabHash && (await library.open({ tabHash, ...details }, now(), initialVideo))) saved = tabHash;
         } catch {
           saved = null;
+        } finally {
+          storing.release();
         }
         // Set before anything awaiting the hash runs, so `settled` knows which song this is.
         song.tabHash = saved;
@@ -235,5 +278,11 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
         await Promise.all(waits);
       }
     },
+
+    async settledAll() {
+      while (inFlight.size > 0) await Promise.all([...inFlight].map((item) => item.done));
+    },
+
+    storingHashes,
   };
 }

@@ -482,6 +482,53 @@ describe('committing a removal (KTD2, KTD3)', () => {
     expect(await library.commitRemoval(hashA, pendingOf(hashA))).toBeNull();
     expect(full.data.entries).toHaveLength(1);
   });
+
+  it('tells beforeWrite which files it will delete before the index is written, inside the same step (KTD3)', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const seen: { writes: number; deleteTab: boolean; deleteRecording: boolean }[] = [];
+    await library.commitRemoval(hashA, {
+      ...pendingOf(hashA),
+      beforeWrite: (removal) => void seen.push({ writes: backend.writes, deleteTab: removal.deleteTab, deleteRecording: removal.deleteRecording }),
+    });
+    expect(seen).toEqual([{ writes: 2, deleteTab: true, deleteRecording: true }]);
+    expect(backend.writes).toBe(3);
+  });
+
+  it('does not call beforeWrite for a cancelled removal', async () => {
+    const { library } = await withSongs([hashA, hashC]);
+    let called = false;
+    expect(await library.commitRemoval(hashA, { pendingHashes: new Set(), storingHashes: new Set(), beforeWrite: () => void (called = true) })).toBeNull();
+    expect(called).toBe(false);
+  });
+});
+
+describe('dropping pending entries at close (KTD2)', () => {
+  it('removes every entry whose hash is pending when the step runs, and keeps the rest and unreadable entries', async () => {
+    const odd = { tabHash: 'zz', future: true };
+    const backend = memoryBackend([odd]);
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    await library.open(tab(hashB), 2);
+    await library.open(tab(hashC), 3);
+    const pending = new Set([hashA]);
+    const dropped = library.removeEntries(pending);
+    pending.add(hashB);
+    expect(await dropped).toBe(true);
+    expect(backend.data.entries).toEqual([odd, expect.objectContaining({ tabHash: hashC })]);
+  });
+
+  it('writes nothing when no pending entry is in the index, and gives false when the index cannot be written', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    const before = backend.writes;
+    expect(await library.removeEntries(new Set([hashB]))).toBe(true);
+    expect(backend.writes).toBe(before);
+    backend.write = async () => {
+      throw new Error('disk full');
+    };
+    expect(await library.removeEntries(new Set([hashA]))).toBe(false);
+  });
 });
 
 describe('the quarantine flag (KTD5)', () => {
