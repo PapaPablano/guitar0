@@ -108,13 +108,23 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 #[derive(Serialize, Debug, PartialEq)]
 pub struct IndexRead {
     pub index: Value,
-    /// True when an unreadable index was just renamed to library.json.bad and the library reads as empty.
+    /// True when an unreadable index was just set aside as library.json.bad (or .bad-<n>) and the library reads as empty.
     pub quarantined: bool,
 }
 
-/// Reads the index. A missing file is an empty library. An unreadable one is renamed to library.json.bad (replacing
-/// an earlier one) and reads as empty with the flag set. Any other read error is an error, so the page skips the save
-/// instead of overwriting a file it could not read.
+/// Where to set aside an unreadable index: library.json.bad, or library.json.bad-<n> for the smallest free n from 2,
+/// so an earlier set-aside is never overwritten.
+fn quarantine_path(library: &Path) -> PathBuf {
+    let first = library.join(QUARANTINE_FILE);
+    if !first.exists() {
+        return first;
+    }
+    (2u64..).map(|n| library.join(format!("{QUARANTINE_FILE}-{n}"))).find(|path| !path.exists()).expect("a free set-aside name")
+}
+
+/// Reads the index. A missing file is an empty library. An unreadable one is set aside (see `quarantine_path`) and
+/// reads as empty with the flag set. Any other read error is an error, so the page skips the save instead of
+/// overwriting a file it could not read.
 pub fn read_index(library: &Path) -> Result<IndexRead, String> {
     let path = library.join(INDEX_FILE);
     let bytes = match fs::read(&path) {
@@ -127,7 +137,7 @@ pub fn read_index(library: &Path) -> Result<IndexRead, String> {
         return Ok(IndexRead { index, quarantined: false });
     }
     // Set the file aside so the next save cannot overwrite it. If that fails, saving must not go ahead.
-    fs::rename(&path, library.join(QUARANTINE_FILE)).map_err(|e| format!("could not set aside the unreadable library index: {e}"))?;
+    fs::rename(&path, quarantine_path(library)).map_err(|e| format!("could not set aside the unreadable library index: {e}"))?;
     Ok(IndexRead { index: empty_index(), quarantined: true })
 }
 
@@ -146,6 +156,65 @@ pub fn sweep_temp(library: &Path) -> usize {
         }
     }
     removed
+}
+
+/// Text that may name stored files: library.json, every set-aside library.json.bad*, and the restore's
+/// library.json.bak, lowercased. None when library.json is missing or not a readable index, or when any of these files
+/// cannot be read, since then nothing can say which stored files are still wanted.
+fn naming_text(library: &Path) -> Option<String> {
+    let index = String::from_utf8(fs::read(library.join(INDEX_FILE)).ok()?).ok()?;
+    parse_index(&index)?;
+    let mut text = index;
+    for entry in fs::read_dir(library).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(QUARANTINE_FILE) || name == format!("{INDEX_FILE}.bak") {
+            // A set-aside file may not be UTF-8; the hashes in it are ASCII either way.
+            text.push('\n');
+            text.push_str(&String::from_utf8_lossy(&fs::read(entry.path()).ok()?));
+        }
+    }
+    Some(text.to_ascii_lowercase())
+}
+
+/// Deletes stored tabs and recordings that nothing names any more, and returns how many it removed. Run at startup,
+/// before the page can write. It skips entirely unless library.json reads as an index (it never sets a bad one aside;
+/// that is the page's read). A file is kept when its hash appears anywhere in the text from `naming_text` (so unknown
+/// fields and entries this version cannot read still protect their files), or when it was modified at or after
+/// `started`. Only `<64 hex>.<allowed type>` names are touched.
+pub fn sweep_orphans(library: &Path, started: std::time::SystemTime) -> usize {
+    let Some(text) = naming_text(library) else { return 0 };
+    let mut removed = 0;
+    for kind in [Kind::Tab, Kind::Recording] {
+        let Ok(entries) = fs::read_dir(library.join(kind.dir())) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some((hash, extension)) = name.split_once('.') else { continue };
+            let Ok(path) = file_path_for(library, kind, hash, extension) else { continue };
+            if text.contains(hash) {
+                continue;
+            }
+            let old = fs::metadata(&path).ok().filter(|m| m.is_file()).and_then(|m| m.modified().ok()).is_some_and(|modified| modified < started);
+            if old && fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// The SHA-256 of a file's bytes as lowercase hex, read in slices so a large recording is never held whole.
+fn hash_file(path: &Path) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(hex(&hasher.finalize()));
+        }
+        hasher.update(&buffer[..read]);
+    }
 }
 
 struct Pending {
@@ -190,10 +259,13 @@ impl Writes {
     }
 
     /// Puts the file in place once its bytes are on disk and match the hash in its name. Returns true when the file is
-    /// new, and false when the library already had it (the temp file is discarded and the original kept). On any
-    /// failure the temp file is removed, so the library never holds a partial file under a real name.
+    /// new or replaced a damaged copy (one whose bytes no longer match its name), and false when the library already
+    /// had a good copy (the temp file is discarded and the original kept). On any failure the temp file is removed, so
+    /// the library never holds a partial file under a real name. The `open` lock is held throughout, so a `delete` of
+    /// the same file cannot run between the check of the existing copy and the rename.
     pub fn finish(&self, id: u64) -> Result<bool, String> {
-        let Pending { file, temp, target, hash, hasher } = self.open.lock().unwrap().remove(&id).ok_or_else(|| "unknown library write handle".to_string())?;
+        let mut open = self.open.lock().unwrap();
+        let Pending { file, temp, target, hash, hasher } = open.remove(&id).ok_or_else(|| "unknown library write handle".to_string())?;
         // The handle is gone from here on, so every failure removes the temp file itself.
         let discard = |message: String| {
             let _ = fs::remove_file(&temp);
@@ -208,14 +280,37 @@ impl Writes {
             return discard("the stored bytes do not match their hash".to_string());
         }
         if target.exists() {
-            // Same name means same bytes: keep the original.
-            let _ = fs::remove_file(&temp);
-            return Ok(false);
+            match hash_file(&target) {
+                // A good copy: keep the original.
+                Ok(existing) if existing == hash => {
+                    let _ = fs::remove_file(&temp);
+                    return Ok(false);
+                }
+                // A damaged copy: the rename below replaces it.
+                Ok(_) => {}
+                Err(e) => return discard(format!("could not check the stored library file: {e}")),
+            }
         }
         if let Err(e) = fs::rename(&temp, &target) {
             return discard(format!("could not put the library file in place: {e}"));
         }
         Ok(true)
+    }
+
+    /// Deletes a stored file. Returns true when it is gone (including when it was already missing), and false when a
+    /// write to that same file is open, in which case the file is kept. Holding the `open` lock across the check and
+    /// the removal means a `finish` cannot slip in between.
+    pub fn delete(&self, library: &Path, kind: &str, hash: &str, extension: &str) -> Result<bool, String> {
+        let path = file_path(library, kind, hash, extension)?;
+        let open = self.open.lock().unwrap();
+        if open.values().any(|pending| pending.target == path) {
+            return Ok(false);
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(e) => Err(format!("could not delete the library file: {e}")),
+        }
     }
 
     /// Drops a write that failed partway, removing its temp file.
@@ -315,13 +410,32 @@ mod tests {
         assert!(!lib.join(INDEX_FILE).exists());
         assert_eq!(fs::read_to_string(lib.join(QUARANTINE_FILE)).unwrap(), "{corrupt one");
 
-        // A second corrupt index replaces the earlier .bad.
-        fs::write(lib.join(INDEX_FILE), "{corrupt two").unwrap();
-        assert_eq!(read_index(&lib).unwrap(), IndexRead { index: empty_index(), quarantined: true });
-        assert_eq!(fs::read_to_string(lib.join(QUARANTINE_FILE)).unwrap(), "{corrupt two");
-
         // With the bad file set aside, the next read is a plain empty library.
         assert_eq!(read_index(&lib).unwrap(), IndexRead { index: empty_index(), quarantined: false });
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    #[test]
+    fn a_second_unreadable_index_is_set_aside_as_bad_2_and_keeps_the_first() {
+        let lib = scratch("quarantine-twice");
+        fs::write(lib.join(INDEX_FILE), "{corrupt one").unwrap();
+        assert!(read_index(&lib).unwrap().quarantined);
+        fs::write(lib.join(INDEX_FILE), "{corrupt two").unwrap();
+        assert_eq!(read_index(&lib).unwrap(), IndexRead { index: empty_index(), quarantined: true });
+        assert_eq!(fs::read_to_string(lib.join(QUARANTINE_FILE)).unwrap(), "{corrupt one");
+        assert_eq!(fs::read_to_string(lib.join("library.json.bad-2")).unwrap(), "{corrupt two");
+
+        // The smallest free number is used, so a gap is filled before going higher.
+        fs::write(lib.join("library.json.bad-3"), "{older three").unwrap();
+        fs::remove_file(lib.join("library.json.bad-2")).unwrap();
+        fs::write(lib.join(INDEX_FILE), "{corrupt four").unwrap();
+        assert!(read_index(&lib).unwrap().quarantined);
+        assert_eq!(fs::read_to_string(lib.join("library.json.bad-2")).unwrap(), "{corrupt four");
+        assert_eq!(fs::read_to_string(lib.join("library.json.bad-3")).unwrap(), "{older three");
+        fs::write(lib.join(INDEX_FILE), "{corrupt five").unwrap();
+        assert!(read_index(&lib).unwrap().quarantined);
+        assert_eq!(fs::read_to_string(lib.join("library.json.bad-4")).unwrap(), "{corrupt five");
+        assert_eq!(fs::read_to_string(lib.join(QUARANTINE_FILE)).unwrap(), "{corrupt one");
         fs::remove_dir_all(&lib).unwrap();
     }
 
@@ -533,6 +647,167 @@ mod tests {
         fs::create_dir_all(lib.join("tabs")).unwrap();
         fs::write(lib.join("tabs").join(format!("{hash}.bin")), &bytes).unwrap();
         assert_eq!(read_chunk(&lib, "tab", &hash, "bin", 0, u64::MAX).unwrap().len() as u64, MAX_CHUNK);
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    fn stored(lib: &Path, kind: Kind, hash: &str, extension: &str, bytes: &[u8]) -> PathBuf {
+        let path = file_path_for(lib, kind, hash, extension).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn delete_removes_a_stored_file_and_counts_a_missing_one_as_done() {
+        let lib = scratch("delete");
+        let hash = sha(b"audio");
+        let path = stored(&lib, Kind::Recording, &hash, "mp3", b"audio");
+        let writes = Writes::default();
+        assert!(writes.delete(&lib, "recording", &hash, "mp3").unwrap());
+        assert!(!path.exists());
+        assert!(writes.delete(&lib, "recording", &hash, "mp3").unwrap(), "already missing is success");
+        let tab = stored(&lib, Kind::Tab, &hash, "bin", b"tab");
+        assert!(writes.delete(&lib, "tab", &hash, "bin").unwrap());
+        assert!(!tab.exists());
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    #[test]
+    fn delete_refuses_a_bad_kind_hash_or_extension() {
+        let lib = scratch("delete-refuse");
+        let hash = "ab".repeat(32);
+        fs::write(lib.join(INDEX_FILE), "{}").unwrap();
+        let writes = Writes::default();
+        assert!(writes.delete(&lib, "recording", "../library", "json").is_err());
+        assert!(writes.delete(&lib, "recording", &hash, "exe").is_err());
+        assert!(writes.delete(&lib, "tab", &hash, "mp3").is_err());
+        assert!(writes.delete(&lib, "stems", &hash, "bin").is_err());
+        assert!(lib.join(INDEX_FILE).exists());
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    #[test]
+    fn delete_is_refused_while_a_write_to_the_same_file_is_open_and_works_once_it_finishes() {
+        let lib = scratch("delete-open");
+        let bytes = b"shared recording";
+        let hash = sha(bytes);
+        let path = stored(&lib, Kind::Recording, &hash, "wav", bytes);
+        let writes = Writes::default();
+        let id = writes.begin(&lib, "recording", &hash, "wav").unwrap();
+        writes.append(id, bytes).unwrap();
+        assert!(!writes.delete(&lib, "recording", &hash, "wav").unwrap(), "refused while the write is open");
+        assert!(path.exists());
+        // A write to a different file does not block it.
+        let other = writes.begin(&lib, "recording", &hash, "mp3").unwrap();
+        assert!(!writes.finish(id).unwrap());
+        assert!(writes.delete(&lib, "recording", &hash, "wav").unwrap());
+        assert!(!path.exists());
+        writes.cancel(other);
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    #[test]
+    fn finish_onto_a_damaged_copy_replaces_it_and_onto_a_good_copy_keeps_it() {
+        let lib = scratch("damaged");
+        let bytes = b"the real recording";
+        let hash = sha(bytes);
+        let target = stored(&lib, Kind::Recording, &hash, "ogg", b"altered on disk");
+        let writes = Writes::default();
+        let id = writes.begin(&lib, "recording", &hash, "ogg").unwrap();
+        writes.append(id, bytes).unwrap();
+        assert!(writes.finish(id).unwrap(), "a damaged copy is replaced");
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        assert!(temp_files(&lib.join("recordings")).is_empty());
+
+        // Now the copy is good, so a second finish keeps it.
+        let id = writes.begin(&lib, "recording", &hash, "ogg").unwrap();
+        writes.append(id, bytes).unwrap();
+        assert!(!writes.finish(id).unwrap());
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        assert!(temp_files(&lib.join("recordings")).is_empty());
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    /// A stored file whose modified time is an hour before now, so a sweep started now counts it as old.
+    fn old(lib: &Path, kind: Kind, hash: &str, extension: &str) -> PathBuf {
+        let path = stored(lib, kind, hash, extension, b"bytes");
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
+        path
+    }
+
+    fn h(n: u8) -> String {
+        format!("{n:02x}").repeat(32)
+    }
+
+    #[test]
+    fn the_orphan_sweep_deletes_only_old_files_nothing_names() {
+        let lib = scratch("orphans");
+        let index = json!({ "version": 1, "entries": [
+            { "tabHash": h(1), "recording": { "hash": h(2), "extension": "mp3" } },
+            { "tabHash": h(3), "futureField": { "deep": [h(4)] } },
+        ], "unknownTopLevel": h(5) });
+        fs::write(lib.join(INDEX_FILE), index.to_string()).unwrap();
+        fs::write(lib.join(QUARANTINE_FILE), format!("{{broken {}", h(6))).unwrap();
+        fs::write(lib.join("library.json.bad-2"), format!("also broken {}", h(7))).unwrap();
+        fs::write(lib.join("library.json.bak"), format!(r#"{{"version":1,"entries":[{{"tabHash":"{}"}}]}}"#, h(8))).unwrap();
+
+        let referenced = old(&lib, Kind::Tab, &h(1), "bin");
+        let recording = old(&lib, Kind::Recording, &h(2), "mp3");
+        let unknown_entry_field = old(&lib, Kind::Recording, &h(4), "wav");
+        let unknown_top_field = old(&lib, Kind::Tab, &h(5), "bin");
+        let in_bad = old(&lib, Kind::Tab, &h(6), "bin");
+        let in_bad_2 = old(&lib, Kind::Recording, &h(7), "flac");
+        let in_bak = old(&lib, Kind::Tab, &h(8), "bin");
+        let orphan_tab = old(&lib, Kind::Tab, &h(9), "bin");
+        let orphan_recording = old(&lib, Kind::Recording, &h(10), "m4a");
+        // The same hash under another extension is still named by the index.
+        let other_extension = old(&lib, Kind::Recording, &h(2), "wav");
+        let started = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        let newer = stored(&lib, Kind::Recording, &h(11), "mp3", b"just written");
+        let temp = lib.join("tabs").join(format!("{}.3.tmp", h(12)));
+        fs::write(&temp, b"half").unwrap();
+        let odd = lib.join("recordings").join("notes.txt");
+        fs::write(&odd, b"not ours").unwrap();
+        let odd_ext = lib.join("recordings").join(format!("{}.exe", h(13)));
+        fs::write(&odd_ext, b"not ours").unwrap();
+        for path in [&temp, &odd, &odd_ext] {
+            OpenOptions::new().write(true).open(path).unwrap().set_modified(started - std::time::Duration::from_secs(3600)).unwrap();
+        }
+
+        assert_eq!(sweep_orphans(&lib, started), 2);
+        assert!(!orphan_tab.exists() && !orphan_recording.exists());
+        for kept in [&referenced, &recording, &unknown_entry_field, &unknown_top_field, &in_bad, &in_bad_2, &in_bak, &other_extension, &newer, &temp, &odd, &odd_ext] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+        for kept in [INDEX_FILE, QUARANTINE_FILE, "library.json.bad-2", "library.json.bak"] {
+            assert!(lib.join(kept).exists(), "{kept}");
+        }
+        fs::remove_dir_all(&lib).unwrap();
+    }
+
+    #[test]
+    fn no_orphan_sweep_runs_without_a_readable_index() {
+        let lib = scratch("orphans-unreadable");
+        let orphan = old(&lib, Kind::Tab, &h(9), "bin");
+        let started = std::time::SystemTime::now();
+        // No index at all.
+        assert_eq!(sweep_orphans(&lib, started), 0);
+        // An unreadable index.
+        fs::write(lib.join(INDEX_FILE), "{corrupt").unwrap();
+        assert_eq!(sweep_orphans(&lib, started), 0);
+        assert!(orphan.exists());
+        assert_eq!(fs::read_to_string(lib.join(INDEX_FILE)).unwrap(), "{corrupt", "the sweep leaves the bad index for the page's read");
+        // An index from a newer app.
+        fs::write(lib.join(INDEX_FILE), r#"{"version":2,"entries":[]}"#).unwrap();
+        assert_eq!(sweep_orphans(&lib, started), 0);
+        // After a quarantining read, the library reads as empty but nothing is swept.
+        fs::write(lib.join(INDEX_FILE), "{corrupt").unwrap();
+        assert!(read_index(&lib).unwrap().quarantined);
+        assert_eq!(sweep_orphans(&lib, started), 0);
+        assert!(orphan.exists());
+        // A library that does not exist yet is nothing to sweep.
+        assert_eq!(sweep_orphans(&lib.join("never-made"), started), 0);
         fs::remove_dir_all(&lib).unwrap();
     }
 }

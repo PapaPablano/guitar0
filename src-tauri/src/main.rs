@@ -329,6 +329,13 @@ fn library_write_finish(writes: tauri::State<library::Writes>, id: u64) -> Resul
     writes.finish(id)
 }
 
+/// Deletes a stored tab or recording. True when it is gone or was already missing; false when a write to that same
+/// file is open, and the file is kept.
+#[tauri::command]
+fn library_delete(writes: tauri::State<library::Writes>, kind: String, hash: String, extension: String) -> Result<bool, String> {
+    writes.delete(&library_dir()?, &kind, &hash, &extension)
+}
+
 #[tauri::command]
 fn library_write_cancel(writes: tauri::State<library::Writes>, id: u64) {
     writes.cancel(id)
@@ -399,10 +406,13 @@ fn sweep_atomic_temps(dir: &std::path::Path) -> usize {
 }
 
 fn main() {
+    let started = std::time::SystemTime::now();
     let state: State = Arc::new(Shared::default());
     // A copy the app was closed in the middle of leaves only a temp file; remove it before the page can start another.
+    // Then remove stored files no index names (a removal committed on close leaves its files for this sweep).
     if let Ok(dir) = library_dir() {
         library::sweep_temp(&dir);
+        library::sweep_orphans(&dir, started);
     }
     if let Ok(layout) = engine::Layout::locate() {
         sweep_atomic_temps(&layout.data);
@@ -416,7 +426,7 @@ fn main() {
         .manage(library::Writes::default())
         .manage(Closing::default())
         .manage(entitlement::Entitlements::load(engine::Layout::locate().ok().map(|layout| layout.data)))
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder, library_index_read, library_index_write, library_write_begin, library_write_append, library_write_finish, library_write_cancel, library_read, library_exists, app_close_ready])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder, library_index_read, library_index_write, library_write_begin, library_write_append, library_write_finish, library_write_cancel, library_read, library_exists, library_delete, app_close_ready])
         .setup({
             let state = state.clone();
             move |_app| {
