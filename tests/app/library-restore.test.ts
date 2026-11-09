@@ -3,8 +3,10 @@ import { SongLibrary, type LibraryEntry, type LibraryIndex, type RecordingRef } 
 import {
   createStemsAutoStart,
   planRestore,
+  positionToSave,
   RECORDING_MISSING,
   restoreTrack,
+  resumeSeconds,
   restoreTuning,
   runRestore,
   seedVideoStore,
@@ -54,11 +56,12 @@ describe('planRestore', () => {
     const entry = entryWith({ recording, video: { videoId: 'abc', offsetSeconds: 1.5 }, source: 'video', trackIndex: 0 });
     const steps = planRestore(entry, twoTracks, file);
     // The source is held before the recording appears, so the recording's arrival cannot take over from the video.
-    expect(kinds(steps)).toEqual(['tab', 'seed-video', 'select-source', 'load-recording']);
+    expect(kinds(steps)).toEqual(['tab', 'seek', 'seed-video', 'select-source', 'load-recording']);
     expect(steps[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: FILE_TUNING });
-    expect(steps[1]).toEqual({ kind: 'seed-video', video: { videoId: 'abc', offsetSeconds: 1.5 } });
-    expect(steps[2]).toEqual({ kind: 'select-source', source: 'original' });
-    expect(steps[3]).toEqual({ kind: 'load-recording', file });
+    expect(steps[1]).toEqual({ kind: 'seek', tabSeconds: 0 });
+    expect(steps[2]).toEqual({ kind: 'seed-video', video: { videoId: 'abc', offsetSeconds: 1.5 } });
+    expect(steps[3]).toEqual({ kind: 'select-source', source: 'original' });
+    expect(steps[4]).toEqual({ kind: 'load-recording', file });
   });
 
   it('selects the recording (the synth side) when that was the last source', () => {
@@ -68,23 +71,23 @@ describe('planRestore', () => {
 
   it('seeds "no video" for a song without one, so a video another song left under the same fingerprint is not attached', () => {
     const steps = planRestore(entryWith({ recording }), twoTracks, file);
-    expect(kinds(steps)).toEqual(['tab', 'seed-video', 'load-recording']);
-    expect(steps[1]).toEqual({ kind: 'seed-video', video: null });
+    expect(kinds(steps)).toEqual(['tab', 'seek', 'seed-video', 'load-recording']);
+    expect(steps[2]).toEqual({ kind: 'seed-video', video: null });
   });
 
   it('shows the R13 note and loads nothing when the stored recording is missing', () => {
     const steps = planRestore(entryWith({ recording }), twoTracks, null);
-    expect(kinds(steps)).toEqual(['tab', 'seed-video', 'note']);
-    expect(steps[2]).toEqual({ kind: 'note', text: RECORDING_MISSING });
+    expect(kinds(steps)).toEqual(['tab', 'seek', 'seed-video', 'note']);
+    expect(steps[3]).toEqual({ kind: 'note', text: RECORDING_MISSING });
   });
 
   it('shows no note for a song that never had a recording (R11)', () => {
-    expect(kinds(planRestore(entryWith(), twoTracks, null))).toEqual(['tab', 'seed-video']);
+    expect(kinds(planRestore(entryWith(), twoTracks, null))).toEqual(['tab', 'seek', 'seed-video']);
   });
 
   it('still selects the saved source when the recording is missing', () => {
     const steps = planRestore(entryWith({ recording, video: { videoId: 'abc', offsetSeconds: 0 }, source: 'video' }), twoTracks, null);
-    expect(kinds(steps)).toEqual(['tab', 'seed-video', 'select-source', 'note']);
+    expect(kinds(steps)).toEqual(['tab', 'seek', 'seed-video', 'select-source', 'note']);
   });
 
   it('carries the resolved track and tuning on the tab step', () => {
@@ -101,6 +104,82 @@ describe('planRestore', () => {
     // Out of range, and a track with no notes: both fall back to track 0.
     expect(planRestore(entryWith({ trackIndex: 7, tuningId: 'half-down' }), twoTracks, null)[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: FILE_TUNING });
     expect(planRestore(entryWith({ trackIndex: 1, tuningId: 'half-down' }), twoTracks, null)[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: FILE_TUNING });
+  });
+
+  it('covers R8: seeks to the start of the saved bar right after the tab opens', () => {
+    // makeTimeline: four 2-second bars.
+    const steps = planRestore(entryWith({ position: 3 }), twoTracks, null);
+    expect(kinds(steps)).toEqual(['tab', 'seek', 'seed-video']);
+    expect(steps[1]).toEqual({ kind: 'seek', tabSeconds: 6 });
+  });
+
+  it('covers R9: seeks to bar 1 for a song with no saved position or one past the end', () => {
+    expect(planRestore(entryWith(), twoTracks, null)[1]).toEqual({ kind: 'seek', tabSeconds: 0 });
+    expect(planRestore(entryWith({ position: 99 }), twoTracks, null)[1]).toEqual({ kind: 'seek', tabSeconds: 0 });
+  });
+});
+
+/** Eight one-bar score bars, bars 4–7 (1-based) repeated once: 12 played bars. */
+const REPEATS = String.raw`\title "R" \tempo 120
+:4 0.3 0.3 0.3 0.3 | 1.3 1.3 1.3 1.3 | 2.3 2.3 2.3 2.3 | \ro 3.3 3.3 3.3 3.3 | 4.3 4.3 4.3 4.3 | 5.3 5.3 5.3 5.3 | \rc 2 6.3 6.3 6.3 6.3 | 7.3 7.3 7.3 7.3`;
+
+describe('resumeSeconds', () => {
+  const timeline = makeTimeline([], 2, 4);
+
+  it("gives the saved bar's start (R8)", () => {
+    expect(resumeSeconds(entryWith({ position: 3 }), timeline)).toBe(timeline.bars[3].startSeconds);
+    expect(resumeSeconds(entryWith({ position: 0 }), timeline)).toBe(0);
+  });
+
+  it('gives 0 for a missing or out-of-range position (R9)', () => {
+    expect(resumeSeconds(entryWith(), timeline)).toBe(0);
+    expect(resumeSeconds(entryWith({ position: 4 }), timeline)).toBe(0);
+    expect(resumeSeconds(entryWith({ position: 99 }), timeline)).toBe(0);
+  });
+
+  it('counts played bars with repeats expanded (R7)', () => {
+    const played = buildTimeline(loadAlphaTex(REPEATS));
+    expect(played.scoreBarCount).toBe(8);
+    expect(played.bars).toHaveLength(12);
+    // Index 7 is score bar 4 (index 3) on its second pass, and index 11 is past the score's own bar count.
+    expect(played.bars[7].scoreBar).toBe(3);
+    expect(resumeSeconds(entryWith({ position: 5 }), played)).toBe(played.bars[5].startSeconds);
+    expect(resumeSeconds(entryWith({ position: 7 }), played)).toBe(played.bars[7].startSeconds);
+    expect(resumeSeconds(entryWith({ position: 7 }), played)).toBeGreaterThan(played.bars[6].startSeconds);
+    expect(resumeSeconds(entryWith({ position: 11 }), played)).toBe(played.bars[11].startSeconds);
+    expect(resumeSeconds(entryWith({ position: 12 }), played)).toBe(0);
+  });
+
+  it('gives 0 for a tab with no bars', () => {
+    expect(resumeSeconds(entryWith({ position: 0 }), makeTimeline([], 2, 0))).toBe(0);
+  });
+});
+
+describe('positionToSave', () => {
+  const timeline = makeTimeline([], 2, 4);
+
+  it('saves the played bar the tab time is in (R7)', () => {
+    expect(positionToSave(timeline, 0, false)).toBe(0);
+    expect(positionToSave(timeline, 5.9, false)).toBe(2);
+    expect(positionToSave(timeline, 6, false)).toBe(3);
+  });
+
+  it('saves bar 1 at the end of the song (R7)', () => {
+    expect(positionToSave(timeline, 7.5, true)).toBe(0);
+    expect(positionToSave(timeline, timeline.durationSeconds, true)).toBe(0);
+  });
+
+  it('saves bar 1 before the first bar starts or for a tab with no bars', () => {
+    expect(positionToSave(timeline, -1, false)).toBe(0);
+    expect(positionToSave(makeTimeline([], 2, 0), 3, false)).toBe(0);
+  });
+
+  it('counts the second pass through a repeat as a later bar, and round-trips through resumeSeconds', () => {
+    const played = buildTimeline(loadAlphaTex(REPEATS));
+    const t = played.bars[7].startSeconds + 0.1;
+    const index = positionToSave(played, t, false);
+    expect(index).toBe(7);
+    expect(resumeSeconds(entryWith({ position: index }), played)).toBe(played.bars[7].startSeconds);
   });
 });
 

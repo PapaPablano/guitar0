@@ -294,3 +294,250 @@ describe('helpers', () => {
     expect([...hashes]).toEqual([recHash]);
   });
 });
+
+describe('the position', () => {
+  it("saves the open song's position, leaving its opened time alone (R7)", async () => {
+    const { library, session } = setup();
+    await session.openTab(tabA, detailsA);
+    await session.positionChanged(4);
+    expect(await entryOf(library, hashA)).toMatchObject({ position: 4, openedAt: 1000 });
+  });
+
+  it('a position given before the tab is saved waits for it', async () => {
+    const save = deferred<string | null>();
+    const { library, session } = setup(fakeFiles({ saveTab: () => save.promise }));
+    void session.openTab(tabA, detailsA);
+    const saving = session.positionChanged(2);
+    save.resolve(hashA);
+    await saving;
+    expect((await entryOf(library, hashA))?.position).toBe(2);
+  });
+
+  it('saves to a named song even after another song opened, leaving the open song alone', async () => {
+    const { library, session } = setup();
+    await session.openTab(tabA, detailsA);
+    await session.openTab(tabB, detailsB);
+    await session.savePosition(hashA, 6);
+    expect((await entryOf(library, hashA))?.position).toBe(6);
+    expect((await entryOf(library, hashB))?.position).toBeUndefined();
+  });
+
+  it('saves nothing with no song open, for the sample, or for an unsaved tab', async () => {
+    const { backend, session } = setup();
+    await session.positionChanged(1);
+    await session.openTab(tabA, detailsA);
+    session.closeSong();
+    const writes = backend.writes;
+    await session.positionChanged(3);
+    expect(backend.writes).toBe(writes);
+    const unsaved = setup(fakeFiles({ saveTab: async () => null }));
+    await unsaved.session.openTab(tabA, detailsA);
+    await unsaved.session.positionChanged(3);
+    expect(unsaved.backend.writes).toBe(0);
+  });
+});
+
+/** A library whose writes wait for the test to let them through. */
+function gatedLibrary(library: SongLibrary) {
+  const gates: { name: string; release: () => void }[] = [];
+  const gate =
+    <A extends unknown[]>(name: string, write: (tabHash: string, ...args: A) => Promise<boolean>) =>
+    async (tabHash: string, ...args: A) => {
+      await new Promise<void>((release) => gates.push({ name, release }));
+      return write(tabHash, ...args);
+    };
+  const gated = {
+    open: library.open.bind(library),
+    setRecording: gate('setRecording', library.setRecording.bind(library)),
+    clearRecording: gate('clearRecording', library.clearRecording.bind(library)),
+    setVideo: gate('setVideo', library.setVideo.bind(library)),
+    setSource: gate('setSource', library.setSource.bind(library)),
+    setTrackAndTuning: gate('setTrackAndTuning', library.setTrackAndTuning.bind(library)),
+    setPosition: gate('setPosition', library.setPosition.bind(library)),
+  };
+  /** Lets the waiting writes named `name` (or all of them) through. */
+  const release = (name?: string) => {
+    for (const g of gates.splice(0)) {
+      if (!name || g.name === name) g.release();
+      else gates.push(g);
+    }
+  };
+  return { gated, gates, release };
+}
+
+/** Whether the promise has settled once pending work has had a chance to run. */
+async function isDone(promise: Promise<unknown>): Promise<boolean> {
+  let done = false;
+  void promise.then(() => (done = true));
+  await new Promise((r) => setTimeout(r, 0));
+  return done;
+}
+
+function gatedSetup(files = fakeFiles()) {
+  const backend = memoryBackend();
+  const library = new SongLibrary(backend);
+  const { gated, gates, release } = gatedLibrary(library);
+  const session = createLibrarySession({ library: gated, files, now: () => 1000, onNote: () => undefined });
+  return { backend, library, session, gates, release };
+}
+
+describe("waiting for a song's pending saves (KTD3)", () => {
+  it('resolves at once with nothing pending', async () => {
+    const { session } = setup();
+    expect(await isDone(session.settled(hashA))).toBe(true);
+    await session.openTab(tabA, detailsA);
+    expect(await isDone(session.settled(hashA))).toBe(true);
+  });
+
+  it('waits for a video write, then resolves', async () => {
+    const { library, session, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    void session.videoChanged({ videoId: 'vid', offsetSeconds: 1 });
+    const settled = session.settled(hashA);
+    expect(await isDone(settled)).toBe(false);
+    release();
+    await settled;
+    expect((await library.find(hashA))?.video).toEqual({ videoId: 'vid', offsetSeconds: 1 });
+  });
+
+  it('waits for a recording copy and the setRecording after it', async () => {
+    const copy = deferred<RecordingRef | null>();
+    const { library, session, gates, release } = gatedSetup(fakeFiles({ saveRecording: () => copy.promise }));
+    await session.openTab(tabA, detailsA);
+    void session.recordingLoaded(recording());
+    const settled = session.settled(hashA);
+    expect(await isDone(settled)).toBe(false);
+    copy.resolve(refFor(recHash));
+    expect(await isDone(settled)).toBe(false);
+    expect(gates.map((g) => g.name)).toEqual(['setRecording']);
+    release();
+    await settled;
+    expect((await library.find(hashA))?.recording).toEqual(refFor(recHash));
+  });
+
+  it('waits for source, track and tuning, recording removal and position writes', async () => {
+    const { library, session, gates, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    void session.sourceChanged('video');
+    void session.trackAndTuningChanged(2, 'drop-d');
+    void session.recordingRemoved();
+    void session.positionChanged(5);
+    const settled = session.settled(hashA);
+    await isDone(settled);
+    expect(gates.map((g) => g.name).sort()).toEqual(['clearRecording', 'setPosition', 'setSource', 'setTrackAndTuning']);
+    release('setSource');
+    release('setTrackAndTuning');
+    release('clearRecording');
+    expect(await isDone(settled)).toBe(false);
+    release();
+    await settled;
+    expect(await library.find(hashA)).toMatchObject({ source: 'video', trackIndex: 2, tuningId: 'drop-d', position: 5 });
+  });
+
+  it('waits for a position saved to a named song', async () => {
+    const { library, session, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    await session.openTab(tabB, detailsB);
+    void session.savePosition(hashA, 3);
+    const settled = session.settled(hashA);
+    expect(await isDone(settled)).toBe(false);
+    release();
+    await settled;
+    expect((await library.find(hashA))?.position).toBe(3);
+  });
+
+  it('also waits for writes added while it waits', async () => {
+    const { library, session, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    void session.sourceChanged('video');
+    const settled = session.settled(hashA);
+    await isDone(settled);
+    void session.positionChanged(9);
+    release('setSource');
+    expect(await isDone(settled)).toBe(false);
+    release();
+    await settled;
+    expect((await library.find(hashA))?.position).toBe(9);
+  });
+
+  it('also waits for a later value collapsed into a running video write', async () => {
+    const { library, session, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    void session.videoChanged({ videoId: 'vid', offsetSeconds: 1 });
+    const settled = session.settled(hashA);
+    await isDone(settled);
+    void session.videoChanged({ videoId: 'vid', offsetSeconds: 2 });
+    release();
+    expect(await isDone(settled)).toBe(false);
+    release();
+    await settled;
+    expect((await library.find(hashA))?.video).toEqual({ videoId: 'vid', offsetSeconds: 2 });
+  });
+
+  it("doesn't wait for another song's writes", async () => {
+    const { session, gates } = gatedSetup();
+    await session.openTab(tabB, detailsB);
+    void session.videoChanged({ videoId: 'vid', offsetSeconds: 1 });
+    void session.positionChanged(2);
+    await session.openTab(tabA, detailsA);
+    expect(await isDone(session.settled(hashA))).toBe(true);
+    expect(gates).toHaveLength(2);
+    expect(await isDone(session.settled(hashB))).toBe(false);
+  });
+
+  it("waits for a write queued while the song's tab was still being saved", async () => {
+    const save = deferred<string | null>();
+    const { session, release } = gatedSetup(fakeFiles({ saveTab: () => save.promise }));
+    void session.openTab(tabA, detailsA);
+    void session.positionChanged(1);
+    const settled = session.settled(hashA);
+    expect(await isDone(settled)).toBe(false);
+    save.resolve(hashA);
+    expect(await isDone(settled)).toBe(false);
+    release();
+    expect(await isDone(settled)).toBe(true);
+  });
+
+  it('a failed write still settles', async () => {
+    const library = new SongLibrary(memoryBackend());
+    const fail = async () => {
+      throw new Error('disk full');
+    };
+    const failing = {
+      open: library.open.bind(library),
+      setRecording: fail,
+      clearRecording: fail,
+      setVideo: fail,
+      setSource: fail,
+      setTrackAndTuning: fail,
+      setPosition: fail,
+    };
+    const session = createLibrarySession({ library: failing, files: fakeFiles(), now: () => 1, onNote: () => undefined });
+    await session.openTab(tabA, detailsA);
+    void session.videoChanged(null);
+    void session.sourceChanged('video');
+    void session.recordingLoaded(recording());
+    void session.savePosition(hashA, 1);
+    await expect(session.positionChanged(1)).resolves.toBeUndefined();
+    await expect(session.settled(hashA)).resolves.toBeUndefined();
+  });
+
+  it("A→B→A: A's late video write lands before a find(A) issued after settled(A)", async () => {
+    const { library, session, release } = gatedSetup();
+    await session.openTab(tabA, detailsA);
+    void session.videoChanged({ videoId: 'late', offsetSeconds: 4 });
+    await session.openTab(tabB, detailsB);
+    const settledA = session.settled(hashA);
+    // The write lets go only after the reopen started waiting.
+    setTimeout(release, 5);
+    await settledA;
+    expect((await library.find(hashA))?.video).toEqual({ videoId: 'late', offsetSeconds: 4 });
+  });
+
+  it('on the web resolves at once', async () => {
+    const session = createLibrarySession(null);
+    await session.positionChanged(3);
+    await session.savePosition(hashA, 3);
+    expect(await isDone(session.settled(hashA))).toBe(true);
+  });
+});

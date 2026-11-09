@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SongLibrary, type LibraryBackend, type LibraryIndex, type OpenedTab, type RecordingRef } from '../../src/app/library';
+import { isLibraryEntry, SongLibrary, type LibraryBackend, type LibraryIndex, type OpenedTab, type RecordingRef } from '../../src/app/library';
 
 function memoryBackend(entries: unknown[] = [], quarantined = false): LibraryBackend & { data: LibraryIndex; writes: number } {
   const backend = {
@@ -187,6 +187,70 @@ describe('SongLibrary saving', () => {
     await library.open(tab(hashB), 1);
     await library.setVideo(hashB, { videoId: 'mine', offsetSeconds: 3 });
     expect((await library.open(tab(hashB), 2, { videoId: 'vid', offsetSeconds: 1 }))?.video).toEqual({ videoId: 'mine', offsetSeconds: 3 });
+  });
+});
+
+describe('the saved position (KTD2)', () => {
+  const stored = { tabHash: hashA, title: 'Riff', fileName: 'riff.gp', fingerprint: '1:x', openedAt: 1, recording: null, video: null, source: null, trackIndex: 0, tuningId: 'file' };
+
+  it('accepts an entry with no position or a non-negative whole-number position', () => {
+    expect(isLibraryEntry(stored)).toBe(true);
+    expect(isLibraryEntry({ ...stored, position: 0 })).toBe(true);
+    expect(isLibraryEntry({ ...stored, position: 3 })).toBe(true);
+  });
+
+  it('rejects a negative, fractional, non-numeric or null position', () => {
+    for (const position of [-1, 1.5, '3', null, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(isLibraryEntry({ ...stored, position })).toBe(false);
+    }
+  });
+
+  it('saves the position once, leaving the opened time alone, and the same index again writes nothing', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1000);
+    const before = backend.writes;
+    expect(await library.setPosition(hashA, 3)).toBe(true);
+    expect(backend.writes - before).toBe(1);
+    expect(await library.find(hashA)).toMatchObject({ position: 3, openedAt: 1000 });
+    expect(await library.setPosition(hashA, 3)).toBe(true);
+    expect(backend.writes - before).toBe(1);
+  });
+
+  it('refuses an invalid index without writing, keeping the saved one', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    await library.setPosition(hashA, 2);
+    const before = backend.writes;
+    expect(await library.setPosition(hashA, -1)).toBe(false);
+    expect(await library.setPosition(hashA, 1.5)).toBe(false);
+    expect(backend.writes).toBe(before);
+    expect((await library.find(hashA))?.position).toBe(2);
+  });
+
+  it('reports not saved for a song that is not in the library, or when the backend fails', async () => {
+    const backend = memoryBackend();
+    expect(await new SongLibrary(backend).setPosition(hashA, 1)).toBe(false);
+    expect(backend.writes).toBe(0);
+    await expect(new SongLibrary(failingBackend()).setPosition(hashA, 1)).resolves.toBe(false);
+  });
+
+  it('keeps the saved position when the same tab opens again', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setPosition(hashA, 7);
+    expect((await library.open(tab(hashA), 2))?.position).toBe(7);
+    expect((await library.find(hashA))?.position).toBe(7);
+  });
+
+  it('changes only the position, keeping backing and setup', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setRecording(hashA, recording(hashC));
+    await library.setTrackAndTuning(hashA, 2, 'drop-d');
+    await library.setPosition(hashA, 4);
+    expect(await library.find(hashA)).toMatchObject({ recording: recording(hashC), trackIndex: 2, tuningId: 'drop-d', position: 4 });
   });
 });
 

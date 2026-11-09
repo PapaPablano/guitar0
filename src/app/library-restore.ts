@@ -5,6 +5,7 @@
 
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline } from '../model/alphatab-adapter';
+import { playbackBarIndexAt } from '../model/bars';
 import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/file-tuning';
 import { FILE_TUNING, presetById } from '../model/retune';
 import type { Timeline } from '../model/score';
@@ -22,6 +23,8 @@ export const TAB_MISSING = "This song's tab couldn't be read from your library. 
 export type RestoreStep =
   /** Opens the tab on the saved track and file tuning (KTD7). */
   | { kind: 'tab'; trackIndex: number; tuningId: string }
+  /** Puts playback, paused, at the start of the saved bar, in tab seconds (R8, R9; KTD4). */
+  | { kind: 'seek'; tabSeconds: number }
   /** Makes the YouTube store say what the song says: its video at its offset, or none (KTD4). */
   | { kind: 'seed-video'; video: VideoRef | null }
   /** The audio last heard; held before the recording loads so its arrival does not take over from the video (AE2). */
@@ -47,6 +50,17 @@ export function restoreTuning(stored: string): string {
 /** The YouTube hook's source for the backing the song remembers: the video's own audio, or the app's side. */
 export function hookSourceFor(source: BackingSource): AudioSource {
   return source === 'video' ? 'original' : 'synth';
+}
+
+/** Where a reopened song starts, in tab seconds: the start of its saved played bar, or 0 when it has none or the bar is gone (R8, R9). */
+export function resumeSeconds(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline): number {
+  const bar = entry.position === undefined ? undefined : timeline.bars[entry.position];
+  return bar?.startSeconds ?? 0;
+}
+
+/** The position to save for a song at `tabSeconds`: its played bar (repeats expanded), or bar 1 at the end of the song (R7). */
+export function positionToSave(timeline: Timeline, tabSeconds: number, atEnd: boolean): number {
+  return atEnd ? 0 : playbackBarIndexAt(timeline, tabSeconds);
 }
 
 /**
@@ -77,7 +91,7 @@ export function seedVideoStore(store: YoutubeVideoStore, fingerprint: string, vi
 }
 
 /**
- * The steps that bring a song back: the tab, its video, the source last heard, then its recording, or the R13 note when the
+ * The steps that bring a song back: the tab, the seek to its saved bar, its video, the source last heard, then its recording, or the R13 note when the
  * stored recording could not be read (`recording` null for a song that has one).
  */
 export function planRestore(entry: LibraryEntry, timeline: Timeline, recording: File | null): RestoreStep[] {
@@ -89,6 +103,7 @@ export function planRestore(entry: LibraryEntry, timeline: Timeline, recording: 
       trackIndex: kept ? entry.trackIndex : firstPlayableTrack(timeline),
       tuningId: kept ? restoreTuning(entry.tuningId) : FILE_TUNING,
     },
+    { kind: 'seek', tabSeconds: resumeSeconds(entry, timeline) },
     { kind: 'seed-video', video: entry.video },
   ];
   if (entry.video && entry.source) steps.push({ kind: 'select-source', source: hookSourceFor(entry.source) });

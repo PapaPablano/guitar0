@@ -42,6 +42,11 @@ export interface LibraryEntry {
   trackIndex: number;
   /** A tuning preset id, or `FILE_TUNING` for the tuning written in the file. */
   tuningId: string;
+  /**
+   * The played bar (repeats expanded) the player was on, as a zero-based index, saved on leave, pause and window close.
+   * Absent on songs saved before positions existed, which open at bar 1 (KTD2).
+   */
+  position?: number;
 }
 
 /** The index as the shell stores it. Entries this version cannot read are kept as they are. */
@@ -105,7 +110,8 @@ export function isLibraryEntry(value: unknown): value is LibraryEntry {
     (e.source === null || e.source === 'recording' || e.source === 'video') &&
     Number.isInteger(e.trackIndex) &&
     e.trackIndex >= 0 &&
-    typeof e.tuningId === 'string'
+    typeof e.tuningId === 'string' &&
+    (e.position === undefined || (Number.isInteger(e.position) && e.position >= 0))
   );
 }
 
@@ -208,6 +214,11 @@ export class SongLibrary {
 
   setTrackAndTuning(tabHash: string, trackIndex: number, tuningId: string): Promise<boolean> {
     return this.change(tabHash, { trackIndex, tuningId });
+  }
+
+  /** Saves the played bar the player was on. The opened time is left alone, and the same index again writes nothing. */
+  setPosition(tabHash: string, index: number): Promise<boolean> {
+    return this.change(tabHash, { position: index });
   }
 
   /** Applies a change to a saved song. False when the song is not saved or the index cannot be read or written. */
