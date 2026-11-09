@@ -52,7 +52,7 @@ export const MAX_NOTICES = 3;
 
 /** The start screen's message when the library file couldn't be read and the shell set it aside (R10, KTD5). */
 export const SET_ASIDE_TEXT =
-  "Your song list couldn't be read, so it was set aside as library.json.bad in the app's data folder. New songs are saved to a new list.";
+  "Your song list couldn't be read, so it was set aside (as a library.json.bad file) in the app's data folder. New songs are saved to a new list.";
 
 /** Whether picking this row opens its song: the song already open stays as it is (R3). */
 export function opensOnPick(tabHash: string, currentTabHash: string | undefined): boolean {

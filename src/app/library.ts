@@ -192,8 +192,13 @@ export interface CommittedRemoval {
 
 /** The page's live view of other library work, read when the commit step runs, not when it is queued. */
 export interface RemovalContext {
-  /** Tab hashes of every pending removal, including the one committing. Its absence means it was cancelled (R6). */
+  /** Tab hashes of every pending removal, including the one committing; other pending songs still count as users. */
   pendingHashes: ReadonlySet<string>;
+  /**
+   * Whether this exact removal is still pending, read when the step runs. False once it was cancelled (R6), even when a
+   * new removal of the same song has been made since; that one commits on its own.
+   */
+  stillPending: () => boolean;
   /** Content hashes whose copy `store()` is writing right now; their files are never deleted (KTD3, R13). */
   storingHashes: ReadonlySet<string>;
   /**
@@ -320,7 +325,7 @@ export class SongLibrary {
    */
   commitRemoval(tabHash: string, context: RemovalContext): Promise<CommittedRemoval | null> {
     return this.serial(async () => {
-      if (!context.pendingHashes.has(tabHash)) return null;
+      if (!context.stillPending()) return null;
       const entries = await this.readEntries();
       const at = entries.findIndex((e) => isSong(e, tabHash));
       if (at < 0) return null;

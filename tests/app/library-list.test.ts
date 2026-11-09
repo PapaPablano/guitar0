@@ -593,10 +593,12 @@ describe('Undo notices (R2, KTD8)', () => {
 });
 
 describe('Set-aside message (R10)', () => {
-  it('names library.json.bad and can be dismissed', () => {
+  it('says the list was set aside as a library.json.bad file, without naming one exact file, and can be dismissed', () => {
     const out = renderToStaticMarkup(createElement(SetAsideMessage, { onDismiss: () => {} }));
-    expect(SET_ASIDE_TEXT).toContain('library.json.bad');
-    expect(out).toContain('library.json.bad');
+    // The shell may have saved it as library.json.bad-<n>, so the text names the kind of file, not the exact name.
+    expect(SET_ASIDE_TEXT).toContain('a library.json.bad file');
+    expect(SET_ASIDE_TEXT).not.toContain('set aside as library.json.bad');
+    expect(out).toContain('a library.json.bad file');
     expect(out).toMatch(/<button[^>]*>Dismiss<\/button>/);
   });
 

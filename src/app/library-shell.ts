@@ -47,6 +47,11 @@ export interface FileCheck {
 
 export interface StoreOptions {
   /**
+   * Told the copy of this hash has started, first thing, before the "already stored" check (KTD3), so a removal commit
+   * running meanwhile sees the file as being stored. A throw makes the copy skip that shortcut, as `forceCopy` does.
+   */
+  onStart?: (hash: string) => void;
+  /**
    * True for a hash whose existing copy must be replaced, such as one found damaged this session (KTD6): the copy skips
    * the "already stored" shortcut and goes through the shell's finish, which replaces a damaged target. Called with the
    * file's hash; a rejection counts as true.
@@ -114,8 +119,16 @@ async function mustCopy(options: StoreOptions, hash: string): Promise<boolean> {
  * and nothing points at it.
  */
 async function store(shell: LibraryShell, kind: LibraryKind, hash: string, extension: string, data: Blob, options: StoreOptions): Promise<boolean> {
+  // A copy that could not say it started is not covered against a delete, so it skips the "already stored" shortcut.
+  let started = true;
+  try {
+    options.onStart?.(hash);
+  } catch {
+    started = false;
+  }
   // A failed check is not a reason to skip the copy; the shell keeps one file per hash either way.
-  if (!(await mustCopy(options, hash)) && (await shell.exists(kind, hash, extension).catch(() => false))) return true;
+  const force = (await mustCopy(options, hash)) || !started;
+  if (!force && (await shell.exists(kind, hash, extension).catch(() => false))) return true;
   let id: number;
   try {
     id = await shell.begin(kind, hash, extension);

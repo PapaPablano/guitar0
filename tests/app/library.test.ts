@@ -405,7 +405,11 @@ describe('renaming (KTD1)', () => {
 });
 
 describe('committing a removal (KTD2, KTD3)', () => {
-  const pendingOf = (...hashes: string[]) => ({ pendingHashes: new Set(hashes), storingHashes: new Set<string>() });
+  /** The context for committing the first hash, with every hash pending; that removal counts as still pending while its hash is. */
+  const pendingOf = (...hashes: string[]) => {
+    const pendingHashes = new Set(hashes);
+    return { pendingHashes, stillPending: () => pendingHashes.has(hashes[0]), storingHashes: new Set<string>() };
+  };
 
   async function withSongs(...songs: [string, string | null][]) {
     const backend = memoryBackend();
@@ -453,7 +457,7 @@ describe('committing a removal (KTD2, KTD3)', () => {
 
   it('keeps a recording or tab whose copy is being stored right now (R13)', async () => {
     const { library } = await withSongs([hashA, hashC]);
-    expect(await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), storingHashes: new Set([hashC, hashA]) })).toMatchObject({
+    expect(await library.commitRemoval(hashA, { ...pendingOf(hashA), storingHashes: new Set([hashC, hashA]) })).toMatchObject({
       deleteTab: false,
       deleteRecording: false,
     });
@@ -463,9 +467,17 @@ describe('committing a removal (KTD2, KTD3)', () => {
     const { backend, library } = await withSongs([hashA, hashC]);
     const pendingHashes = new Set([hashA]);
     const before = backend.writes;
-    const committed = library.commitRemoval(hashA, { pendingHashes, storingHashes: new Set() });
+    const committed = library.commitRemoval(hashA, { pendingHashes, stillPending: () => pendingHashes.has(hashA), storingHashes: new Set() });
     pendingHashes.delete(hashA);
     expect(await committed).toBeNull();
+    expect(backend.writes).toBe(before);
+    expect(await library.find(hashA)).not.toBeNull();
+  });
+
+  it('commits nothing when this removal is no longer the pending one, even though its hash is pending again (R6)', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const before = backend.writes;
+    expect(await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), stillPending: () => false, storingHashes: new Set() })).toBeNull();
     expect(backend.writes).toBe(before);
     expect(await library.find(hashA)).not.toBeNull();
   });
@@ -497,7 +509,7 @@ describe('committing a removal (KTD2, KTD3)', () => {
   it('does not call beforeWrite for a cancelled removal', async () => {
     const { library } = await withSongs([hashA, hashC]);
     let called = false;
-    expect(await library.commitRemoval(hashA, { pendingHashes: new Set(), storingHashes: new Set(), beforeWrite: () => void (called = true) })).toBeNull();
+    expect(await library.commitRemoval(hashA, { pendingHashes: new Set(), stillPending: () => false, storingHashes: new Set(), beforeWrite: () => void (called = true) })).toBeNull();
     expect(called).toBe(false);
   });
 });

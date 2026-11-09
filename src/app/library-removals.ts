@@ -26,8 +26,12 @@ export interface RemovalTimers {
 }
 
 export interface RemovalsOptions {
-  /** Commits one removal; `pendingHashes` is the live set, read when the commit's library step runs. Should not reject. */
-  commit: (tabHash: string, pendingHashes: ReadonlySet<string>) => Promise<unknown>;
+  /**
+   * Commits one removal; `pendingHashes` is the live set, read when the commit's library step runs. `stillPending` says
+   * whether this very removal is still the pending one for its song, so a cancel followed by a fresh removal of the same
+   * song is not committed by the earlier one (R6). Should not reject.
+   */
+  commit: (tabHash: string, pendingHashes: ReadonlySet<string>, stillPending: () => boolean) => Promise<unknown>;
   /** Removes every pending entry from the index at once, deleting nothing, for the window close. */
   dropEntries: (pendingHashes: ReadonlySet<string>) => Promise<unknown>;
   delay?: number;
@@ -109,8 +113,10 @@ export function createRemovals(options: RemovalsOptions): Removals {
   function startCommit(item: Item): Promise<void> {
     if (item.committing) return item.committing;
     stopTimer(item);
+    // `items` keeps a committing item until its commit ends, so this identity check holds for the whole commit.
+    const stillPending = () => items.get(item.tabHash) === item && pending.has(item.tabHash);
     item.committing = Promise.resolve()
-      .then(() => commit(item.tabHash, pending))
+      .then(() => commit(item.tabHash, pending, stillPending))
       .then(
         () => undefined,
         () => undefined,
@@ -224,14 +230,15 @@ export function createDeleteGuard(): DeleteGuard {
 }
 
 /**
- * The store options for one library copy (KTD3): says the copy has started, so its hash joins the storing set before
- * the shell's exists check, then waits out any delete of the same file. A hash in `damaged` (the session's live set of
- * stored copies found damaged) always copies afresh, so the shell's finish replaces the damaged file (KTD6, R11).
+ * The store options for one library copy (KTD3): `onStart` says the copy has started, so its hash joins the storing set
+ * before the shell's exists check, and `forceCopy` waits out any delete of the same file. A hash in `damaged` (the
+ * session's live set of stored copies found damaged) always copies afresh, so the shell's finish replaces the damaged
+ * file (KTD6, R11).
  */
 export function guardedStore(deleting: DeleteGuard, storing: (hash: string) => void, damaged?: ReadonlySet<string>): StoreOptions {
   return {
+    onStart: storing,
     forceCopy(hash) {
-      storing(hash);
       const afterDelete = deleting.forceCopy(hash);
       return afterDelete === false && damaged?.has(hash) ? true : afterDelete;
     },
@@ -261,21 +268,26 @@ export interface CommitOutcome {
  * re-checks it is still pending, marks the files it will delete before writing the index, and deletes them. Null when
  * nothing was committed: the removal was cancelled, the song is gone, or the index could not be read or written.
  */
-export function createRemovalCommit(deps: RemovalCommitDeps): (tabHash: string, pendingHashes: ReadonlySet<string>) => Promise<CommitOutcome | null> {
-  return async (tabHash, pendingHashes) => {
+export function createRemovalCommit(
+  deps: RemovalCommitDeps,
+): (tabHash: string, pendingHashes: ReadonlySet<string>, stillPending: () => boolean) => Promise<CommitOutcome | null> {
+  return async (tabHash, pendingHashes, stillPending) => {
     try {
       await deps.settledAll();
     } catch {
       // the step's own checks still hold
     }
+    // Keyed by kind and hash, so a tab and a recording with the same bytes each end their own delete.
     const ends = new Map<string, () => void>();
+    const endKey = (kind: LibraryKind, hash: string) => `${kind}:${hash}`;
     try {
       const removal = await deps.commitRemoval(tabHash, {
         pendingHashes,
+        stillPending,
         storingHashes: deps.storingHashes,
         beforeWrite: ({ entry, deleteTab, deleteRecording }) => {
-          if (deleteTab) ends.set(entry.tabHash, deps.deleting.begin(entry.tabHash));
-          if (deleteRecording && entry.recording) ends.set(entry.recording.hash, deps.deleting.begin(entry.recording.hash));
+          if (deleteTab) ends.set(endKey('tab', entry.tabHash), deps.deleting.begin(entry.tabHash));
+          if (deleteRecording && entry.recording) ends.set(endKey('recording', entry.recording.hash), deps.deleting.begin(entry.recording.hash));
         },
       });
       if (!removal) return null;
@@ -286,8 +298,8 @@ export function createRemovalCommit(deps: RemovalCommitDeps): (tabHash: string, 
         } catch {
           return 'failed';
         } finally {
-          ends.get(hash)?.();
-          ends.delete(hash);
+          ends.get(endKey(kind, hash))?.();
+          ends.delete(endKey(kind, hash));
         }
       };
       const { entry, deleteTab, deleteRecording } = removal;

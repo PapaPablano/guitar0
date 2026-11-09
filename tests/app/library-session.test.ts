@@ -661,7 +661,7 @@ describe('a removed song (R5)', () => {
     const loaded = session.recordingLoaded(recording());
     // Removing the open song leaves it first; then its removal commits.
     session.closeSong();
-    await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), storingHashes: new Set() });
+    await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), stillPending: () => true, storingHashes: new Set() });
     copy.resolve(refFor(recHash));
     await loaded;
     expect(notes).not.toContain(RECORDING_NOT_SAVED);

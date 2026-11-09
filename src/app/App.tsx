@@ -903,7 +903,7 @@ export function App() {
   /** Leaves the open song for a file the player opened or dropped; a file that fails to open leaves the song parked (KTD1). */
   async function onFile(file: File) {
     try {
-      const { bytes, tabHash, score, timeline } = await leaveThenOpen(
+      const { bytes, tabHash: openedHash, score, timeline } = await leaveThenOpen(
         () => {
           // After the park, which clears a stale reopen's loading notice.
           parkSong();
@@ -914,15 +914,15 @@ export function App() {
           const read = new Uint8Array(await file.arrayBuffer());
           const parsed = openTabBytes(read);
           // The song's library identity, so a pending removal of this tab can be cancelled before it is saved (R6).
-          const hash = removals ? await hashBytes(read).catch(() => null) : null;
-          if (hash) openedTabHashes.current.set(read, hash);
-          return { bytes: read, tabHash: hash, ...parsed };
+          const readHash = removals ? await hashBytes(read).catch(() => null) : null;
+          if (readHash) openedTabHashes.current.set(read, readHash);
+          return { bytes: read, tabHash: readHash, ...parsed };
         },
         releaseSong,
       );
       startSession(score, timeline);
       // Loading the file of a song whose removal is pending keeps the song, with its setup (R6, AE3).
-      if (tabHash) removals?.cancel(tabHash);
+      if (openedHash) removals?.cancel(openedHash);
       // Saved in the background on the desktop; it never rejects, so it cannot get in the way of opening (R1, R12). A new song
       // starts with the video the YouTube store already has for the tab, so its first reopen does not detach it.
       const fingerprint = tabFingerprint(barSpansOf(timeline));

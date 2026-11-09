@@ -162,7 +162,7 @@ describe('createRemovals', () => {
     await vi.advanceTimersByTimeAsync(REMOVAL_UNDO_MS - 1);
     expect(commit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(commit).toHaveBeenCalledWith(hashA, removals.pendingHashes());
+    expect(commit).toHaveBeenCalledWith(hashA, removals.pendingHashes(), expect.any(Function));
     await flush();
     expect(removals.pendingHashes().size).toBe(0);
     expect(removals.items()).toEqual([]);
@@ -352,6 +352,50 @@ describe('removal commits against the library', () => {
     expect(files.deletes).toEqual([]);
   });
 
+  it('a cancel then a fresh removal of the same song is not committed by the first, stale commit (R6)', async () => {
+    vi.useFakeTimers();
+    const saves = deferred();
+    let held = true;
+    const { backend, files, removals, commitSpy } = await world([entry(hashA)], {
+      settledAll: () => (held ? saves.promise : Promise.resolve()),
+    });
+    removals.remove(entry(hashA));
+    await vi.advanceTimersByTimeAsync(REMOVAL_UNDO_MS);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    expect(removals.cancel(hashA)).toBe(true);
+    expect(removals.remove(entry(hashA))).toBe(true);
+    held = false;
+    saves.resolve();
+    await flush();
+    expect(await commitSpy.mock.results[0].value).toBeNull();
+    expect(backend.writes).toBe(0);
+    expect(tabHashes(backend)).toEqual([hashA]);
+    expect(files.deletes).toEqual([]);
+    // The second removal is still pending, with its notice and its own timer.
+    expect(removals.pendingHashes().has(hashA)).toBe(true);
+    expect(removals.items().map((i) => i.tabHash)).toEqual([hashA]);
+    await vi.advanceTimersByTimeAsync(REMOVAL_UNDO_MS - 1);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await flush();
+    expect(commitSpy).toHaveBeenCalledTimes(2);
+    expect(await commitSpy.mock.results[1].value).not.toBeNull();
+    expect(tabHashes(backend)).toEqual([]);
+    expect(files.deletes).toEqual([`tab/${hashA}.bin`]);
+    expect(removals.pendingHashes().size).toBe(0);
+  });
+
+  it('a tab and a recording with the same hash each end their own delete, so later copies are not held (KTD3)', async () => {
+    const { files, deleting, commit } = await world([entry(hashA, { recording: rec(hashA) })]);
+    const outcome = await commit(hashA, new Set([hashA]), () => true);
+    expect(outcome?.tab).toBe('deleted');
+    expect(outcome?.recording).toBe('deleted');
+    expect(files.has('tab', hashA, 'bin')).toBe(false);
+    expect(files.has('recording', hashA, 'mp3')).toBe(false);
+    await flush();
+    expect(deleting.forceCopy(hashA)).toBe(false);
+  });
+
   it('waits for every in-flight save before its serial step (KTD3)', async () => {
     const { session, commit, backend, files } = await world([entry(hashA)]);
     let release!: () => void;
@@ -359,7 +403,7 @@ describe('removal commits against the library', () => {
     // A save for another song that has not landed yet.
     void session.openTab(new Uint8Array([9]), { title: 'X', fileName: 'x.gp', fingerprint: 'fp' });
     let committed = false;
-    const done = commit(hashA, new Set([hashA])).then(() => void (committed = true));
+    const done = commit(hashA, new Set([hashA]), () => true).then(() => void (committed = true));
     await flush();
     expect(committed).toBe(false);
     expect(backend.writes).toBe(0);
@@ -374,7 +418,7 @@ describe('removal commits against the library', () => {
     const { files, commit } = await world([entry(hashA, { recording: rec(r) })]);
     // A write to the same file is open in the shell (one the page's storing set does not cover).
     const id = await files.shell.begin('recording', r, 'mp3');
-    const outcome = await commit(hashA, new Set([hashA]));
+    const outcome = await commit(hashA, new Set([hashA]), () => true);
     expect(outcome?.recording).toBe('in-use');
     expect(outcome?.tab).toBe('deleted');
     expect(files.has('recording', r, 'mp3')).toBe(true);
@@ -391,7 +435,7 @@ describe('removal commits against the library', () => {
     void session.recordingLoaded(file);
     await flush();
     expect(session.storingHashes.has(r)).toBe(true);
-    const outcome = await commit(hashA, new Set([hashA]));
+    const outcome = await commit(hashA, new Set([hashA]), () => true);
     expect(outcome?.recording).toBe('kept');
     expect(outcome?.tab).toBe('deleted');
     expect(files.has('recording', r, 'mp3')).toBe(true);
@@ -407,7 +451,7 @@ describe('removal commits against the library', () => {
     // B is open (its tab is already stored, so its save takes the exists shortcut).
     await session.openTab(new Uint8Array([2]), { title: 'B', fileName: 'b.gp', fingerprint: 'fp-b' });
     // The commit has passed its wait for saves; B starts copying R and stops in the exists check.
-    const committed = commit(hashA, new Set([hashA]));
+    const committed = commit(hashA, new Set([hashA]), () => true);
     let release!: () => void;
     files.gates.exists = new Promise<void>((resolve) => (release = resolve));
     files.gates.existsCalled = deferred();
@@ -433,7 +477,7 @@ describe('removal commits against the library', () => {
     await session.openTab(bBytes, { title: 'B', fileName: 'b.gp', fingerprint: 'fp-b' });
     let release!: () => void;
     files.gates.delete = new Promise<void>((resolve) => (release = resolve));
-    const committed = commit(hashA, new Set([hashA]));
+    const committed = commit(hashA, new Set([hashA]), () => true);
     await flush();
     // The commit has decided to delete R and is waiting on the shell; B now loads the same recording.
     const loaded = session.recordingLoaded(file);
@@ -464,8 +508,29 @@ describe('guardedStore with the damaged set (KTD6, R11)', () => {
     const options = guardedStore(createDeleteGuard(), storing, damaged);
     expect(await options.forceCopy?.(hashA)).toBe(true);
     expect(await options.forceCopy?.(hashB)).toBe(false);
+  });
+
+  it('says the copy started through onStart, and forceCopy has no side effect', async () => {
+    const storing = vi.fn();
+    const options = guardedStore(createDeleteGuard(), storing, new Set([hashA]));
+    await options.forceCopy?.(hashA);
+    await options.forceCopy?.(hashB);
+    expect(storing).not.toHaveBeenCalled();
+    options.onStart?.(hashA);
     expect(storing).toHaveBeenCalledWith(hashA);
-    expect(storing).toHaveBeenCalledWith(hashB);
+  });
+
+  it('registers the copy as storing before the shell’s exists check (KTD3)', async () => {
+    const files = memoryShell();
+    const order: string[] = [];
+    const exists = files.shell.exists.bind(files.shell);
+    files.shell.exists = async (kind, hash, extension) => {
+      order.push(`exists ${hash}`);
+      return exists(kind, hash, extension);
+    };
+    const bytes = new Uint8Array([4, 5]);
+    const hash = await saveTab(files.shell, bytes, guardedStore(createDeleteGuard(), (h) => void order.push(`storing ${h}`)));
+    expect(order).toEqual([`storing ${hash}`, `exists ${hash}`]);
   });
 
   it('reads the set live, so a hash marked damaged after the options were made still forces a copy', async () => {

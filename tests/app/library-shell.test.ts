@@ -250,6 +250,28 @@ describe('replacing a damaged copy (KTD6)', () => {
     expect(fake.calls).toContain('finish');
   });
 
+  it('calls onStart with the hash before the exists check (KTD3)', async () => {
+    const fake = fakeShell();
+    const bytes = bytesOf(50, 2);
+    const hash = await saveTab(fake.shell, bytes);
+    fake.calls.length = 0;
+    expect(await saveTab(fake.shell, bytes, { onStart: (h) => void fake.calls.push(`start ${h}`) })).toBe(hash);
+    expect(fake.calls).toEqual([`start ${hash}`, 'exists']);
+  });
+
+  it('copies afresh when onStart throws, since the copy is not covered against a delete', async () => {
+    const fake = fakeShell();
+    const bytes = bytesOf(50, 2);
+    await saveTab(fake.shell, bytes);
+    fake.calls.length = 0;
+    const onStart = () => {
+      throw new Error('boom');
+    };
+    expect(await saveTab(fake.shell, bytes, { onStart })).not.toBeNull();
+    expect(fake.calls).not.toContain('exists');
+    expect(fake.calls).toContain('finish');
+  });
+
   it('copies when the damaged check itself fails', async () => {
     const fake = fakeShell();
     const bytes = bytesOf(50, 2);
