@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLibraryEntry, SongLibrary, type LibraryBackend, type LibraryIndex, type OpenedTab, type RecordingRef } from '../../src/app/library';
+import { displayTitle, isLibraryEntry, SongLibrary, type LibraryBackend, type LibraryIndex, type OpenedTab, type RecordingRef } from '../../src/app/library';
 
 function memoryBackend(entries: unknown[] = [], quarantined = false): LibraryBackend & { data: LibraryIndex; writes: number } {
   const backend = {
@@ -335,5 +335,177 @@ describe('SongLibrary failure handling (R12)', () => {
     expect(await library.open(tab(hashA), 1)).toBeNull();
     fail = false;
     expect(await library.open(tab(hashA), 2)).not.toBeNull();
+  });
+});
+
+describe('renaming (KTD1)', () => {
+  const stored = { tabHash: hashA, title: 'Riff', fileName: 'riff.gp', fingerprint: '1:x', openedAt: 1, recording: null, video: null, source: null, trackIndex: 0, tuningId: 'file' };
+
+  it('accepts an entry with a one-line custom title of up to 120 characters, and rejects anything else', () => {
+    expect(isLibraryEntry({ ...stored, customTitle: 'Warmup' })).toBe(true);
+    expect(isLibraryEntry({ ...stored, customTitle: 'x'.repeat(120) })).toBe(true);
+    for (const customTitle of ['', '   ', 'x'.repeat(121), 'two\nlines', 'cr\rhere', 7, null]) {
+      expect(isLibraryEntry({ ...stored, customTitle })).toBe(false);
+    }
+  });
+
+  it('shows the custom title over the tab title', () => {
+    expect(displayTitle({ title: 'Riff', fileName: 'riff.gp', customTitle: 'Warmup' })).toBe('Warmup');
+    expect(displayTitle({ title: 'Riff', fileName: 'riff.gp' })).toBe('Riff');
+  });
+
+  it('covers AE1: a rename survives reopening with a new tab title, and the tab title still refreshes underneath', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA, 'Riff'), 1);
+    expect(await library.rename(hashA, 'Warmup')).toBe(true);
+    const again = await library.open(tab(hashA, 'Riff v2', 'riff-copy.gp'), 2);
+    expect(again).toMatchObject({ title: 'Riff v2', customTitle: 'Warmup' });
+    expect((await library.list())[0].title).toBe('Warmup');
+  });
+
+  it('an empty rename removes the custom title, so the tab title shows again', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA, 'Riff'), 1);
+    await library.rename(hashA, 'Warmup');
+    expect(await library.rename(hashA, '  \n ')).toBe(true);
+    expect(backend.data.entries[0]).not.toHaveProperty('customTitle');
+    expect((await library.list())[0].title).toBe('Riff');
+  });
+
+  it('trims, keeps to one line and caps at 120 characters without splitting a character', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.rename(hashA, '  Warm\r\n  up  ');
+    expect((await library.find(hashA))?.customTitle).toBe('Warm up');
+    await library.rename(hashA, `  ${'y'.repeat(130)}`);
+    expect((await library.find(hashA))?.customTitle).toBe('y'.repeat(120));
+    await library.rename(hashA, `${'z'.repeat(119)}\u{1F3B8}`);
+    expect((await library.find(hashA))?.customTitle).toBe('z'.repeat(119));
+  });
+
+  it('allows duplicate names, which then show their file names', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA, 'One', 'one.gp'), 1);
+    await library.open(tab(hashB, 'Two', 'two.gp'), 2);
+    await library.rename(hashA, 'Same');
+    await library.rename(hashB, 'Same');
+    expect((await library.list()).map((s) => [s.title, s.showFileName])).toEqual([
+      ['Same', true],
+      ['Same', true],
+    ]);
+  });
+
+  it('reports not saved for a song that is not in the library, or when the backend fails', async () => {
+    const backend = memoryBackend();
+    expect(await new SongLibrary(backend).rename(hashA, 'x')).toBe(false);
+    expect(backend.writes).toBe(0);
+    await expect(new SongLibrary(failingBackend()).rename(hashA, 'x')).resolves.toBe(false);
+  });
+});
+
+describe('committing a removal (KTD2, KTD3)', () => {
+  const pendingOf = (...hashes: string[]) => ({ pendingHashes: new Set(hashes), storingHashes: new Set<string>() });
+
+  async function withSongs(...songs: [string, string | null][]) {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    for (const [tabHash, rec] of songs) {
+      await library.open(tab(tabHash), 1);
+      if (rec) await library.setRecording(tabHash, recording(rec));
+    }
+    return { backend, library };
+  }
+
+  it('removes the entry and asks for the tab and its unshared recording to be deleted, returning the entry', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const result = await library.commitRemoval(hashA, pendingOf(hashA));
+    expect(result).toEqual({ entry: expect.objectContaining({ tabHash: hashA, recording: recording(hashC) }), deleteTab: true, deleteRecording: true });
+    expect(backend.data.entries).toHaveLength(0);
+  });
+
+  it('covers AE2: with a shared recording, the first commit keeps it and the second deletes it', async () => {
+    const { library } = await withSongs([hashA, hashC], [hashB, hashC]);
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toMatchObject({ deleteTab: true, deleteRecording: false });
+    expect(await library.commitRemoval(hashB, pendingOf(hashB))).toMatchObject({ deleteTab: true, deleteRecording: true });
+    expect(await library.list()).toEqual([]);
+  });
+
+  it('a song whose own removal is pending still counts as a user of the recording', async () => {
+    const { library } = await withSongs([hashA, hashC], [hashB, hashC]);
+    expect(await library.commitRemoval(hashA, pendingOf(hashA, hashB))).toMatchObject({ deleteRecording: false });
+  });
+
+  it('a song with no recording deletes only its tab', async () => {
+    const { library } = await withSongs([hashA, null]);
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toMatchObject({ deleteTab: true, deleteRecording: false });
+  });
+
+  it('an unreadable entry naming the hash under any field keeps the recording', async () => {
+    const odd = { tabHash: 'zz', future: { backing: [{ sha: hashC }] } };
+    const backend = memoryBackend([odd]);
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    await library.setRecording(hashA, recording(hashC));
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toMatchObject({ deleteTab: true, deleteRecording: false });
+    expect(backend.data.entries).toEqual([odd]);
+  });
+
+  it('keeps a recording or tab whose copy is being stored right now (R13)', async () => {
+    const { library } = await withSongs([hashA, hashC]);
+    expect(await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), storingHashes: new Set([hashC, hashA]) })).toMatchObject({
+      deleteTab: false,
+      deleteRecording: false,
+    });
+  });
+
+  it('reads the pending set when the step runs, so a cancel that arrived first wins and nothing changes (R6)', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const pendingHashes = new Set([hashA]);
+    const before = backend.writes;
+    const committed = library.commitRemoval(hashA, { pendingHashes, storingHashes: new Set() });
+    pendingHashes.delete(hashA);
+    expect(await committed).toBeNull();
+    expect(backend.writes).toBe(before);
+    expect(await library.find(hashA)).not.toBeNull();
+  });
+
+  it('gives null and changes nothing for a song not in the library, or when the index cannot be read or written', async () => {
+    const backend = memoryBackend();
+    expect(await new SongLibrary(backend).commitRemoval(hashA, pendingOf(hashA))).toBeNull();
+    expect(backend.writes).toBe(0);
+    expect(await new SongLibrary(failingBackend()).commitRemoval(hashA, pendingOf(hashA))).toBeNull();
+    const { backend: full, library } = await withSongs([hashA, hashC]);
+    full.write = async () => {
+      throw new Error('disk full');
+    };
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toBeNull();
+    expect(full.data.entries).toHaveLength(1);
+  });
+});
+
+describe('the quarantine flag (KTD5)', () => {
+  it('latches a one-shot quarantined read for the rest of the session', async () => {
+    let quarantined = true;
+    const library = new SongLibrary({
+      read: async () => {
+        const answer = { index: { version: 1, entries: [] } as LibraryIndex, quarantined };
+        quarantined = false;
+        return answer;
+      },
+      write: async () => undefined,
+    });
+    expect(library.quarantined).toBe(false);
+    await library.list();
+    expect(library.quarantined).toBe(true);
+    await library.list();
+    await library.open(tab(hashA), 1);
+    expect(library.quarantined).toBe(true);
+  });
+
+  it('stays false when no read was quarantined', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.list();
+    expect(library.quarantined).toBe(false);
   });
 });

@@ -1087,13 +1087,21 @@ export function App() {
       // song's entry is read again after its pending saves land, so a quick A→B→A sees them (KTD3).
       const prep = await prepareReopen(entry, {
         park: () => parkSong(true),
-        readTab: (tabHash) => readTab(libraryShell, tabHash),
+        // Missing and damaged both open as before for now; the damaged marks come with the row badges.
+        readTab: async (tabHash) => {
+          const read = await readTab(libraryShell, tabHash);
+          return read.kind === 'ok' ? read.value : null;
+        },
         parse: openTabBytes,
         release: releaseSong,
         settled: (tabHash) => librarySession.settled(tabHash),
         find: (tabHash) => library.find(tabHash),
         // A recording that can't be read opens the tab with the R13 note, as a missing one does.
-        readRecording: (ref) => readRecording(libraryShell, ref).catch(() => null),
+        readRecording: (ref) =>
+          readRecording(libraryShell, ref).then(
+            (read) => (read.kind === 'ok' ? read.value : null),
+            () => null,
+          ),
         isCurrent,
       });
       if (prep.kind === 'stale') return false;

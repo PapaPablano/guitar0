@@ -47,6 +47,8 @@ export interface LibraryEntry {
    * Absent on songs saved before positions existed, which open at bar 1 (KTD2).
    */
   position?: number;
+  /** The player's own name for the song (KTD1), shown instead of `title`. Absent until renamed; one line, trimmed, at most 120 characters. */
+  customTitle?: string;
 }
 
 /** The index as the shell stores it. Entries this version cannot read are kept as they are. */
@@ -64,7 +66,7 @@ export interface LibraryBackend {
 /** What the start screen shows for one song. */
 export interface LibraryListing {
   entry: LibraryEntry;
-  /** The title to show: the entry's title, or its file name when the title is empty. */
+  /** The title to show: the custom title, else the entry's title, or its file name when the title is empty. */
   title: string;
   /** True when another song has the same title, so the file name is shown too. */
   showFileName: boolean;
@@ -111,11 +113,37 @@ export function isLibraryEntry(value: unknown): value is LibraryEntry {
     Number.isInteger(e.trackIndex) &&
     e.trackIndex >= 0 &&
     typeof e.tuningId === 'string' &&
-    (e.position === undefined || (Number.isInteger(e.position) && e.position >= 0))
+    (e.position === undefined || (Number.isInteger(e.position) && e.position >= 0)) &&
+    (e.customTitle === undefined || isCustomTitle(e.customTitle))
   );
 }
 
-export function displayTitle(entry: Pick<LibraryEntry, 'title' | 'fileName'>): string {
+/** The longest custom title, in UTF-16 code units. */
+export const TITLE_MAX = 120;
+
+const LINE_BREAK = /[\r\n]/;
+
+function isCustomTitle(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= TITLE_MAX && !LINE_BREAK.test(value);
+}
+
+/**
+ * A typed name as a custom title: line breaks and the spaces around them become one space, the ends are trimmed, and it
+ * is cut to `TITLE_MAX` without splitting a character. Empty means "no custom title".
+ */
+export function cleanTitle(input: string): string {
+  let title = input.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  if (title.length > TITLE_MAX) {
+    title = title.slice(0, TITLE_MAX);
+    const last = title.charCodeAt(title.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) title = title.slice(0, -1);
+    title = title.trimEnd();
+  }
+  return title;
+}
+
+export function displayTitle(entry: Pick<LibraryEntry, 'title' | 'fileName' | 'customTitle'>): string {
+  if (entry.customTitle !== undefined && entry.customTitle.trim() !== '') return entry.customTitle;
   return entry.title.trim() === '' ? entry.fileName : entry.title;
 }
 
@@ -152,11 +180,50 @@ function entriesOf(index: unknown): unknown[] {
   return Array.isArray(entries) ? entries : [];
 }
 
+/** What the caller must know when a removal commits (KTD2): which of the removed song's files to delete. */
+export interface CommittedRemoval {
+  /** The entry as it was in the index when it was removed. */
+  entry: LibraryEntry;
+  /** Delete the stored tab. False while a copy of it is being stored, or another stored entry still names it. */
+  deleteTab: boolean;
+  /** Delete the stored recording. False when there is none, or anything else still uses it or is storing it. */
+  deleteRecording: boolean;
+}
+
+/** The page's live view of other library work, read when the commit step runs, not when it is queued. */
+export interface RemovalContext {
+  /** Tab hashes of every pending removal, including the one committing. Its absence means it was cancelled (R6). */
+  pendingHashes: ReadonlySet<string>;
+  /** Content hashes whose copy `store()` is writing right now; their files are never deleted (KTD3, R13). */
+  storingHashes: ReadonlySet<string>;
+}
+
+/** Whether any of these stored entries, readable or not, mentions the hash anywhere in its JSON. */
+function namedBy(entries: readonly unknown[], hash: string): boolean {
+  return entries.some((e) => {
+    try {
+      return JSON.stringify(e)?.includes(hash) ?? false;
+    } catch {
+      // An entry that cannot be serialized cannot be checked, so it counts as naming the file.
+      return true;
+    }
+  });
+}
+
 /** The song library over a backend. Changes run one at a time, so two quick changes never overwrite each other. */
 export class SongLibrary {
   private queue: Promise<unknown> = Promise.resolve();
+  private quarantinedSeen = false;
 
   constructor(private readonly backend: LibraryBackend) {}
+
+  /**
+   * Whether any read this session found the index unreadable and had the shell set it aside (KTD5). The shell reports it
+   * only once, so it is kept here for the start-screen message.
+   */
+  get quarantined(): boolean {
+    return this.quarantinedSeen;
+  }
 
   /** Saved songs for the start screen; empty when the index cannot be read. */
   async list(): Promise<LibraryListing[]> {
@@ -221,6 +288,54 @@ export class SongLibrary {
     return this.change(tabHash, { position: index });
   }
 
+  /**
+   * Sets the player's name for the song (KTD1, R1), cleaned by `cleanTitle`. An empty name removes it, so the tab's own
+   * title shows again. False when the song is not saved or the index cannot be read or written.
+   */
+  rename(tabHash: string, title: string): Promise<boolean> {
+    const customTitle = cleanTitle(title);
+    return this.serial(async () => {
+      const entries = await this.readEntries();
+      const at = entries.findIndex((e) => isSong(e, tabHash));
+      if (at < 0) return false;
+      const stored = entries[at] as LibraryEntry;
+      if ((stored.customTitle ?? '') === customTitle) return true;
+      const next: LibraryEntry = { ...stored };
+      if (customTitle === '') delete next.customTitle;
+      else next.customTitle = customTitle;
+      entries[at] = next;
+      await this.backend.write({ version: 1, entries });
+      return true;
+    }, false);
+  }
+
+  /**
+   * Commits a pending removal as one step (KTD2, KTD3): checks it is still pending, removes the entry from a fresh read
+   * of the index, writes the index, and says which files to delete. The tab is deleted unless a copy is being stored or
+   * another stored entry still names it. The recording is deleted only when no remaining entry, readable or not, names
+   * its hash anywhere and no copy of it is being stored. Other pending removals count, since their entries stay in the
+   * index until they commit. Null, with nothing changed, when the removal was
+   * cancelled, the song is not saved, or the index cannot be read or written; then nothing may be deleted.
+   */
+  commitRemoval(tabHash: string, context: RemovalContext): Promise<CommittedRemoval | null> {
+    return this.serial(async () => {
+      if (!context.pendingHashes.has(tabHash)) return null;
+      const entries = await this.readEntries();
+      const at = entries.findIndex((e) => isSong(e, tabHash));
+      if (at < 0) return null;
+      const entry = entries[at] as LibraryEntry;
+      const remaining = entries.filter((_, i) => i !== at);
+      const recordingHash = entry.recording?.hash;
+      const deleteRecording =
+        recordingHash !== undefined &&
+        !context.storingHashes.has(recordingHash) &&
+        !namedBy(remaining, recordingHash);
+      const deleteTab = !context.storingHashes.has(tabHash) && !namedBy(remaining, tabHash);
+      await this.backend.write({ version: 1, entries: remaining });
+      return { entry, deleteTab, deleteRecording };
+    }, null);
+  }
+
   /** Applies a change to a saved song. False when the song is not saved or the index cannot be read or written. */
   private change(tabHash: string, patch: Partial<LibraryEntry>): Promise<boolean> {
     return this.serial(async () => {
@@ -240,6 +355,7 @@ export class SongLibrary {
   /** The stored entries as they are, readable or not, so a write keeps what this version cannot read. */
   private async readEntries(): Promise<unknown[]> {
     const read = await this.backend.read();
+    if (read?.quarantined === true) this.quarantinedSeen = true;
     return [...entriesOf(read?.index)];
   }
 

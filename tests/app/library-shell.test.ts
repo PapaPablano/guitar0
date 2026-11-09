@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  checkFiles,
+  deleteFile,
   desktopLibraryShell,
   hashBytes,
   readRecording,
@@ -60,6 +62,11 @@ function fakeShell(options: { failAppendAt?: number; failFinish?: boolean; chunk
     async exists(kind, hash, extension) {
       calls.push('exists');
       return stored.has(key(kind, hash, extension));
+    },
+    async delete(kind, hash, extension) {
+      calls.push('delete');
+      stored.delete(key(kind, hash, extension));
+      return true;
     },
   };
   return { shell, stored, calls, appended, key };
@@ -177,8 +184,9 @@ describe('reading back', () => {
     const bytes = bytesOf(7 * MB + 5);
     const ref = await saveRecording(fake.shell, new File([bytes as BlobPart], 'Song.m4a', { type: 'audio/mp4' }));
     fake.calls.length = 0;
-    const file = await readRecording(fake.shell, ref!);
-    expect(file).not.toBeNull();
+    const read = await readRecording(fake.shell, ref!);
+    expect(read.kind).toBe('ok');
+    const file = read.kind === 'ok' ? read.value : null;
     expect(file!.name).toBe('Song.m4a');
     expect(file!.type).toBe('audio/mp4');
     expect(sameBytes(new Uint8Array(await file!.arrayBuffer()), bytes)).toBe(true);
@@ -186,24 +194,143 @@ describe('reading back', () => {
     expect(fake.calls.filter((c) => c === 'read').length).toBeGreaterThanOrEqual(3);
   });
 
-  it('reads a missing recording as null', async () => {
+  it('reads a missing recording as missing', async () => {
     const fake = fakeShell();
-    expect(await readRecording(fake.shell, { hash: 'a'.repeat(64), name: 'x.mp3', type: 'audio/mpeg', extension: 'mp3' })).toBeNull();
+    expect(await readRecording(fake.shell, { hash: 'a'.repeat(64), name: 'x.mp3', type: 'audio/mpeg', extension: 'mp3' })).toEqual({ kind: 'missing' });
   });
 
-  it('reads a recording whose bytes no longer match its hash as null', async () => {
+  it('reads a recording whose bytes no longer match its hash as damaged (KTD7)', async () => {
     const fake = fakeShell();
     const ref = await saveRecording(fake.shell, new File([bytesOf(100) as BlobPart], 'x.mp3'));
     fake.stored.set(fake.key('recording', ref!.hash, 'mp3'), bytesOf(100, 9));
-    expect(await readRecording(fake.shell, ref!)).toBeNull();
+    expect(await readRecording(fake.shell, ref!)).toEqual({ kind: 'damaged' });
   });
 
-  it('reads a stored tab back as its bytes, or null when missing', async () => {
+  it('reads a stored tab back as its bytes, missing when absent and damaged when its bytes changed', async () => {
     const fake = fakeShell();
     const bytes = bytesOf(2000, 3);
     const hash = await saveTab(fake.shell, bytes);
-    expect(await readTab(fake.shell, hash!)).toEqual(bytes);
-    expect(await readTab(fake.shell, 'b'.repeat(64))).toBeNull();
+    expect(await readTab(fake.shell, hash!)).toEqual({ kind: 'ok', value: bytes });
+    expect(await readTab(fake.shell, 'b'.repeat(64))).toEqual({ kind: 'missing' });
+    fake.stored.set(fake.key('tab', hash!, 'bin'), bytesOf(2000, 4));
+    expect(await readTab(fake.shell, hash!)).toEqual({ kind: 'damaged' });
+  });
+});
+
+describe('replacing a damaged copy (KTD6)', () => {
+  it('copies again, skipping the exists shortcut, when told the stored copy is damaged', async () => {
+    const fake = fakeShell();
+    const bytes = bytesOf(100);
+    const ref = await saveRecording(fake.shell, new File([bytes as BlobPart], 'x.mp3'));
+    fake.stored.set(fake.key('recording', ref!.hash, 'mp3'), bytesOf(100, 9));
+    fake.calls.length = 0;
+    const seen: string[] = [];
+    const again = await saveRecording(fake.shell, new File([bytes as BlobPart], 'x.mp3'), {
+      forceCopy: (hash) => {
+        seen.push(hash);
+        return true;
+      },
+    });
+    expect(again).toEqual(ref);
+    expect(seen).toEqual([ref!.hash]);
+    expect(fake.calls).toEqual(['begin recording mp3', 'append', 'finish']);
+    expect(sameBytes(fake.stored.get(fake.key('recording', ref!.hash, 'mp3')), bytes)).toBe(true);
+  });
+
+  it('waits for an async answer and still uses the shortcut when the copy is not damaged', async () => {
+    const fake = fakeShell();
+    const bytes = bytesOf(50, 2);
+    const hash = await saveTab(fake.shell, bytes);
+    fake.calls.length = 0;
+    expect(await saveTab(fake.shell, bytes, { forceCopy: async () => false })).toBe(hash);
+    expect(fake.calls).toEqual(['exists']);
+    expect(await saveTab(fake.shell, bytes, { forceCopy: async () => true })).toBe(hash);
+    expect(fake.calls).toContain('finish');
+  });
+
+  it('copies when the damaged check itself fails', async () => {
+    const fake = fakeShell();
+    const bytes = bytesOf(50, 2);
+    await saveTab(fake.shell, bytes);
+    fake.calls.length = 0;
+    const forceCopy = () => {
+      throw new Error('boom');
+    };
+    expect(await saveTab(fake.shell, bytes, { forceCopy })).not.toBeNull();
+    expect(fake.calls).toContain('finish');
+  });
+});
+
+describe('deleteFile (KTD3)', () => {
+  it('deletes a stored file, and counts an already missing one as deleted', async () => {
+    const fake = fakeShell();
+    const hash = await saveTab(fake.shell, bytesOf(10));
+    expect(await deleteFile(fake.shell, 'tab', hash!, 'bin')).toBe('deleted');
+    expect(fake.stored.size).toBe(0);
+    expect(await deleteFile(fake.shell, 'tab', hash!, 'bin')).toBe('deleted');
+  });
+
+  it('reports in-use when the shell refuses because a write to the file is open (R13)', async () => {
+    const fake = fakeShell();
+    fake.shell.delete = async () => false;
+    expect(await deleteFile(fake.shell, 'recording', 'a'.repeat(64), 'mp3')).toBe('in-use');
+  });
+
+  it('reports failed instead of throwing when the shell rejects', async () => {
+    const fake = fakeShell();
+    fake.shell.delete = async () => {
+      throw new Error('access denied');
+    };
+    expect(await deleteFile(fake.shell, 'recording', 'a'.repeat(64), 'mp3')).toBe('failed');
+  });
+});
+
+describe('checkFiles (KTD7)', () => {
+  const tabHash = 'a'.repeat(64);
+  const rec = { hash: 'b'.repeat(64), name: 'x.mp3', type: 'audio/mpeg', extension: 'mp3' };
+
+  function shellWith(files: ('tab' | 'recording')[]) {
+    const fake = fakeShell();
+    if (files.includes('tab')) fake.stored.set(fake.key('tab', tabHash, 'bin'), bytesOf(1));
+    if (files.includes('recording')) fake.stored.set(fake.key('recording', rec.hash, 'mp3'), bytesOf(1));
+    return fake;
+  }
+
+  it('reports both present, tab missing, recording missing, or both missing', async () => {
+    expect(await checkFiles(shellWith(['tab', 'recording']).shell, { tabHash, recording: rec })).toEqual({ tab: 'ok', recording: 'ok' });
+    expect(await checkFiles(shellWith(['recording']).shell, { tabHash, recording: rec })).toEqual({ tab: 'missing', recording: 'ok' });
+    expect(await checkFiles(shellWith(['tab']).shell, { tabHash, recording: rec })).toEqual({ tab: 'ok', recording: 'missing' });
+    expect(await checkFiles(shellWith([]).shell, { tabHash, recording: rec })).toEqual({ tab: 'missing', recording: 'missing' });
+  });
+
+  it('reports no recording as null and checks only the tab', async () => {
+    const fake = shellWith(['tab']);
+    expect(await checkFiles(fake.shell, { tabHash, recording: null })).toEqual({ tab: 'ok', recording: null });
+    expect(fake.calls).toEqual(['exists']);
+  });
+
+  it('asks about the tab and the recording at the same time', async () => {
+    const fake = shellWith(['tab', 'recording']);
+    let inFlight = 0;
+    let most = 0;
+    const exists = fake.shell.exists;
+    fake.shell.exists = async (...args) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return exists(...args);
+    };
+    await checkFiles(fake.shell, { tabHash, recording: rec });
+    expect(most).toBe(2);
+  });
+
+  it('reads a failed check as present, so a locked folder does not mark songs missing', async () => {
+    const fake = shellWith([]);
+    fake.shell.exists = async () => {
+      throw new Error('locked');
+    };
+    expect(await checkFiles(fake.shell, { tabHash, recording: rec })).toEqual({ tab: 'ok', recording: 'ok' });
   });
 });
 
@@ -218,6 +345,7 @@ describe('desktop wiring', () => {
       if (command === 'library_write_finish') return true;
       if (command === 'library_read') return new Uint8Array([1, 2]).buffer;
       if (command === 'library_exists') return false;
+      if (command === 'library_delete') return true;
       return null;
     });
     const shell = desktopLibraryShell({ __TAURI__: { core: { invoke } } })!;
@@ -229,6 +357,7 @@ describe('desktop wiring', () => {
     await shell.cancel(9);
     expect(await shell.read('tab', hash, 'bin', 0, 10)).toEqual(new Uint8Array([1, 2]));
     expect(await shell.exists('tab', hash, 'bin')).toBe(false);
+    expect(await shell.delete('recording', hash, 'mp3')).toBe(true);
     expect(invoke.mock.calls).toEqual([
       ['library_write_begin', { kind: 'recording', hash, extension: 'mp3' }],
       ['library_write_append', bytes, { headers: { 'x-save-id': '9' } }],
@@ -236,6 +365,7 @@ describe('desktop wiring', () => {
       ['library_write_cancel', { id: 9 }],
       ['library_read', { kind: 'tab', hash, extension: 'bin', offset: 0, len: 10 }],
       ['library_exists', { kind: 'tab', hash, extension: 'bin' }],
+      ['library_delete', { kind: 'recording', hash, extension: 'mp3' }],
     ]);
   });
 
