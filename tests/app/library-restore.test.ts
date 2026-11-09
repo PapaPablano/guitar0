@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LibraryEntry, RecordingRef } from '../../src/app/library';
+import { SongLibrary, type LibraryEntry, type LibraryIndex, type RecordingRef } from '../../src/app/library';
 import {
   createStemsAutoStart,
   planRestore,
@@ -8,6 +8,7 @@ import {
   restoreTuning,
   runRestore,
   seedVideoStore,
+  storedVideo,
   tabWithTuning,
   type RestoreStep,
 } from '../../src/app/library-restore';
@@ -90,6 +91,17 @@ describe('planRestore', () => {
     const steps = planRestore(entryWith({ trackIndex: 7, tuningId: 'no-such-tuning' }), twoTracks, null);
     expect(steps[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: FILE_TUNING });
   });
+
+  it('keeps the saved tuning on the saved track', () => {
+    const steps = planRestore(entryWith({ trackIndex: 0, tuningId: 'half-down' }), twoTracks, null);
+    expect(steps[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: 'half-down' });
+  });
+
+  it('opens a fallback track in its file tuning, not the tuning saved for the old track', () => {
+    // Out of range, and a track with no notes: both fall back to track 0.
+    expect(planRestore(entryWith({ trackIndex: 7, tuningId: 'half-down' }), twoTracks, null)[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: FILE_TUNING });
+    expect(planRestore(entryWith({ trackIndex: 1, tuningId: 'half-down' }), twoTracks, null)[0]).toEqual({ kind: 'tab', trackIndex: 0, tuningId: FILE_TUNING });
+  });
 });
 
 function memoryStorage(): KeyValueStorage {
@@ -121,6 +133,36 @@ describe('seedVideoStore', () => {
     seedVideoStore(store, '4:aa', { videoId: 'two', offsetSeconds: -0.5 });
     expect(store.videoFor('4:aa')).toBe('two');
     expect(store.offsetFor('4:aa')).toBe(-0.5);
+  });
+});
+
+describe('storedVideo', () => {
+  it('reads the video and offset the store has for a tab', () => {
+    const store = new YoutubeVideoStore(memoryStorage());
+    expect(storedVideo(store, '4:aa')).toBeNull();
+    store.attach('4:aa', 'vid');
+    expect(storedVideo(store, '4:aa')).toEqual({ videoId: 'vid', offsetSeconds: 0 });
+    store.saveOffset('4:aa', 1.5);
+    expect(storedVideo(store, '4:aa')).toEqual({ videoId: 'vid', offsetSeconds: 1.5 });
+    store.detach('4:aa');
+    expect(storedVideo(store, '4:aa')).toBeNull();
+  });
+
+  it('a video attached before the library existed stays attached when the new song is first reopened', async () => {
+    const store = new YoutubeVideoStore(memoryStorage());
+    store.attach('4:aa', 'vid');
+    store.saveOffset('4:aa', 2.5);
+    let data: LibraryIndex = { version: 1, entries: [] };
+    const library = new SongLibrary({
+      read: async () => ({ index: data, quarantined: false }),
+      write: async (index) => void (data = index),
+    });
+    await library.open({ tabHash: 'a'.repeat(64), title: 'Song', fileName: 'song.gp', fingerprint: '4:aa' }, 1, storedVideo(store, '4:aa'));
+    const entry = (await library.find('a'.repeat(64)))!;
+    const seed = planRestore(entry, twoTracks, null).find((s) => s.kind === 'seed-video')!;
+    seedVideoStore(store, '4:aa', seed.kind === 'seed-video' ? seed.video : null);
+    expect(store.videoFor('4:aa')).toBe('vid');
+    expect(store.offsetFor('4:aa')).toBe(2.5);
   });
 });
 

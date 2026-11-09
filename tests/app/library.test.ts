@@ -172,6 +172,22 @@ describe('SongLibrary saving', () => {
     expect(await library.open(tab(hashA), 1)).not.toBeNull();
     expect(backend.data.entries).toHaveLength(1);
   });
+
+  it("starts a new song with the YouTube store's video and offset for the tab", async () => {
+    const library = new SongLibrary(memoryBackend());
+    const entry = await library.open(tab(hashA), 1, { videoId: 'vid', offsetSeconds: 1.75 });
+    expect(entry?.video).toEqual({ videoId: 'vid', offsetSeconds: 1.75 });
+    expect((await library.find(hashA))?.video).toEqual({ videoId: 'vid', offsetSeconds: 1.75 });
+  });
+
+  it('keeps an existing song\'s own video, or lack of one, over the store\'s (KTD4)', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    expect((await library.open(tab(hashA), 2, { videoId: 'vid', offsetSeconds: 1 }))?.video).toBeNull();
+    await library.open(tab(hashB), 1);
+    await library.setVideo(hashB, { videoId: 'mine', offsetSeconds: 3 });
+    expect((await library.open(tab(hashB), 2, { videoId: 'vid', offsetSeconds: 1 }))?.video).toEqual({ videoId: 'mine', offsetSeconds: 3 });
+  });
 });
 
 describe('SongLibrary listing', () => {

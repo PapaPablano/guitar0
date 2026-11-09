@@ -220,14 +220,24 @@ fn stem_index_write(index: HashMap<String, String>) -> Result<(), String> {
     write_atomic(&index_path()?, serde_json::to_string(&index).map_err(|e| e.to_string())?)
 }
 
-/// Writes through a temporary file and a rename, so a crash never leaves a half-written file.
+/// Makes each write_atomic temp name unique within this process.
+static WRITE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Writes through a temporary file and a rename, so a crash never leaves a half-written file. The temp file sits beside
+/// the target with a name unique to this call (`<file>.<pid>-<n>.tmp`), so two writes to the same file at once (a page
+/// save and an off-thread restore) never share one, and it is removed if the write fails.
 fn write_atomic(path: &std::path::Path, text: String) -> Result<(), String> {
-    let tmp = path.with_extension("json.tmp");
+    let file_name = path.file_name().ok_or_else(|| "no file name to write".to_string())?.to_string_lossy();
+    let n = WRITE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!("{file_name}.{}-{n}.tmp", std::process::id()));
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    let written = fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, path));
+    written.map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 /// Per-recording profiles live in their own file so a profile problem can never touch the saved-stems index.
@@ -334,11 +344,34 @@ fn library_exists(kind: String, hash: String, extension: String) -> Result<bool,
     library::exists(&library_dir()?, &kind, &hash, &extension)
 }
 
+/// Removes the temp files `write_atomic` leaves when the app is closed between a write and its rename. Only names of
+/// the shape `<name>.json.<pid>-<n>.tmp` are touched, so nothing else in the folder is ever deleted.
+fn sweep_atomic_temps(dir: &std::path::Path) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(stem) = name.strip_suffix(".tmp") else { continue };
+        let Some((_, counter)) = stem.rsplit_once(".json.") else { continue };
+        let Some((pid, n)) = counter.split_once('-') else { continue };
+        let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        if numeric(pid) && numeric(n) && path.is_file() && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 fn main() {
     let state: State = Arc::new(Shared::default());
     // A copy the app was closed in the middle of leaves only a temp file; remove it before the page can start another.
     if let Ok(dir) = library_dir() {
         library::sweep_temp(&dir);
+    }
+    if let Ok(layout) = engine::Layout::locate() {
+        sweep_atomic_temps(&layout.data);
+        sweep_atomic_temps(&layout.data.join("alignments"));
     }
     set(&state, "starting", None, Some("Starting".to_string()));
 
@@ -390,5 +423,80 @@ mod tests {
         let pro = gate(ready(), true);
         assert_eq!(pro.url.as_deref(), Some("http://127.0.0.1:1"));
         assert_eq!(pro.secret.as_deref(), Some("s"));
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tabhighway-main-test-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn leftovers(dir: &std::path::Path) -> Vec<String> {
+        fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".tmp")).collect()
+    }
+
+    #[test]
+    fn concurrent_atomic_writes_to_one_file_never_share_a_temp_file_and_leave_none_behind() {
+        let dir = scratch("atomic-concurrent");
+        let path = dir.join("library.json");
+        let texts: Vec<String> = (0..16).map(|i| format!("{{\"writer\":{i},\"pad\":\"{}\"}}", "x".repeat(64 * 1024))).collect();
+        std::thread::scope(|scope| {
+            for text in &texts {
+                let path = path.clone();
+                scope.spawn(move || {
+                    for _ in 0..8 {
+                        // On Windows a rename can lose to another writer's rename; the file must still never be torn.
+                        let _ = write_atomic(&path, text.clone());
+                    }
+                });
+            }
+        });
+        let result = fs::read_to_string(&path).unwrap();
+        assert!(texts.contains(&result), "the file holds one whole write, never a mix");
+        assert!(leftovers(&dir).is_empty(), "no temp file is left behind");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_atomic_write_removes_its_temp_file() {
+        let dir = scratch("atomic-fail");
+        // A directory where the file should go: the rename into place fails.
+        let path = dir.join("stem-index.json");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("keep"), "x").unwrap();
+        assert!(write_atomic(&path, "{}".to_string()).is_err());
+        assert!(leftovers(&dir).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_atomic_write_temp_name_is_one_the_library_sweep_removes() {
+        let dir = scratch("atomic-sweep");
+        write_atomic(&dir.join("library.json"), "{}".to_string()).unwrap();
+        let n = WRITE_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        // What a crash between write and rename would leave: the same shape of name.
+        fs::write(dir.join(format!("library.json.{}-{n}.tmp", std::process::id())), "half").unwrap();
+        assert_eq!(library::sweep_temp(&dir), 1);
+        assert_eq!(fs::read_to_string(dir.join("library.json")).unwrap(), "{}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_startup_sweep_removes_only_atomic_write_leftovers() {
+        let dir = scratch("atomic-root-sweep");
+        fs::write(dir.join("recording-profiles.json"), "{}").unwrap();
+        fs::write(dir.join("recording-profiles.json.123-4.tmp"), "half").unwrap();
+        fs::write(dir.join("stem-index.json.9-0.tmp"), "half").unwrap();
+        // Not ours: kept.
+        fs::write(dir.join("model.tmp"), "x").unwrap();
+        fs::write(dir.join("notes.json.tmp"), "x").unwrap();
+        fs::write(dir.join("a.json.x-1.tmp"), "x").unwrap();
+        assert_eq!(sweep_atomic_temps(&dir), 2);
+        let mut left: Vec<String> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["a.json.x-1.tmp", "model.tmp", "notes.json.tmp", "recording-profiles.json"]);
+        assert_eq!(sweep_atomic_temps(&dir.join("missing")), 0);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -29,10 +29,14 @@ export type RestoreStep =
   | { kind: 'load-recording'; file: File }
   | { kind: 'note'; text: string };
 
+/** Whether the tab still has the saved track, with notes. */
+function keepsTrack(stored: number, timeline: Timeline): boolean {
+  return !!timeline.tracks[stored] && timeline.notesForTrack(stored).length > 0;
+}
+
 /** The saved track when the tab still has it with notes, otherwise the track a new tab opens on. */
 export function restoreTrack(stored: number, timeline: Timeline): number {
-  const track = timeline.tracks[stored];
-  return track && timeline.notesForTrack(stored).length > 0 ? stored : firstPlayableTrack(timeline);
+  return keepsTrack(stored, timeline) ? stored : firstPlayableTrack(timeline);
 }
 
 /** The saved file tuning when this version knows it, otherwise the tuning written in the file. */
@@ -56,6 +60,12 @@ export function tabWithTuning(score: AlphaModel.Score, trackIndex: number, tunin
   return { timeline: buildTimeline(score), written };
 }
 
+/** The video and offset the YouTube store has for a tab, or null when none is attached; a missing offset reads as 0. */
+export function storedVideo(store: YoutubeVideoStore, fingerprint: string): VideoRef | null {
+  const videoId = store.videoFor(fingerprint);
+  return videoId ? { videoId, offsetSeconds: store.offsetFor(fingerprint) ?? 0 } : null;
+}
+
 /** Points the store at the song's video and offset, or detaches whatever another song left under the same fingerprint. */
 export function seedVideoStore(store: YoutubeVideoStore, fingerprint: string, video: VideoRef | null): void {
   if (!video) {
@@ -71,8 +81,14 @@ export function seedVideoStore(store: YoutubeVideoStore, fingerprint: string, vi
  * stored recording could not be read (`recording` null for a song that has one).
  */
 export function planRestore(entry: LibraryEntry, timeline: Timeline, recording: File | null): RestoreStep[] {
+  // The saved tuning was chosen for the saved track, so a fallback track opens in the tuning its file wrote.
+  const kept = keepsTrack(entry.trackIndex, timeline);
   const steps: RestoreStep[] = [
-    { kind: 'tab', trackIndex: restoreTrack(entry.trackIndex, timeline), tuningId: restoreTuning(entry.tuningId) },
+    {
+      kind: 'tab',
+      trackIndex: kept ? entry.trackIndex : firstPlayableTrack(timeline),
+      tuningId: kept ? restoreTuning(entry.tuningId) : FILE_TUNING,
+    },
     { kind: 'seed-video', video: entry.video },
   ];
   if (entry.video && entry.source) steps.push({ kind: 'select-source', source: hookSourceFor(entry.source) });

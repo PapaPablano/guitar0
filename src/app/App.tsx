@@ -56,7 +56,7 @@ import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
 import { SongLibrary, displayTitle, type LibraryEntry, type LibraryListing } from './library';
 import { desktopLibraryShell, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
-import { createStemsAutoStart, planRestore, runRestore, seedVideoStore, TAB_MISSING, tabWithTuning } from './library-restore';
+import { createStemsAutoStart, planRestore, runRestore, seedVideoStore, storedVideo, TAB_MISSING, tabWithTuning } from './library-restore';
 import { shellStemIndex } from '../stems/saved-stems';
 import { audioContext } from '../stems/load-stems';
 import { backingSourceFor, createLibrarySession, entryTuningId, libraryRecordingHashes } from './library-session';
@@ -684,8 +684,10 @@ export function App() {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { score, timeline } = openTabBytes(bytes);
       startSession(score, timeline);
-      // Saved in the background on the desktop; it never rejects, so it cannot get in the way of opening (R1, R12).
-      void librarySession.openTab(bytes, { title: timeline.title, fileName: file.name, fingerprint: tabFingerprint(barSpansOf(timeline)) });
+      // Saved in the background on the desktop; it never rejects, so it cannot get in the way of opening (R1, R12). A new song
+      // starts with the video the YouTube store already has for the tab, so its first reopen does not detach it.
+      const fingerprint = tabFingerprint(barSpansOf(timeline));
+      void librarySession.openTab(bytes, { title: timeline.title, fileName: file.name, fingerprint }, storedVideo(videoStore, fingerprint));
     } catch (e) {
       // keep the previous session; just report the problem
       setError(e instanceof Error && e.message ? e.message : 'Could not open that file.');

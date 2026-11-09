@@ -29,8 +29,11 @@ export interface LibraryDeps {
 }
 
 export interface LibrarySession {
-  /** Saves the opened tab as the current song. Its tab hash once saved, or null when it was not. */
-  openTab(bytes: Uint8Array, details: Omit<OpenedTab, 'tabHash'>): Promise<string | null>;
+  /**
+   * Saves the opened tab as the current song. `initialVideo` is the video the YouTube store already has for the tab; it
+   * becomes the song's video only when the song is new. Its tab hash once saved, or null when it was not.
+   */
+  openTab(bytes: Uint8Array, details: Omit<OpenedTab, 'tabHash'>, initialVideo?: VideoRef | null): Promise<string | null>;
   /** No song is open now (the sample, or back to the start screen); later changes save nothing. */
   closeSong(): void;
   /** Copies a recording that is now playing into the library and makes it the song's recording (R3, R14). */
@@ -41,8 +44,6 @@ export interface LibrarySession {
   videoChanged(video: VideoRef | null): Promise<void>;
   sourceChanged(source: BackingSource): Promise<void>;
   trackAndTuningChanged(trackIndex: number, tuningId: string): Promise<void>;
-  /** The open song's tab hash once saved, or null when no saved song is open. */
-  currentTabHash(): Promise<string | null>;
 }
 
 /** Which backing the song remembers for the YouTube hook's source: Original is the video's own audio. */
@@ -79,7 +80,6 @@ const webSession: LibrarySession = {
   videoChanged: () => DONE,
   sourceChanged: () => DONE,
   trackAndTuningChanged: () => DONE,
-  currentTabHash: () => NOTHING,
 };
 
 /** Writes the latest value given, one write at a time: values given while a write runs collapse into the last one. */
@@ -115,12 +115,12 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
   }
 
   return {
-    openTab(bytes, details) {
+    openTab(bytes, details, initialVideo = null) {
       const hash = (async () => {
         try {
           const tabHash = await files.saveTab(bytes);
           if (!tabHash) return null;
-          return (await library.open({ tabHash, ...details }, now())) ? tabHash : null;
+          return (await library.open({ tabHash, ...details }, now(), initialVideo)) ? tabHash : null;
         } catch {
           return null;
         }
@@ -175,10 +175,6 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
 
     trackAndTuningChanged(trackIndex, tuningId) {
       return withSong((hash) => library.setTrackAndTuning(hash, trackIndex, tuningId));
-    },
-
-    currentTabHash() {
-      return current?.hash ?? NOTHING;
     },
   };
 }

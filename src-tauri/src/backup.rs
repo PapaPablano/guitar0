@@ -7,8 +7,9 @@
 // anything under a real name, and keeps the file it replaces as `.bak`, so a bad or hostile archive can never write
 // outside the data folder or leave half a restore behind. Library tabs and recordings are binary and can be large: they
 // are streamed into the zip uncompressed, streamed back out to a temp file, and put in place only when their bytes match
-// the hash in their name. The library index is merged by tab hash rather than replaced, so a song saved only on this
-// machine survives a restore.
+// the hash in their name. The library index is merged by tab hash rather than replaced, and the recording profiles and
+// saved-stems index by recording hash, so a song saved only on this machine survives a restore with its offset, mix and
+// stems.
 
 use std::fs;
 use std::io::{self, BufWriter, Read, Write};
@@ -217,11 +218,7 @@ fn stage(entry: &mut impl Read, temp: &Path, hash: &str) -> Result<bool, String>
 /// the restore, so it is never overwritten unread.
 fn merge_index(backup_text: &str, local_path: &Path) -> Result<String, String> {
     let backup = library::parse_index(backup_text).ok_or_else(|| "the backup's library index is not readable".to_string())?;
-    let local = match fs::read(local_path) {
-        Ok(bytes) => std::str::from_utf8(&bytes).ok().and_then(library::parse_index),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(format!("could not read this computer's library index: {e}")),
-    };
+    let local = read_local(local_path, "library index")?.as_deref().and_then(library::parse_index);
     let mut entries: Vec<Value> = backup["entries"].as_array().cloned().unwrap_or_default();
     let in_backup: std::collections::HashSet<String> = entries.iter().filter_map(tab_hash).collect();
     if let Some(local) = local {
@@ -237,6 +234,56 @@ fn merge_index(backup_text: &str, local_path: &Path) -> Result<String, String> {
 
 fn tab_hash(entry: &Value) -> Option<String> {
     entry.get("tabHash").and_then(Value::as_str).map(str::to_string)
+}
+
+/// This machine's copy of a file a restore merges into. None when it is missing or not text (it then adds nothing);
+/// Err for any other read error, which stops the restore so the file is never overwritten unread.
+fn read_local(path: &Path, what: &str) -> Result<Option<String>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(String::from_utf8(bytes).ok()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read this computer's {what}: {e}")),
+    }
+}
+
+/// The recording profiles to write: the backup's entries, then the entries only this machine has, matched by their
+/// `hash`; for a recording in both, the backup's entry wins. Local-only entries go last, as the newest, so the page's
+/// oldest-first trim drops them last. A local file that is missing or unreadable adds nothing, and when nothing is
+/// added the backup's text is written as it is.
+fn merge_profiles(backup_text: &str, local_path: &Path) -> Result<String, String> {
+    let mut backup: Value = serde_json::from_str(backup_text).map_err(|_| "the backup's recording profiles are not readable".to_string())?;
+    crate::profiles::serialize_profiles(&backup).ok_or_else(|| "the backup's recording profiles are not readable".to_string())?;
+    let Some(local_text) = read_local(local_path, "recording profiles")? else { return Ok(backup_text.to_string()) };
+    let local = crate::profiles::parse_profiles(&local_text);
+    let entries = backup["entries"].as_array_mut().ok_or_else(|| "the backup's recording profiles are not readable".to_string())?;
+    let in_backup: std::collections::HashSet<String> = entries.iter().filter_map(profile_hash).collect();
+    let local_only: Vec<Value> = local["entries"].as_array().into_iter().flatten().filter(|entry| profile_hash(entry).is_some_and(|hash| !in_backup.contains(&hash))).cloned().collect();
+    if local_only.is_empty() {
+        return Ok(backup_text.to_string());
+    }
+    entries.extend(local_only);
+    crate::profiles::serialize_profiles(&backup).ok_or_else(|| "could not merge the recording profiles".to_string())
+}
+
+fn profile_hash(entry: &Value) -> Option<String> {
+    entry.get("hash").and_then(Value::as_str).map(str::to_string)
+}
+
+/// The saved-stems index to write: recording hash to stem job. The backup's mapping wins for a recording in both, and a
+/// mapping only this machine has is kept. A local index that is missing or unreadable adds nothing, and when nothing is
+/// added the backup's text is written as it is.
+fn merge_stem_index(backup_text: &str, local_path: &Path) -> Result<String, String> {
+    let mut backup: std::collections::BTreeMap<String, String> = serde_json::from_str(backup_text).map_err(|_| "the backup's saved-stems index is not readable".to_string())?;
+    let Some(local_text) = read_local(local_path, "saved-stems index")? else { return Ok(backup_text.to_string()) };
+    let local: std::collections::BTreeMap<String, String> = serde_json::from_str(&local_text).unwrap_or_default();
+    let before = backup.len();
+    for (recording, job) in local {
+        backup.entry(recording).or_insert(job);
+    }
+    if backup.len() == before {
+        return Ok(backup_text.to_string());
+    }
+    serde_json::to_string(&backup).map_err(|_| "could not merge the saved-stems index".to_string())
 }
 
 /// Restores from `archive` into `data`. Everything is read and checked before the first write under a real name; an
@@ -300,10 +347,17 @@ pub fn restore_backup(data: &Path, archive: &Path) -> Result<Summary, String> {
             checked.push(item);
         }
     }
-    // The library index is merged with this machine's, not replaced. Worked out before any write, so a local index
-    // that cannot be read stops the restore with nothing changed.
-    for item in checked.iter_mut().filter(|item| item.name == LIBRARY_INDEX) {
-        item.text = merge_index(&item.text, &data.join(LIBRARY_INDEX))?;
+    // The library index, the recording profiles and the saved-stems index are merged with this machine's, not
+    // replaced, so a song kept because only this machine has it keeps its offset, mix and stems. Worked out before any
+    // write, so a local file that cannot be read stops the restore with nothing changed.
+    for item in checked.iter_mut() {
+        let local = data.join(&item.name);
+        item.text = match item.name.as_str() {
+            LIBRARY_INDEX => merge_index(&item.text, &local)?,
+            PROFILES => merge_profiles(&item.text, &local)?,
+            STEM_INDEX => merge_stem_index(&item.text, &local)?,
+            _ => continue,
+        };
     }
 
     // Tabs and recordings go in place before the index that names them. A file already here under the same hash has the
@@ -783,6 +837,80 @@ mod tests {
         restore_backup(&data, &out).unwrap();
         assert_eq!(entries_by_tab(&lib.join("library.json")), vec![(tab_hash, "Song".to_string())]);
         assert_eq!(fs::read_to_string(lib.join("library.json.bak")).unwrap(), "{corrupt");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn profiles_file(entries: &[(&str, f64)]) -> String {
+        let entries: Vec<Value> = entries.iter().map(|(hash, offset)| serde_json::json!({ "hash": hash, "profile": { "version": 1, "offset": offset } })).collect();
+        serde_json::json!({ "version": 1, "entries": entries }).to_string()
+    }
+
+    fn offsets_by_hash(path: &Path) -> Vec<(String, f64)> {
+        let file: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(file["version"], 1);
+        let mut out: Vec<(String, f64)> = file["entries"].as_array().unwrap().iter().map(|e| (e["hash"].as_str().unwrap().to_string(), e["profile"]["offset"].as_f64().unwrap())).collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    #[test]
+    fn a_restore_keeps_the_profile_and_stems_of_a_song_only_on_this_machine_and_the_backup_wins_for_a_shared_one() {
+        let root = scratch("profiles-merge");
+        let data = root.join("data");
+        let (shared_tab, _, _, _) = fill_library(&data, 10);
+        fs::write(data.join(PROFILES), profiles_file(&[("shared", 0.5), ("backup-only", 1.0)])).unwrap();
+        fs::write(data.join(STEM_INDEX), r#"{"shared":"job-backup","backup-only":"job-b"}"#).unwrap();
+        let out = root.join("backup.zip");
+        create_backup(&data, &out).unwrap();
+
+        // Later on this machine: a song saved with its own recording, offset and stems, and the shared one changed.
+        let local_tab = "c".repeat(64);
+        fs::write(data.join(LIBRARY_INDEX), library_index(&[(&shared_tab, "Song"), (&local_tab, "Only here")])).unwrap();
+        let local_profiles = profiles_file(&[("shared", 9.0), ("local-only", 2.5)]);
+        fs::write(data.join(PROFILES), &local_profiles).unwrap();
+        fs::write(data.join(STEM_INDEX), r#"{"shared":"job-local","local-only":"job-l"}"#).unwrap();
+
+        restore_backup(&data, &out).unwrap();
+        assert_eq!(
+            offsets_by_hash(&data.join(PROFILES)),
+            vec![("backup-only".to_string(), 1.0), ("local-only".to_string(), 2.5), ("shared".to_string(), 0.5)],
+            "the local-only profile survives beside the backup's, and the backup's wins for the shared recording"
+        );
+        let stems: std::collections::HashMap<String, String> = serde_json::from_str(&fs::read_to_string(data.join(STEM_INDEX)).unwrap()).unwrap();
+        assert_eq!(stems.len(), 3);
+        assert_eq!(stems["shared"], "job-backup", "the backup's stems link wins");
+        assert_eq!(stems["backup-only"], "job-b");
+        assert_eq!(stems["local-only"], "job-l", "the local-only stems link survives");
+        assert!(entries_by_tab(&data.join(LIBRARY_INDEX)).iter().any(|(tab, _)| *tab == local_tab), "the local-only song is kept too");
+        assert_eq!(fs::read_to_string(data.join("recording-profiles.json.bak")).unwrap(), local_profiles, "the replaced file is still kept as .bak");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_restore_over_unreadable_local_profiles_and_stem_index_writes_the_backup_files_and_keeps_the_old_ones_as_bak() {
+        let root = scratch("profiles-merge-corrupt");
+        let data = root.join("data");
+        fill(&data);
+        let out = root.join("backup.zip");
+        create_backup(&data, &out).unwrap();
+        fs::write(data.join(PROFILES), "{corrupt").unwrap();
+        fs::write(data.join(STEM_INDEX), [0xffu8, 0xfe, 0x00]).unwrap();
+        restore_backup(&data, &out).unwrap();
+        assert_eq!(fs::read_to_string(data.join(PROFILES)).unwrap(), profile_text());
+        assert_eq!(fs::read_to_string(data.join(STEM_INDEX)).unwrap(), r#"{"abc":"job1"}"#);
+        assert_eq!(fs::read_to_string(data.join("recording-profiles.json.bak")).unwrap(), "{corrupt");
+        assert_eq!(fs::read(data.join("stem-index.json.bak")).unwrap(), vec![0xffu8, 0xfe, 0x00]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_local_profiles_file_that_cannot_be_read_stops_the_merge() {
+        // A directory where the file should be: reading it is an I/O error that is not "missing".
+        let root = scratch("profiles-merge-io");
+        let local = root.join(PROFILES);
+        fs::create_dir_all(&local).unwrap();
+        assert!(merge_profiles(&profile_text(), &local).unwrap_err().contains("could not read"));
+        assert!(merge_stem_index(r#"{"abc":"job1"}"#, &local).unwrap_err().contains("could not read"));
         let _ = fs::remove_dir_all(&root);
     }
 

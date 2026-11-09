@@ -164,19 +164,22 @@ export class SongLibrary {
 
   /**
    * Saves the opened tab as a song, or updates the existing song for the same bytes: its title, file name, fingerprint
-   * and opened time change, and its backing and setup are kept. Returns the saved entry, or null when not saved.
+   * and opened time change, and its backing and setup are kept. `initialVideo` (the video the YouTube store already has
+   * for the tab) becomes a new song's video; an existing song keeps its own, since the entry is the authority (KTD4).
+   * Returns the saved entry, or null when not saved.
    */
-  async open(tab: OpenedTab, now: number): Promise<LibraryEntry | null> {
+  async open(tab: OpenedTab, now: number, initialVideo: VideoRef | null = null): Promise<LibraryEntry | null> {
     if (!isContentHash(tab.tabHash)) return null;
     const title = displayTitle(tab);
     const details = { title, fileName: tab.fileName, fingerprint: tab.fingerprint, openedAt: now };
+    const video = isVideoRef(initialVideo) ? { videoId: initialVideo.videoId, offsetSeconds: initialVideo.offsetSeconds } : null;
     return this.serial(async () => {
       const entries = await this.readEntries();
       const at = entries.findIndex((e) => isSong(e, tab.tabHash));
       const saved: LibraryEntry =
         at >= 0
           ? { ...(entries[at] as LibraryEntry), ...details }
-          : { tabHash: tab.tabHash, ...details, recording: null, video: null, source: null, trackIndex: 0, tuningId: FILE_TUNING };
+          : { tabHash: tab.tabHash, ...details, recording: null, video, source: null, trackIndex: 0, tuningId: FILE_TUNING };
       if (at >= 0) entries[at] = saved;
       else entries.push(saved);
       await this.backend.write({ version: 1, entries });

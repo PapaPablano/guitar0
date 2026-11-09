@@ -151,6 +151,14 @@ export function findProfile(file: ProfileFile, hash: string): RecordingProfile |
 }
 
 /**
+ * Whether saving `hash` into `file` goes past the cap, so withProfile trims (and consults its keep-set). Written as a negated
+ * `<= 0` so a cap that is not a number (NaN) counts as trimming, exactly as withProfile's own count does.
+ */
+export function wouldTrim(file: ProfileFile, hash: string, cap: number = PROFILE_CAP): boolean {
+  return !(file.entries.filter((e) => e.hash !== hash).length + 1 - cap <= 0);
+}
+
+/**
  * A new file with this profile as the newest entry (replacing any earlier one for the hash), trimmed oldest-first to the
  * cap. Hashes in `keep` (recordings a saved song uses, KTD6) are never trimmed, so the file can then exceed the cap.
  */
@@ -163,6 +171,7 @@ export function withProfile(
 ): ProfileFile {
   const entries = file.entries.filter((e) => e.hash !== hash);
   entries.push({ hash, profile });
+  if (!wouldTrim(file, hash, cap)) return { version: PROFILE_VERSION, entries };
   let excess = entries.length - cap;
   const kept = entries.filter((e, i) => {
     if (excess <= 0 || i === entries.length - 1 || keep.has(e.hash)) return true;
@@ -207,9 +216,8 @@ export class FileProfileStore implements ProfileStore {
     const run = async (): Promise<void> => {
       try {
         const file = parseProfileFile(await this.backend.read());
-        // withProfile consults `keep` only when it trims, so the source is asked only then (the same test as its `excess`).
-        const trims = !(file.entries.filter((e) => e.hash !== hash).length + 1 - this.cap <= 0);
-        const keep = trims ? new Set(await this.keep().catch(() => [])) : new Set<string>();
+        // withProfile consults `keep` only when it trims, so the source is asked only then.
+        const keep = wouldTrim(file, hash, this.cap) ? new Set(await this.keep().catch(() => [])) : new Set<string>();
         await this.backend.write(withProfile(file, hash, profile, this.cap, keep));
       } catch {
         // Saved state is a convenience; a failed save must never reach the user.

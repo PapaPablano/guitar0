@@ -107,9 +107,19 @@ describe('opening a tab', () => {
     await expect(session.recordingLoaded(recording())).resolves.toBeUndefined();
   });
 
-  it('writes no video when a tab opens, even one the YouTube store has a video for (KTD4)', async () => {
+  it('writes no video when a tab opens without one from the YouTube store', async () => {
     const { library, session } = setup();
     await session.openTab(tabA, detailsA);
+    expect((await entryOf(library, hashA))?.video).toBeNull();
+  });
+
+  it("starts a new song with the store's video, and leaves an existing song's video alone (KTD4)", async () => {
+    const { library, session } = setup();
+    const hash = await session.openTab(tabA, detailsA, { videoId: 'vid', offsetSeconds: 2 });
+    expect(hash).toBe(hashA);
+    expect((await entryOf(library, hashA))?.video).toEqual({ videoId: 'vid', offsetSeconds: 2 });
+    await session.videoChanged(null);
+    await session.openTab(tabA, detailsA, { videoId: 'other', offsetSeconds: 5 });
     expect((await entryOf(library, hashA))?.video).toBeNull();
   });
 
@@ -132,7 +142,6 @@ describe('the sample and the web build', () => {
     await session.trackAndTuningChanged(1, FILE_TUNING);
     expect(files.recordings).toHaveLength(0);
     expect(backend.writes).toBe(writes);
-    expect(await session.currentTabHash()).toBeNull();
   });
 
   it('on the web nothing is saved and nothing is called (R17)', async () => {
@@ -143,7 +152,6 @@ describe('the sample and the web build', () => {
     await session.videoChanged({ videoId: 'abc', offsetSeconds: 0 });
     await session.sourceChanged('video');
     await session.trackAndTuningChanged(1, FILE_TUNING);
-    expect(await session.currentTabHash()).toBeNull();
   });
 });
 
