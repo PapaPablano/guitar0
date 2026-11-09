@@ -9,7 +9,7 @@ import { playbackBarIndexAt } from '../model/bars';
 import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/file-tuning';
 import { FILE_TUNING, presetById } from '../model/retune';
 import type { Timeline } from '../model/score';
-import type { BackingSource, LibraryEntry, VideoRef } from './library';
+import type { BackingSource, LibraryEntry, RecordingRef, VideoRef } from './library';
 import { firstPlayableTrack } from './open-file';
 import type { AudioSource } from './youtube-dock';
 import type { YoutubeVideoStore } from './youtube-video-store';
@@ -127,6 +127,194 @@ export async function runRestore(
     if (result) await result;
   }
   return isCurrent();
+}
+
+/**
+ * The song open in the player, as the app tracks it (KTD7): its tab hash once saved, undefined while the tab is still being
+ * saved, and null when it was not saved. Each opened song is its own object, so identity says whether the song changed.
+ */
+export interface OpenSong {
+  tabHash: string | null | undefined;
+}
+
+/** Whether the song with this tab hash is the one open, so picking it does nothing (R3). */
+export function isOpenSong(song: OpenSong | null, tabHash: string): boolean {
+  return !!song && song.tabHash === tabHash;
+}
+
+/** Where a reopened song is put, until the clocks that lead take it (KTD4): its saved bar, in tab seconds, for one reopen run. */
+export interface PendingResume {
+  readonly index: number;
+  readonly tabSeconds: number;
+  /** The reopen run that set it; a newer run makes it stale. */
+  readonly run: number;
+}
+
+/** The resume for a reopened song: its saved bar, or bar 1 when it has none or the bar is gone (R8, R9). */
+export function resumeFor(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline, run: number): PendingResume {
+  const tabSeconds = resumeSeconds(entry, timeline);
+  const index = entry.position !== undefined && timeline.bars[entry.position] ? entry.position : 0;
+  return { index, tabSeconds, run };
+}
+
+/** Whether playback stopped at the end of the song, which saves bar 1 (R7). */
+export function atSongEnd(tabSeconds: number, durationSeconds: number): boolean {
+  return durationSeconds > 0 && tabSeconds >= durationSeconds - 0.05;
+}
+
+export interface ParkDeps {
+  /** Makes any reopen still running stale. */
+  invalidateReopen(): void;
+  /** Pauses every clock, the YouTube player's included. */
+  pause(): void;
+  /** The followed clock's tab time, read after the pause. */
+  tabSeconds(): number;
+  /** Saves the position to that song, whichever song is open by the time it is written. */
+  save(song: OpenSong, index: number): void;
+}
+
+/**
+ * The first half of leaving a song (KTD1): invalidate any reopen (not from onReopen, whose own run already did), pause every
+ * clock, capture the position (KTD8) and save it. On the start screen (`timeline` null) only the invalidate runs. Returns
+ * the position saved, or null when none was: the sample, or a tab that was not saved.
+ */
+export function parkSong(
+  state: { fromReopen: boolean; song: OpenSong | null; pending: PendingResume | null; timeline: Timeline | null },
+  deps: ParkDeps,
+): number | null {
+  if (!state.fromReopen) deps.invalidateReopen();
+  const { timeline, song, pending } = state;
+  if (!timeline) return null;
+  deps.pause();
+  if (!song || song.tabHash === null) return null;
+  let index: number;
+  if (pending) {
+    // A half-opened song keeps its saved bar (R11).
+    index = pending.index;
+  } else {
+    const tabSeconds = deps.tabSeconds();
+    index = positionToSave(timeline, tabSeconds, atSongEnd(tabSeconds, timeline.durationSeconds));
+  }
+  deps.save(song, index);
+  return index;
+}
+
+/**
+ * Leaving for a new file (KTD1): park the open song, open the new one, and release the old one only once the new one has
+ * opened. A file that fails to open rejects here and leaves the old song parked, not released.
+ */
+export async function leaveThenOpen<T>(park: () => void, open: () => T | Promise<T>, release: () => void): Promise<T> {
+  park();
+  const opened = await open();
+  release();
+  return opened;
+}
+
+export interface ReopenDeps<T> {
+  park(): void;
+  readTab(tabHash: string): Promise<Uint8Array | null>;
+  /** Parses the tab bytes; throws for a tab that cannot be opened. */
+  parse(bytes: Uint8Array): T;
+  release(): void;
+  settled(tabHash: string): Promise<void>;
+  find(tabHash: string): Promise<LibraryEntry | null>;
+  readRecording(ref: RecordingRef): Promise<File | null>;
+  /** Whether this reopen is still the latest (R11). */
+  isCurrent(): boolean;
+}
+
+export type ReopenPrep<T> =
+  | { kind: 'stale' }
+  | { kind: 'tab-missing' }
+  | { kind: 'ready'; bytes: Uint8Array; parsed: T; entry: LibraryEntry; recording: File | null };
+
+/**
+ * Everything a reopen does before the restore (KTD1, KTD3): park the open song, read and parse the picked song's tab (a
+ * failure stops here with the open song parked, not released; R10), release the open song, wait for the picked song's
+ * pending saves, then read its entry afresh and its recording from that entry. Only the tab bytes, which the hash fixes,
+ * are read before the wait. A parse failure rejects.
+ */
+export async function prepareReopen<T>(target: LibraryEntry, deps: ReopenDeps<T>): Promise<ReopenPrep<T>> {
+  deps.park();
+  const bytes = await deps.readTab(target.tabHash);
+  if (!deps.isCurrent()) return { kind: 'stale' };
+  if (!bytes) return { kind: 'tab-missing' };
+  const parsed = deps.parse(bytes);
+  deps.release();
+  await deps.settled(target.tabHash);
+  if (!deps.isCurrent()) return { kind: 'stale' };
+  const entry = (await deps.find(target.tabHash)) ?? target;
+  if (!deps.isCurrent()) return { kind: 'stale' };
+  const recording = entry.recording ? await deps.readRecording(entry.recording) : null;
+  if (!deps.isCurrent()) return { kind: 'stale' };
+  return { kind: 'ready', bytes, parsed, entry, recording };
+}
+
+/**
+ * Whether a pause saves the position (KTD5): only when the same song was open when playback started and when it stopped,
+ * and no resume is pending, so a pause that crosses a song change never writes.
+ */
+export function shouldSaveOnPause(whenPlayed: OpenSong | null, whenPaused: OpenSong | null, resumePending: boolean): boolean {
+  return whenPlayed !== null && whenPlayed === whenPaused && !resumePending;
+}
+
+/** The clocks a pending resume is applied to; stems take it too but are never waited for. */
+export type ResumeClock = 'synth' | 'video' | 'recording' | 'stems';
+
+/**
+ * The clocks a reopen expects to lead, each of which must take the resume before it clears (KTD4): the synth always, the
+ * video when its audio is heard, and the recording when one loads.
+ */
+export function expectedResumeClocks(steps: readonly RestoreStep[]): ResumeClock[] {
+  const clocks: ResumeClock[] = ['synth'];
+  const seeded = steps.find((s) => s.kind === 'seed-video');
+  const source = steps.find((s) => s.kind === 'select-source');
+  // With no saved source the tab opens on the video's own audio.
+  if (seeded?.video && (!source || source.source === 'original')) clocks.push('video');
+  if (steps.some((s) => s.kind === 'load-recording')) clocks.push('recording');
+  return clocks;
+}
+
+/** A reopened song's resume, applied to whichever clock leads until every expected one has taken it (KTD4). */
+export interface ResumeTracker {
+  readonly pending: PendingResume | null;
+  start(resume: PendingResume, expected: readonly ResumeClock[]): void;
+  /**
+   * Seeks a clock to the pending resume while its reopen is current. True when it was applied; a stale resume is dropped.
+   * The resume clears once every expected clock has taken it.
+   */
+  apply(clock: ResumeClock, seek: (tabSeconds: number) => void, isCurrent: (run: number) => boolean): boolean;
+  /** The player seeked or played, or the song was left. */
+  clear(): void;
+}
+
+export function createResumeTracker(): ResumeTracker {
+  let pending: PendingResume | null = null;
+  let waiting = new Set<ResumeClock>();
+  return {
+    get pending() {
+      return pending;
+    },
+    start(resume, expected) {
+      pending = resume;
+      waiting = new Set(expected);
+    },
+    apply(clock, seek, isCurrent) {
+      if (!pending) return false;
+      if (!isCurrent(pending.run)) {
+        pending = null;
+        return false;
+      }
+      seek(pending.tabSeconds);
+      waiting.delete(clock);
+      if (waiting.size === 0) pending = null;
+      return true;
+    },
+    clear() {
+      pending = null;
+      waiting = new Set();
+    },
+  };
 }
 
 /** Starting a reopened recording's saved stems by itself, once, when the engine is ready (KTD8). */

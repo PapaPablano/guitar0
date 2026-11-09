@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { SongLibrary, type LibraryEntry, type LibraryIndex, type RecordingRef } from '../../src/app/library';
 import {
+  createResumeTracker,
   createStemsAutoStart,
+  expectedResumeClocks,
+  isOpenSong,
+  leaveThenOpen,
+  parkSong,
   planRestore,
   positionToSave,
+  prepareReopen,
+  resumeFor,
+  shouldSaveOnPause,
+  type OpenSong,
+  type PendingResume,
+  type ReopenDeps,
   RECORDING_MISSING,
   restoreTrack,
   resumeSeconds,
@@ -15,6 +26,8 @@ import {
   type RestoreStep,
 } from '../../src/app/library-restore';
 import { takesOverFromVideo } from '../../src/app/youtube-backing';
+import { AlignmentMap } from '../../src/audio/alignment-map';
+import { UserAudioClock, type AudioLike } from '../../src/audio/user-audio';
 import { YoutubeVideoStore, type KeyValueStorage } from '../../src/app/youtube-video-store';
 import { tabFingerprint } from '../../src/audio/tab-fingerprint';
 import { barSpansOf } from '../../src/alignment/analyze';
@@ -423,5 +436,342 @@ describe('createStemsAutoStart', () => {
     auto.arm(file);
     expect(auto.take({ ...ready, recording: file, active: true })).toBe(false);
     expect(auto.take({ ...ready, recording: file, busy: true })).toBe(false);
+  });
+});
+
+/** A recording element that only moves when told to. */
+function fakeAudio(): AudioLike & { paused: boolean; ended: boolean; duration: number } {
+  return {
+    currentTime: 0,
+    playbackRate: 1,
+    preservesPitch: false,
+    paused: true,
+    ended: false,
+    duration: 200,
+    async play() {
+      this.paused = false;
+    },
+    pause() {
+      this.paused = true;
+    },
+  };
+}
+
+/** Forty 2-second bars. */
+const long = makeTimeline([], 2, 40);
+const songA: OpenSong = { tabHash: 'a'.repeat(64) };
+
+describe('parkSong', () => {
+  function deps(log: string[], tabSeconds = 0) {
+    return {
+      invalidateReopen: () => void log.push('invalidate'),
+      pause: () => void log.push('pause'),
+      tabSeconds: () => {
+        log.push('capture');
+        return tabSeconds;
+      },
+      save: (song: OpenSong, index: number) => void log.push(`save ${song.tabHash === undefined ? 'saving' : song.tabHash?.slice(0, 1)} ${index}`),
+    };
+  }
+
+  it('invalidates any reopen, pauses, captures the played bar, then saves it to that song (KTD1)', () => {
+    const log: string[] = [];
+    const index = parkSong({ fromReopen: false, song: songA, pending: null, timeline: long }, deps(log, long.bars[36].startSeconds + 0.5));
+    expect(index).toBe(36);
+    expect(log).toEqual(['invalidate', 'pause', 'capture', 'save a 36']);
+  });
+
+  it('skips the invalidate when called from onReopen, whose own run already superseded earlier ones', () => {
+    const log: string[] = [];
+    parkSong({ fromReopen: true, song: songA, pending: null, timeline: long }, deps(log, 3));
+    expect(log).toEqual(['pause', 'capture', 'save a 1']);
+  });
+
+  it('covers R11: a song left while its resume is pending saves the pending bar, not where its clock happens to be', () => {
+    const log: string[] = [];
+    const pending: PendingResume = { index: 36, tabSeconds: long.bars[36].startSeconds, run: 1 };
+    expect(parkSong({ fromReopen: true, song: songA, pending, timeline: long }, deps(log, 0))).toBe(36);
+    expect(log).toEqual(['pause', 'save a 36']);
+  });
+
+  it('saves bar 1 at the end of the song (R7)', () => {
+    const log: string[] = [];
+    expect(parkSong({ fromReopen: false, song: songA, pending: null, timeline: long }, deps(log, long.durationSeconds))).toBe(0);
+    expect(log).toContain('save a 0');
+  });
+
+  it('pauses but saves nothing for the sample or a tab that was not saved (KTD8)', () => {
+    const sample: string[] = [];
+    expect(parkSong({ fromReopen: false, song: null, pending: null, timeline: long }, deps(sample))).toBeNull();
+    expect(sample).toEqual(['invalidate', 'pause']);
+    const unsaved: string[] = [];
+    parkSong({ fromReopen: false, song: { tabHash: null }, pending: null, timeline: long }, deps(unsaved));
+    expect(unsaved).toEqual(['invalidate', 'pause']);
+  });
+
+  it('saves to a song whose tab is still being saved; the session sends it to that song once it is', () => {
+    const log: string[] = [];
+    parkSong({ fromReopen: false, song: { tabHash: undefined }, pending: null, timeline: long }, deps(log, 5));
+    expect(log).toEqual(['invalidate', 'pause', 'capture', 'save saving 2']);
+  });
+
+  it('only invalidates on the start screen, where no song is open', () => {
+    const log: string[] = [];
+    expect(parkSong({ fromReopen: false, song: null, pending: null, timeline: null }, deps(log))).toBeNull();
+    expect(log).toEqual(['invalidate']);
+  });
+});
+
+describe('leaveThenOpen', () => {
+  it('parks the song, opens the new one, and only then releases the old one (KTD1)', async () => {
+    const log: string[] = [];
+    const opened = await leaveThenOpen(
+      () => void log.push('park'),
+      () => {
+        log.push('parse');
+        return 'B';
+      },
+      () => void log.push('release'),
+    );
+    expect(opened).toBe('B');
+    expect(log).toEqual(['park', 'parse', 'release']);
+  });
+
+  it('leaves the song parked, not released, when the new file fails to parse', async () => {
+    const log: string[] = [];
+    await expect(
+      leaveThenOpen(
+        () => void log.push('park'),
+        async () => {
+          throw new Error('Not a tab');
+        },
+        () => void log.push('release'),
+      ),
+    ).rejects.toThrow('Not a tab');
+    expect(log).toEqual(['park']);
+  });
+});
+
+describe('prepareReopen', () => {
+  const freshRecording: RecordingRef = { ...recording, hash: 'd'.repeat(64), name: 'newer.mp3' };
+  const target = entryWith({ tabHash: 'b'.repeat(64), recording });
+  const fresh = { ...target, recording: freshRecording, position: 36 };
+
+  function deps(log: string[], patch: Partial<ReopenDeps<{ parsed: number }>> = {}): ReopenDeps<{ parsed: number }> {
+    return {
+      park: () => void log.push('park'),
+      readTab: async () => {
+        log.push('read-tab');
+        return new Uint8Array([1]);
+      },
+      parse: (bytes) => {
+        log.push('parse');
+        return { parsed: bytes.length };
+      },
+      release: () => void log.push('release'),
+      settled: async () => void log.push('settled'),
+      find: async () => {
+        log.push('find');
+        return fresh;
+      },
+      readRecording: async (ref) => {
+        log.push(`read-recording ${ref.name}`);
+        return file;
+      },
+      isCurrent: () => true,
+      ...patch,
+    };
+  }
+
+  it("parks A, reads B's tab, releases A, waits for B's saves, then reads B's recording from the fresh entry (KTD3)", async () => {
+    const log: string[] = [];
+    const result = await prepareReopen(target, deps(log));
+    expect(log).toEqual(['park', 'read-tab', 'parse', 'release', 'settled', 'find', 'read-recording newer.mp3']);
+    expect(result).toEqual({ kind: 'ready', bytes: new Uint8Array([1]), parsed: { parsed: 1 }, entry: fresh, recording: file });
+  });
+
+  it("covers AE4, R10: a tab that can't be read leaves A parked and not released", async () => {
+    const log: string[] = [];
+    const readTab = async () => {
+      log.push('read-tab');
+      return null;
+    };
+    expect(await prepareReopen(target, deps(log, { readTab }))).toEqual({ kind: 'tab-missing' });
+    expect(log).toEqual(['park', 'read-tab']);
+  });
+
+  it('leaves A parked and not released when the stored tab fails to parse', async () => {
+    const log: string[] = [];
+    const parse = () => {
+      throw new Error('Corrupt');
+    };
+    await expect(prepareReopen(target, deps(log, { parse }))).rejects.toThrow('Corrupt');
+    expect(log).toEqual(['park', 'read-tab']);
+  });
+
+  it('covers R11: a reopen superseded while reading releases nothing and reads no further', async () => {
+    const log: string[] = [];
+    let current = true;
+    const readTab = async () => {
+      log.push('read-tab');
+      current = false;
+      return new Uint8Array([1]);
+    };
+    expect(await prepareReopen(target, deps(log, { readTab, isCurrent: () => current }))).toEqual({ kind: 'stale' });
+    expect(log).toEqual(['park', 'read-tab']);
+  });
+
+  it('stops before reading the recording when superseded while waiting for saves', async () => {
+    const log: string[] = [];
+    let current = true;
+    const settled = async () => {
+      log.push('settled');
+      current = false;
+    };
+    expect(await prepareReopen(target, deps(log, { settled, isCurrent: () => current }))).toEqual({ kind: 'stale' });
+    expect(log.some((l) => l.startsWith('read-recording'))).toBe(false);
+  });
+
+  it('gives no recording for a song without one, and falls back to the picked entry if the library no longer has it', async () => {
+    const log: string[] = [];
+    const bare = entryWith({ tabHash: 'b'.repeat(64) });
+    const result = await prepareReopen(bare, deps(log, { find: async () => null }));
+    expect(result).toMatchObject({ kind: 'ready', entry: bare, recording: null });
+    expect(log.some((l) => l.startsWith('read-recording'))).toBe(false);
+  });
+});
+
+describe('isOpenSong', () => {
+  it('covers R3: picking the song already open is recognised, so nothing happens', () => {
+    expect(isOpenSong(songA, 'a'.repeat(64))).toBe(true);
+    expect(isOpenSong(songA, 'b'.repeat(64))).toBe(false);
+    expect(isOpenSong(null, 'a'.repeat(64))).toBe(false);
+    expect(isOpenSong({ tabHash: null }, 'a'.repeat(64))).toBe(false);
+  });
+});
+
+describe('shouldSaveOnPause', () => {
+  it('saves when the same song was open when playback started and stopped, with no resume pending (KTD5)', () => {
+    expect(shouldSaveOnPause(songA, songA, false)).toBe(true);
+  });
+
+  it('does not save when the open song changed between play and pause', () => {
+    expect(shouldSaveOnPause(songA, { tabHash: 'a'.repeat(64) }, false)).toBe(false);
+    expect(shouldSaveOnPause(songA, null, false)).toBe(false);
+    expect(shouldSaveOnPause(null, songA, false)).toBe(false);
+  });
+
+  it('does not save while a resume is pending', () => {
+    expect(shouldSaveOnPause(songA, songA, true)).toBe(false);
+  });
+});
+
+describe('resumeFor', () => {
+  it('covers AE1: a song saved at bar index 36 resumes at that bar, the same seconds the seek step and the recording start use', () => {
+    const entry = entryWith({ position: 36 });
+    const steps = planRestore(entry, long, file);
+    const resume = resumeFor(entry, long, 7);
+    expect(resume).toEqual({ index: 36, tabSeconds: long.bars[36].startSeconds, run: 7 });
+    expect(steps[1]).toEqual({ kind: 'seek', tabSeconds: resume.tabSeconds });
+  });
+
+  it('gives bar 1 for a missing or out-of-range position (R9)', () => {
+    expect(resumeFor(entryWith(), long, 1)).toEqual({ index: 0, tabSeconds: 0, run: 1 });
+    expect(resumeFor(entryWith({ position: 40 }), long, 1)).toEqual({ index: 0, tabSeconds: 0, run: 1 });
+  });
+});
+
+describe('expectedResumeClocks', () => {
+  it('expects the synth, the video when its audio is heard, and the recording when one loads (KTD4)', () => {
+    const video = { videoId: 'abc', offsetSeconds: 0 };
+    expect(expectedResumeClocks(planRestore(entryWith(), long, null))).toEqual(['synth']);
+    expect(expectedResumeClocks(planRestore(entryWith({ video }), long, null))).toEqual(['synth', 'video']);
+    expect(expectedResumeClocks(planRestore(entryWith({ video, source: 'video', recording }), long, file))).toEqual(['synth', 'video', 'recording']);
+    // With the recording as the saved source, the video is parked and never leads.
+    expect(expectedResumeClocks(planRestore(entryWith({ video, source: 'recording', recording }), long, file))).toEqual(['synth', 'recording']);
+    // A missing recording loads nothing.
+    expect(expectedResumeClocks(planRestore(entryWith({ recording }), long, null))).toEqual(['synth']);
+  });
+});
+
+describe('createResumeTracker', () => {
+  const at36: PendingResume = { index: 36, tabSeconds: long.bars[36].startSeconds, run: 1 };
+  const current = (run: number) => run === 1;
+
+  it('applies the pending resume to each clock that takes it, and clears once the last expected clock has (KTD4)', () => {
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['synth', 'recording']);
+    const seeks: string[] = [];
+    expect(tracker.apply('synth', (s) => void seeks.push(`synth ${s}`), current)).toBe(true);
+    expect(tracker.pending).toEqual(at36);
+    expect(tracker.apply('recording', (s) => void seeks.push(`recording ${s}`), current)).toBe(true);
+    expect(seeks).toEqual([`synth ${at36.tabSeconds}`, `recording ${at36.tabSeconds}`]);
+    expect(tracker.pending).toBeNull();
+    expect(tracker.apply('synth', () => void seeks.push('late'), current)).toBe(false);
+    expect(seeks).not.toContain('late');
+  });
+
+  it('gives a video clock that takes over before the sound is ready the pending resume, and still waits for the synth', () => {
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['synth', 'video']);
+    let video = -1;
+    tracker.apply('video', (s) => void (video = s), current);
+    expect(video).toBe(at36.tabSeconds);
+    expect(tracker.pending).toEqual(at36);
+    tracker.apply('synth', () => undefined, current);
+    expect(tracker.pending).toBeNull();
+  });
+
+  it('gives stems that take over the resume without counting them as an expected clock', () => {
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['synth']);
+    let stems = -1;
+    tracker.apply('stems', (s) => void (stems = s), current);
+    expect(stems).toBe(at36.tabSeconds);
+    expect(tracker.pending).toEqual(at36);
+  });
+
+  it('clears on a user seek or play', () => {
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['synth']);
+    tracker.clear();
+    expect(tracker.pending).toBeNull();
+    let seeked = false;
+    expect(tracker.apply('synth', () => void (seeked = true), current)).toBe(false);
+    expect(seeked).toBe(false);
+  });
+
+  it('covers R11: a superseded reopen seeks nothing and its resume is dropped', () => {
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['synth']);
+    let seeked = false;
+    expect(tracker.apply('synth', () => void (seeked = true), () => false)).toBe(false);
+    expect(seeked).toBe(false);
+    expect(tracker.pending).toBeNull();
+  });
+
+  it("re-applies after the saved alignment (2 s offset) lands, so the recording clock is at bars[36]'s start", () => {
+    const clock = new UserAudioClock(fakeAudio(), long.durationSeconds);
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['recording']);
+    // onLoadRecording seeks to the resume before the alignment is known.
+    clock.seek(at36.tabSeconds);
+    // restoreProfile then applies the saved alignment; the recording keeps its place, so tab time drifts by the offset.
+    clock.setAlignment(AlignmentMap.fromOffset(2));
+    expect(clock.time()).toBeCloseTo(at36.tabSeconds - 2, 6);
+    tracker.apply('recording', (s) => clock.seek(s), current);
+    expect(clock.time()).toBeCloseTo(long.bars[36].startSeconds, 6);
+  });
+
+  it('covers AE3: with a hold before bar 36 the resume is in tab seconds, and the alignment maps it to recording time', () => {
+    const el = fakeAudio();
+    const clock = new UserAudioClock(el, long.durationSeconds);
+    const tracker = createResumeTracker();
+    tracker.start(at36, ['recording']);
+    clock.seek(at36.tabSeconds);
+    clock.setAlignment(AlignmentMap.of(0.5, [{ at: long.bars[10].startSeconds, length: 3 }]));
+    tracker.apply('recording', (s) => clock.seek(s), current);
+    expect(clock.time()).toBeCloseTo(long.bars[36].startSeconds, 6);
+    expect(el.currentTime).toBeCloseTo(long.bars[36].startSeconds + 0.5 + 3, 6);
   });
 });

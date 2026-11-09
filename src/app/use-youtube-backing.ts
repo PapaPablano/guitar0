@@ -62,6 +62,8 @@ export interface YoutubeBacking {
   restore: (tabKey: string, source: AudioSource) => void;
   /** The player loaded a recording or stems themselves, so it takes over from the video as usual again. */
   endRestore: () => void;
+  /** Pauses the video's player, for leaving the song (KTD1); the video stays attached until the next tab opens. */
+  pause: () => void;
 }
 
 /** The attached YouTube video: its player, its clock, which audio is heard, and what is remembered for the tab. */
@@ -254,6 +256,8 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
 
   const endRestore = useCallback(() => hold.end(), [hold]);
 
+  const pause = useCallback(() => clockRef.current?.pause(), []);
+
   const syncHere = useCallback(
     (firstNoteSeconds: number) => {
       const video = clockRef.current;
@@ -293,5 +297,6 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
     onError,
     restore,
     endRestore,
+    pause,
   };
 }

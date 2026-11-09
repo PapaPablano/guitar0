@@ -34,6 +34,11 @@ interface StemPanelProps {
   autoStart?: StemsAutoStart;
   /** Why separating is unavailable right now, such as a recording with video being made; null when it is available. */
   lockedReason?: string | null;
+  /**
+   * Told when a separation (or a load of saved stems) starts, with a way to cancel it, and with null when it ends or the
+   * panel goes away; leaving the song cancels it (KTD1).
+   */
+  onSeparatingChange?: (cancel: (() => void) | null) => void;
 }
 
 const savedStems = new SavedStems(shellStemIndex);
@@ -47,7 +52,7 @@ interface Source {
 }
 
 /** Separate and mix controls for a loaded recording. Renders nothing outside the desktop app. */
-export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate, autoStart, lockedReason = null }: StemPanelProps) {
+export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate, autoStart, lockedReason = null, onSeparatingChange }: StemPanelProps) {
   const desktop = isDesktop();
   const tier = useTier();
   const [savedJob, setSavedJob] = useState<string | null>(null);
@@ -108,6 +113,14 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
       abort.current?.abort();
     };
   }, [recording, durationSeconds]);
+
+  // The app hears whether a separation runs, and how to cancel it, so leaving the song can stop it.
+  const separatingChange = useRef(onSeparatingChange);
+  separatingChange.current = onSeparatingChange;
+  useEffect(() => {
+    separatingChange.current?.(busy ? () => abort.current?.abort() : null);
+  }, [busy]);
+  useEffect(() => () => separatingChange.current?.(null), []);
 
   // A reopened song's saved stems play by themselves on the first ready status, unless the player got there first (KTD8).
   useEffect(() => {
