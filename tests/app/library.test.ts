@@ -1,0 +1,570 @@
+import { describe, expect, it } from 'vitest';
+import { displayTitle, isLibraryEntry, SongLibrary, type LibraryBackend, type LibraryIndex, type OpenedTab, type RecordingRef } from '../../src/app/library';
+
+function memoryBackend(entries: unknown[] = [], quarantined = false): LibraryBackend & { data: LibraryIndex; writes: number } {
+  const backend = {
+    data: { version: 1, entries } as LibraryIndex,
+    writes: 0,
+    async read() {
+      return { index: JSON.parse(JSON.stringify(backend.data)) as LibraryIndex, quarantined };
+    },
+    async write(index: LibraryIndex) {
+      backend.writes += 1;
+      backend.data = JSON.parse(JSON.stringify(index)) as LibraryIndex;
+    },
+  };
+  return backend;
+}
+
+const failingBackend = (): LibraryBackend => ({
+  read: async () => {
+    throw new Error('could not read the library index');
+  },
+  write: async () => {
+    throw new Error('disk full');
+  },
+});
+
+const hashA = 'a'.repeat(64);
+const hashB = 'b'.repeat(64);
+const hashC = 'c'.repeat(64);
+
+const tab = (tabHash: string, title = 'Riff', fileName = 'riff.gp', fingerprint = '64:0badcafe'): OpenedTab => ({ tabHash, title, fileName, fingerprint });
+
+const recording = (hash: string, name = 'take.mp3'): RecordingRef => ({ hash, name, type: 'audio/mpeg', extension: 'mp3' });
+
+describe('SongLibrary saving', () => {
+  it('covers AE1: two different tabs with the same fingerprint are two songs', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    expect(await library.open(tab(hashA, 'One', 'one.gp', '64:same'), 1000)).not.toBeNull();
+    expect(await library.open(tab(hashB, 'Two', 'two.gp', '64:same'), 2000)).not.toBeNull();
+    expect(backend.data.entries).toHaveLength(2);
+    expect((await library.list()).map((s) => s.entry.tabHash)).toEqual([hashB, hashA]);
+  });
+
+  it('saves a new song with its title, file name, fingerprint and opened time, and no backing yet', async () => {
+    const library = new SongLibrary(memoryBackend());
+    const entry = await library.open(tab(hashA, 'Riff', 'riff.gp', '64:abc'), 1234);
+    expect(entry).toEqual({
+      tabHash: hashA,
+      title: 'Riff',
+      fileName: 'riff.gp',
+      fingerprint: '64:abc',
+      openedAt: 1234,
+      recording: null,
+      video: null,
+      source: null,
+      trackIndex: 0,
+      tuningId: 'file',
+    });
+  });
+
+  it('stores the file name as the title when the score title is empty', async () => {
+    const library = new SongLibrary(memoryBackend());
+    expect((await library.open(tab(hashA, '   ', 'solo.gp5'), 1))?.title).toBe('solo.gp5');
+  });
+
+  it('covers R11: reopening the same tab bytes updates the opened time and keeps recording, video, source and setup', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1000);
+    await library.setRecording(hashA, recording(hashC));
+    await library.setVideo(hashA, { videoId: 'dQw4w9WgXcQ', offsetSeconds: 1.5 });
+    await library.setSource(hashA, 'video');
+    await library.setTrackAndTuning(hashA, 2, 'drop-d');
+    const again = await library.open(tab(hashA, 'Riff (renamed)', 'riff-copy.gp'), 5000);
+    expect(again).toMatchObject({
+      openedAt: 5000,
+      title: 'Riff (renamed)',
+      fileName: 'riff-copy.gp',
+      recording: recording(hashC),
+      video: { videoId: 'dQw4w9WgXcQ', offsetSeconds: 1.5 },
+      source: 'video',
+      trackIndex: 2,
+      tuningId: 'drop-d',
+    });
+    expect(backend.data.entries).toHaveLength(1);
+  });
+
+  it('covers R5: a new recording replaces only the recording', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setRecording(hashA, recording(hashB, 'old.mp3'));
+    await library.setVideo(hashA, { videoId: 'vid', offsetSeconds: 2 });
+    await library.setSource(hashA, 'video');
+    expect(await library.setRecording(hashA, recording(hashC, 'new.wav'))).toBe(true);
+    expect(await library.find(hashA)).toMatchObject({ recording: recording(hashC, 'new.wav'), video: { videoId: 'vid', offsetSeconds: 2 }, source: 'video' });
+  });
+
+  it('covers R5: clearing the recording removes the reference and keeps the video and source', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setRecording(hashA, recording(hashB));
+    await library.setVideo(hashA, { videoId: 'vid', offsetSeconds: 0 });
+    await library.setSource(hashA, 'recording');
+    expect(await library.clearRecording(hashA)).toBe(true);
+    expect(await library.find(hashA)).toMatchObject({ recording: null, video: { videoId: 'vid', offsetSeconds: 0 }, source: 'recording' });
+  });
+
+  it('removes the video when set to null', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setVideo(hashA, { videoId: 'vid', offsetSeconds: 3 });
+    expect(await library.setVideo(hashA, null)).toBe(true);
+    expect((await library.find(hashA))?.video).toBeNull();
+  });
+
+  it('covers R6: saves the chosen track and file tuning', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    expect(await library.setTrackAndTuning(hashA, 3, 'eb-standard')).toBe(true);
+    expect(await library.find(hashA)).toMatchObject({ trackIndex: 3, tuningId: 'eb-standard' });
+  });
+
+  it('reports not saved for a change to a song that is not in the library, and writes nothing', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    expect(await library.setRecording(hashA, recording(hashB))).toBe(false);
+    expect(await library.setTrackAndTuning(hashA, 1, 'file')).toBe(false);
+    expect(backend.writes).toBe(0);
+  });
+
+  it('refuses a tab hash that is not a 64-hex sha256', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    expect(await library.open(tab('not-a-hash'), 1)).toBeNull();
+    expect(await library.open(tab(hashA.toUpperCase()), 1)).toBeNull();
+    expect(backend.writes).toBe(0);
+  });
+
+  it('runs changes in order, so a change made right after open is not lost', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    const opened = library.open(tab(hashA), 1);
+    const changed = library.setTrackAndTuning(hashA, 4, 'file');
+    expect(await opened).not.toBeNull();
+    expect(await changed).toBe(true);
+    expect((await library.find(hashA))?.trackIndex).toBe(4);
+  });
+
+  it('keeps entries it cannot read when it writes the index back', async () => {
+    const odd = { tabHash: 'zz', note: 'from a newer app' };
+    const backend = memoryBackend([odd]);
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    expect(backend.data.entries).toContainEqual(odd);
+    expect(await library.list()).toHaveLength(1);
+  });
+
+  it('keeps fields it does not know on an entry it updates', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    (backend.data.entries[0] as unknown as Record<string, unknown>).extra = 7;
+    await library.open(tab(hashA), 2);
+    expect((backend.data.entries[0] as unknown as Record<string, unknown>).extra).toBe(7);
+  });
+
+  it('saves after a quarantined index, starting from an empty library', async () => {
+    const backend = memoryBackend([], true);
+    const library = new SongLibrary(backend);
+    expect(await library.open(tab(hashA), 1)).not.toBeNull();
+    expect(backend.data.entries).toHaveLength(1);
+  });
+
+  it("starts a new song with the YouTube store's video and offset for the tab", async () => {
+    const library = new SongLibrary(memoryBackend());
+    const entry = await library.open(tab(hashA), 1, { videoId: 'vid', offsetSeconds: 1.75 });
+    expect(entry?.video).toEqual({ videoId: 'vid', offsetSeconds: 1.75 });
+    expect((await library.find(hashA))?.video).toEqual({ videoId: 'vid', offsetSeconds: 1.75 });
+  });
+
+  it('keeps an existing song\'s own video, or lack of one, over the store\'s (KTD4)', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    expect((await library.open(tab(hashA), 2, { videoId: 'vid', offsetSeconds: 1 }))?.video).toBeNull();
+    await library.open(tab(hashB), 1);
+    await library.setVideo(hashB, { videoId: 'mine', offsetSeconds: 3 });
+    expect((await library.open(tab(hashB), 2, { videoId: 'vid', offsetSeconds: 1 }))?.video).toEqual({ videoId: 'mine', offsetSeconds: 3 });
+  });
+});
+
+describe('the saved position (KTD2)', () => {
+  const stored = { tabHash: hashA, title: 'Riff', fileName: 'riff.gp', fingerprint: '1:x', openedAt: 1, recording: null, video: null, source: null, trackIndex: 0, tuningId: 'file' };
+
+  it('accepts an entry with no position or a non-negative whole-number position', () => {
+    expect(isLibraryEntry(stored)).toBe(true);
+    expect(isLibraryEntry({ ...stored, position: 0 })).toBe(true);
+    expect(isLibraryEntry({ ...stored, position: 3 })).toBe(true);
+  });
+
+  it('rejects a negative, fractional, non-numeric or null position', () => {
+    for (const position of [-1, 1.5, '3', null, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(isLibraryEntry({ ...stored, position })).toBe(false);
+    }
+  });
+
+  it('saves the position once, leaving the opened time alone, and the same index again writes nothing', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1000);
+    const before = backend.writes;
+    expect(await library.setPosition(hashA, 3)).toBe(true);
+    expect(backend.writes - before).toBe(1);
+    expect(await library.find(hashA)).toMatchObject({ position: 3, openedAt: 1000 });
+    expect(await library.setPosition(hashA, 3)).toBe(true);
+    expect(backend.writes - before).toBe(1);
+  });
+
+  it('refuses an invalid index without writing, keeping the saved one', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    await library.setPosition(hashA, 2);
+    const before = backend.writes;
+    expect(await library.setPosition(hashA, -1)).toBe(false);
+    expect(await library.setPosition(hashA, 1.5)).toBe(false);
+    expect(backend.writes).toBe(before);
+    expect((await library.find(hashA))?.position).toBe(2);
+  });
+
+  it('reports not saved for a song that is not in the library, or when the backend fails', async () => {
+    const backend = memoryBackend();
+    expect(await new SongLibrary(backend).setPosition(hashA, 1)).toBe(false);
+    expect(backend.writes).toBe(0);
+    await expect(new SongLibrary(failingBackend()).setPosition(hashA, 1)).resolves.toBe(false);
+  });
+
+  it('keeps the saved position when the same tab opens again', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setPosition(hashA, 7);
+    expect((await library.open(tab(hashA), 2))?.position).toBe(7);
+    expect((await library.find(hashA))?.position).toBe(7);
+  });
+
+  it('changes only the position, keeping backing and setup', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.setRecording(hashA, recording(hashC));
+    await library.setTrackAndTuning(hashA, 2, 'drop-d');
+    await library.setPosition(hashA, 4);
+    expect(await library.find(hashA)).toMatchObject({ recording: recording(hashC), trackIndex: 2, tuningId: 'drop-d', position: 4 });
+  });
+});
+
+describe('SongLibrary listing', () => {
+  it('covers R7: orders by last opened, newest first', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA, 'Alpha', 'a.gp'), 3000);
+    await library.open(tab(hashB, 'Bravo', 'b.gp'), 1000);
+    await library.open(tab(hashC, 'Charlie', 'c.gp'), 2000);
+    expect((await library.list()).map((s) => s.entry.title)).toEqual(['Alpha', 'Charlie', 'Bravo']);
+  });
+
+  it('covers R7: two songs titled "Riff" both show their file names; a unique title does not', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA, 'Riff', 'riff-live.gp'), 1);
+    await library.open(tab(hashB, 'Riff', 'riff-studio.gp'), 2);
+    await library.open(tab(hashC, 'Solo', 'solo.gp'), 3);
+    const listed = await library.list();
+    expect(listed.map((s) => [s.title, s.showFileName])).toEqual([
+      ['Solo', false],
+      ['Riff', true],
+      ['Riff', true],
+    ]);
+  });
+
+  it('lists an entry with an empty title under its file name', async () => {
+    const entry = { tabHash: hashA, title: '', fileName: 'untitled.gp', fingerprint: '1:x', openedAt: 1, recording: null, video: null, source: null, trackIndex: 0, tuningId: 'file' };
+    const listed = await new SongLibrary(memoryBackend([entry])).list();
+    expect(listed[0].title).toBe('untitled.gp');
+  });
+});
+
+describe('SongLibrary failure handling (R12)', () => {
+  it('reads as empty and reports every change as not saved when the backend fails, without throwing', async () => {
+    const library = new SongLibrary(failingBackend());
+    await expect(library.list()).resolves.toEqual([]);
+    await expect(library.find(hashA)).resolves.toBeNull();
+    await expect(library.open(tab(hashA), 1)).resolves.toBeNull();
+    await expect(library.setRecording(hashA, recording(hashB))).resolves.toBe(false);
+    await expect(library.clearRecording(hashA)).resolves.toBe(false);
+    await expect(library.setVideo(hashA, null)).resolves.toBe(false);
+    await expect(library.setSource(hashA, 'video')).resolves.toBe(false);
+    await expect(library.setTrackAndTuning(hashA, 1, 'file')).resolves.toBe(false);
+  });
+
+  it('does not write when the read fails, so an unreadable index is never overwritten', async () => {
+    let wrote = false;
+    const library = new SongLibrary({
+      read: async () => {
+        throw new Error('locked');
+      },
+      write: async () => {
+        wrote = true;
+      },
+    });
+    expect(await library.open(tab(hashA), 1)).toBeNull();
+    expect(wrote).toBe(false);
+  });
+
+  it('reports not saved when the write fails', async () => {
+    const backend = memoryBackend();
+    backend.write = async () => {
+      throw new Error('disk full');
+    };
+    expect(await new SongLibrary(backend).open(tab(hashA), 1)).toBeNull();
+  });
+
+  it('reads a malformed index answer as empty', async () => {
+    const library = new SongLibrary({ read: async () => ({ index: null, quarantined: false }) as never, write: async () => undefined });
+    await expect(library.list()).resolves.toEqual([]);
+  });
+
+  it('keeps working after a failed operation', async () => {
+    const backend = memoryBackend();
+    const write = backend.write;
+    let fail = true;
+    backend.write = async (index) => {
+      if (fail) throw new Error('disk full');
+      return write(index);
+    };
+    const library = new SongLibrary(backend);
+    expect(await library.open(tab(hashA), 1)).toBeNull();
+    fail = false;
+    expect(await library.open(tab(hashA), 2)).not.toBeNull();
+  });
+});
+
+describe('renaming (KTD1)', () => {
+  const stored = { tabHash: hashA, title: 'Riff', fileName: 'riff.gp', fingerprint: '1:x', openedAt: 1, recording: null, video: null, source: null, trackIndex: 0, tuningId: 'file' };
+
+  it('accepts an entry with a one-line custom title of up to 120 characters, and rejects anything else', () => {
+    expect(isLibraryEntry({ ...stored, customTitle: 'Warmup' })).toBe(true);
+    expect(isLibraryEntry({ ...stored, customTitle: 'x'.repeat(120) })).toBe(true);
+    for (const customTitle of ['', '   ', 'x'.repeat(121), 'two\nlines', 'cr\rhere', 7, null]) {
+      expect(isLibraryEntry({ ...stored, customTitle })).toBe(false);
+    }
+  });
+
+  it('shows the custom title over the tab title', () => {
+    expect(displayTitle({ title: 'Riff', fileName: 'riff.gp', customTitle: 'Warmup' })).toBe('Warmup');
+    expect(displayTitle({ title: 'Riff', fileName: 'riff.gp' })).toBe('Riff');
+  });
+
+  it('covers AE1: a rename survives reopening with a new tab title, and the tab title still refreshes underneath', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA, 'Riff'), 1);
+    expect(await library.rename(hashA, 'Warmup')).toBe(true);
+    const again = await library.open(tab(hashA, 'Riff v2', 'riff-copy.gp'), 2);
+    expect(again).toMatchObject({ title: 'Riff v2', customTitle: 'Warmup' });
+    expect((await library.list())[0].title).toBe('Warmup');
+  });
+
+  it('an empty rename removes the custom title, so the tab title shows again', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA, 'Riff'), 1);
+    await library.rename(hashA, 'Warmup');
+    expect(await library.rename(hashA, '  \n ')).toBe(true);
+    expect(backend.data.entries[0]).not.toHaveProperty('customTitle');
+    expect((await library.list())[0].title).toBe('Riff');
+  });
+
+  it('trims, keeps to one line and caps at 120 characters without splitting a character', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA), 1);
+    await library.rename(hashA, '  Warm\r\n  up  ');
+    expect((await library.find(hashA))?.customTitle).toBe('Warm up');
+    await library.rename(hashA, `  ${'y'.repeat(130)}`);
+    expect((await library.find(hashA))?.customTitle).toBe('y'.repeat(120));
+    await library.rename(hashA, `${'z'.repeat(119)}\u{1F3B8}`);
+    expect((await library.find(hashA))?.customTitle).toBe('z'.repeat(119));
+  });
+
+  it('allows duplicate names, which then show their file names', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.open(tab(hashA, 'One', 'one.gp'), 1);
+    await library.open(tab(hashB, 'Two', 'two.gp'), 2);
+    await library.rename(hashA, 'Same');
+    await library.rename(hashB, 'Same');
+    expect((await library.list()).map((s) => [s.title, s.showFileName])).toEqual([
+      ['Same', true],
+      ['Same', true],
+    ]);
+  });
+
+  it('reports not saved for a song that is not in the library, or when the backend fails', async () => {
+    const backend = memoryBackend();
+    expect(await new SongLibrary(backend).rename(hashA, 'x')).toBe(false);
+    expect(backend.writes).toBe(0);
+    await expect(new SongLibrary(failingBackend()).rename(hashA, 'x')).resolves.toBe(false);
+  });
+});
+
+describe('committing a removal (KTD2, KTD3)', () => {
+  /** The context for committing the first hash, with every hash pending; that removal counts as still pending while its hash is. */
+  const pendingOf = (...hashes: string[]) => {
+    const pendingHashes = new Set(hashes);
+    return { pendingHashes, stillPending: () => pendingHashes.has(hashes[0]), storingHashes: new Set<string>() };
+  };
+
+  async function withSongs(...songs: [string, string | null][]) {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    for (const [tabHash, rec] of songs) {
+      await library.open(tab(tabHash), 1);
+      if (rec) await library.setRecording(tabHash, recording(rec));
+    }
+    return { backend, library };
+  }
+
+  it('removes the entry and asks for the tab and its unshared recording to be deleted, returning the entry', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const result = await library.commitRemoval(hashA, pendingOf(hashA));
+    expect(result).toEqual({ entry: expect.objectContaining({ tabHash: hashA, recording: recording(hashC) }), deleteTab: true, deleteRecording: true });
+    expect(backend.data.entries).toHaveLength(0);
+  });
+
+  it('covers AE2: with a shared recording, the first commit keeps it and the second deletes it', async () => {
+    const { library } = await withSongs([hashA, hashC], [hashB, hashC]);
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toMatchObject({ deleteTab: true, deleteRecording: false });
+    expect(await library.commitRemoval(hashB, pendingOf(hashB))).toMatchObject({ deleteTab: true, deleteRecording: true });
+    expect(await library.list()).toEqual([]);
+  });
+
+  it('a song whose own removal is pending still counts as a user of the recording', async () => {
+    const { library } = await withSongs([hashA, hashC], [hashB, hashC]);
+    expect(await library.commitRemoval(hashA, pendingOf(hashA, hashB))).toMatchObject({ deleteRecording: false });
+  });
+
+  it('a song with no recording deletes only its tab', async () => {
+    const { library } = await withSongs([hashA, null]);
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toMatchObject({ deleteTab: true, deleteRecording: false });
+  });
+
+  it('an unreadable entry naming the hash under any field keeps the recording', async () => {
+    const odd = { tabHash: 'zz', future: { backing: [{ sha: hashC }] } };
+    const backend = memoryBackend([odd]);
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    await library.setRecording(hashA, recording(hashC));
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toMatchObject({ deleteTab: true, deleteRecording: false });
+    expect(backend.data.entries).toEqual([odd]);
+  });
+
+  it('keeps a recording or tab whose copy is being stored right now (R13)', async () => {
+    const { library } = await withSongs([hashA, hashC]);
+    expect(await library.commitRemoval(hashA, { ...pendingOf(hashA), storingHashes: new Set([hashC, hashA]) })).toMatchObject({
+      deleteTab: false,
+      deleteRecording: false,
+    });
+  });
+
+  it('reads the pending set when the step runs, so a cancel that arrived first wins and nothing changes (R6)', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const pendingHashes = new Set([hashA]);
+    const before = backend.writes;
+    const committed = library.commitRemoval(hashA, { pendingHashes, stillPending: () => pendingHashes.has(hashA), storingHashes: new Set() });
+    pendingHashes.delete(hashA);
+    expect(await committed).toBeNull();
+    expect(backend.writes).toBe(before);
+    expect(await library.find(hashA)).not.toBeNull();
+  });
+
+  it('commits nothing when this removal is no longer the pending one, even though its hash is pending again (R6)', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const before = backend.writes;
+    expect(await library.commitRemoval(hashA, { pendingHashes: new Set([hashA]), stillPending: () => false, storingHashes: new Set() })).toBeNull();
+    expect(backend.writes).toBe(before);
+    expect(await library.find(hashA)).not.toBeNull();
+  });
+
+  it('gives null and changes nothing for a song not in the library, or when the index cannot be read or written', async () => {
+    const backend = memoryBackend();
+    expect(await new SongLibrary(backend).commitRemoval(hashA, pendingOf(hashA))).toBeNull();
+    expect(backend.writes).toBe(0);
+    expect(await new SongLibrary(failingBackend()).commitRemoval(hashA, pendingOf(hashA))).toBeNull();
+    const { backend: full, library } = await withSongs([hashA, hashC]);
+    full.write = async () => {
+      throw new Error('disk full');
+    };
+    expect(await library.commitRemoval(hashA, pendingOf(hashA))).toBeNull();
+    expect(full.data.entries).toHaveLength(1);
+  });
+
+  it('tells beforeWrite which files it will delete before the index is written, inside the same step (KTD3)', async () => {
+    const { backend, library } = await withSongs([hashA, hashC]);
+    const seen: { writes: number; deleteTab: boolean; deleteRecording: boolean }[] = [];
+    await library.commitRemoval(hashA, {
+      ...pendingOf(hashA),
+      beforeWrite: (removal) => void seen.push({ writes: backend.writes, deleteTab: removal.deleteTab, deleteRecording: removal.deleteRecording }),
+    });
+    expect(seen).toEqual([{ writes: 2, deleteTab: true, deleteRecording: true }]);
+    expect(backend.writes).toBe(3);
+  });
+
+  it('does not call beforeWrite for a cancelled removal', async () => {
+    const { library } = await withSongs([hashA, hashC]);
+    let called = false;
+    expect(await library.commitRemoval(hashA, { pendingHashes: new Set(), stillPending: () => false, storingHashes: new Set(), beforeWrite: () => void (called = true) })).toBeNull();
+    expect(called).toBe(false);
+  });
+});
+
+describe('dropping pending entries at close (KTD2)', () => {
+  it('removes every entry whose hash is pending when the step runs, and keeps the rest and unreadable entries', async () => {
+    const odd = { tabHash: 'zz', future: true };
+    const backend = memoryBackend([odd]);
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    await library.open(tab(hashB), 2);
+    await library.open(tab(hashC), 3);
+    const pending = new Set([hashA]);
+    const dropped = library.removeEntries(pending);
+    pending.add(hashB);
+    expect(await dropped).toBe(true);
+    expect(backend.data.entries).toEqual([odd, expect.objectContaining({ tabHash: hashC })]);
+  });
+
+  it('writes nothing when no pending entry is in the index, and gives false when the index cannot be written', async () => {
+    const backend = memoryBackend();
+    const library = new SongLibrary(backend);
+    await library.open(tab(hashA), 1);
+    const before = backend.writes;
+    expect(await library.removeEntries(new Set([hashB]))).toBe(true);
+    expect(backend.writes).toBe(before);
+    backend.write = async () => {
+      throw new Error('disk full');
+    };
+    expect(await library.removeEntries(new Set([hashA]))).toBe(false);
+  });
+});
+
+describe('the quarantine flag (KTD5)', () => {
+  it('latches a one-shot quarantined read for the rest of the session', async () => {
+    let quarantined = true;
+    const library = new SongLibrary({
+      read: async () => {
+        const answer = { index: { version: 1, entries: [] } as LibraryIndex, quarantined };
+        quarantined = false;
+        return answer;
+      },
+      write: async () => undefined,
+    });
+    expect(library.quarantined).toBe(false);
+    await library.list();
+    expect(library.quarantined).toBe(true);
+    await library.list();
+    await library.open(tab(hashA), 1);
+    expect(library.quarantined).toBe(true);
+  });
+
+  it('stays false when no read was quarantined', async () => {
+    const library = new SongLibrary(memoryBackend());
+    await library.list();
+    expect(library.quarantined).toBe(false);
+  });
+});

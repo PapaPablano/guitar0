@@ -9,6 +9,7 @@ import { createRunGuard } from '../stems/run-guard';
 import { SavedStems, shellStemIndex } from '../stems/saved-stems';
 import { isDesktop } from './desktop';
 import { isPro, useTier } from './tier';
+import type { StemsAutoStart } from './library-restore';
 import { describeEngine, setupBar, startEngineSetup, type ShellEngineStatus } from './engine-state';
 import { guitarAmount, guitarAmountLabel, passNote, scheduleForChoice, SCHEDULE_CHOICES, type ScheduleChoice, setGuitarAmount, separateControl, setStemVolume, toggleStemMute, toggleStemSolo, volumeLabel } from './stem-controls';
 
@@ -27,9 +28,17 @@ interface StemPanelProps {
   active: ActiveStems | null;
   mix: MixState;
   onMixChange: (mix: MixState) => void;
-  onActivate: (stems: ActiveStems | null) => void;
+  /** Plays these stems, or the plain recording for null; `auto` when a reopened song's saved stems started by themselves. */
+  onActivate: (stems: ActiveStems | null, auto?: boolean) => void;
+  /** A reopened song's saved stems, to start by themselves once the engine is ready (KTD8); desktop only. */
+  autoStart?: StemsAutoStart;
   /** Why separating is unavailable right now, such as a recording with video being made; null when it is available. */
   lockedReason?: string | null;
+  /**
+   * Told when a separation (or a load of saved stems) starts, with a way to cancel it, and with null when it ends or the
+   * panel goes away; leaving the song cancels it (KTD1).
+   */
+  onSeparatingChange?: (cancel: (() => void) | null) => void;
 }
 
 const savedStems = new SavedStems(shellStemIndex);
@@ -43,7 +52,7 @@ interface Source {
 }
 
 /** Separate and mix controls for a loaded recording. Renders nothing outside the desktop app. */
-export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate, lockedReason = null }: StemPanelProps) {
+export function StemPanel({ status, recording, durationSeconds, active, mix, onMixChange, onActivate, autoStart, lockedReason = null, onSeparatingChange }: StemPanelProps) {
   const desktop = isDesktop();
   const tier = useTier();
   const [savedJob, setSavedJob] = useState<string | null>(null);
@@ -105,6 +114,23 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
     };
   }, [recording, durationSeconds]);
 
+  // The app hears whether a separation runs, and how to cancel it, so leaving the song can stop it.
+  const separatingChange = useRef(onSeparatingChange);
+  separatingChange.current = onSeparatingChange;
+  useEffect(() => {
+    separatingChange.current?.(busy ? () => abort.current?.abort() : null);
+  }, [busy]);
+  useEffect(() => () => separatingChange.current?.(null), []);
+
+  // A reopened song's saved stems play by themselves on the first ready status, unless the player got there first (KTD8).
+  useEffect(() => {
+    if (!autoStart || !desktop) return;
+    if (autoStart.take({ recording, engineReady: client !== null, hasSaved: savedJob !== null, active: active !== null, busy })) {
+      if (recording) void start(recordingSource(recording), true);
+    }
+    // start reads only props, refs and state setters
+  }, [autoStart, desktop, recording, client, savedJob, active, busy]);
+
   if (!desktop) return null;
 
   const engine = describeEngine(status, !isPro(tier));
@@ -112,7 +138,7 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
   const control = separateControl({ engine, hasRecording: recording !== null, hasSaved: savedJob !== null, busy });
 
   /** Separates (or reuses saved stems for) a source, then plays them. */
-  async function start(source: Source) {
+  async function start(source: Source, auto = false) {
     if (!client) return;
     setError(null);
     setBusy(true);
@@ -142,7 +168,7 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
         loaded.clock.dispose();
         return;
       }
-      onActivate({ ...loaded, title });
+      onActivate({ ...loaded, title }, auto);
     } catch (e) {
       if (!(e instanceof SeparationCancelled)) setError(e instanceof Error ? e.message : 'Separation failed.');
     } finally {
@@ -154,17 +180,23 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
     }
   }
 
+  /** The loaded recording as a source of stems. */
+  function recordingSource(file: File): Source {
+    return {
+      key: async () => hashRef.current ?? (hashRef.current = await hashFile(file)),
+      title: file.name,
+      separate: async (c, onProgress, signal) => ({ jobId: await c.separate(file, { onProgress, signal }) }),
+    };
+  }
+
   function separateRecording() {
     if (!recording) return;
+    autoStart?.cancel();
     if (control.startsSetup) {
       startEngineSetup().catch((e: unknown) => setError(String(e)));
       return;
     }
-    void start({
-      key: async () => hashRef.current ?? (hashRef.current = await hashFile(recording)),
-      title: recording.name,
-      separate: async (c, onProgress, signal) => ({ jobId: await c.separate(recording, { onProgress, signal }) }),
-    });
+    void start(recordingSource(recording));
   }
 
   function change(update: (current: MixState) => MixState) {
@@ -246,7 +278,13 @@ export function StemPanel({ status, recording, durationSeconds, active, mix, onM
             <button type="button" onClick={() => change(() => initialMix())}>
               Reset mix
             </button>
-            <button type="button" onClick={() => onActivate(null)}>
+            <button
+              type="button"
+              onClick={() => {
+                autoStart?.cancel();
+                onActivate(null);
+              }}
+            >
               {recording ? 'Back to the plain recording' : 'Close stems'}
             </button>
           </div>

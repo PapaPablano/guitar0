@@ -183,6 +183,66 @@ button[aria-pressed='true'] {
   margin-top: 20px;
 }
 
+.library {
+  margin-top: 24px;
+  text-align: left;
+}
+
+.library h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+/* Capped so a long list scrolls inside the start screen instead of pushing the search below the fold. */
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  /* Room for the focus outline, which the scroll box would otherwise clip. */
+  padding: 2px;
+}
+
+/* Rows keep their own background, so the drop zone's drag-over tint does not restyle them. */
+.library-song {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  background: var(--panel);
+}
+
+.library-title,
+.library-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-file,
+.library-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.library-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.library-backing {
+  color: var(--accent-cool);
+}
+
 .audio-sync {
   display: flex;
   align-items: center;
@@ -614,6 +674,132 @@ button.primary:hover:not(:disabled) {
 
 .menu-panel select {
   width: 100%;
+}
+
+/* The Songs menu's panel hangs from the header's right edge, not its own button, which can wrap to the start of a header
+   row; at the 720px minimum width a panel anchored there would run off the left of the window. */
+.topbar {
+  position: relative;
+}
+
+.songs-menu {
+  position: static;
+}
+
+.songs-menu .menu-panel {
+  width: min(360px, calc(100vw - 20px));
+}
+
+.songs-menu .library {
+  margin-top: 0;
+}
+
+.library-notice {
+  margin: 0 0 8px;
+  color: var(--accent-warm);
+  font-size: 0.85rem;
+}
+
+/* A saved song: its row button (or the rename field in its place), and its "⋯" menu beside it, not inside it (KTD8). */
+.library-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.library-row > .library-song,
+.library-row > .library-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.library-rename {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+}
+
+.library-badge {
+  color: var(--accent-warm);
+}
+
+.row-menu {
+  flex: none;
+}
+
+.row-menu > summary {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 6px 10px;
+}
+
+.row-menu > summary::after {
+  content: none;
+}
+
+/* The row menu opens to the left of its button, over its own row, so at the 720px minimum width it stays inside the
+   list's scroll box in both the start screen (about 490px wide) and the Songs menu (about 330px). Placed after the
+   Songs menu's panel rule, which would otherwise size it too. */
+.row-menu > .menu-panel {
+  top: 0;
+  right: calc(100% + 6px);
+  left: auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  min-width: 0;
+  max-width: 260px;
+  padding: 8px;
+}
+
+.library-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Undo notices for removed songs, newest first (KTD8): under the start screen's actions and the player's status line. */
+.undo-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The region stays in the page while empty, so the first notice is announced; this takes back the page's flex gap. */
+.app > .undo-notices:empty {
+  margin-top: -10px;
+}
+
+.undo-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 6px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.undo-notice > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropzone .undo-notices:not(:empty),
+.dropzone .set-aside {
+  margin-top: 12px;
+  text-align: left;
 }
 
 .practice-tools {

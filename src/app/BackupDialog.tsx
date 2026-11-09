@@ -3,10 +3,12 @@ import { backupFailure, backupMessage, createBackup, listBackups, openBackupsFol
 
 interface BackupDialogProps {
   onClose: () => void;
+  /** True while pending song removals commit; Back up now and Restore wait for them, so a backup never holds a removed song (R7). */
+  preparing?: boolean;
 }
 
 /** Back up and restore the player's practice data (desktop only). Stem audio is not included; it can be made again. */
-export function BackupDialog({ onClose }: BackupDialogProps) {
+export function BackupDialog({ onClose, preparing = false }: BackupDialogProps) {
   const [backups, setBackups] = useState<string[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -40,10 +42,10 @@ export function BackupDialog({ onClose }: BackupDialogProps) {
       <section className="dialog" role="dialog" aria-modal="true" aria-label="Back up and restore">
         <h2>Back up and restore</h2>
         <p className="muted">
-          A backup keeps your saved recording settings, alignments and list of saved stems. It does not include the stem audio itself, which can be made again, or your Pro status.
+          A backup keeps your saved songs with their tabs and recordings, your saved recording settings, alignments and list of saved stems. Recordings make a backup large, so it can take a minute. It does not include the stem audio itself, which can be made again, or your Pro status.
         </p>
         <div className="actions">
-          <button type="button" disabled={busy} onClick={() => void run(async () => backupMessage(await createBackup()))}>
+          <button type="button" disabled={busy || preparing} onClick={() => void run(async () => backupMessage(await createBackup()))}>
             Back up now
           </button>
           <button type="button" onClick={() => void openBackupsFolder().catch(() => {})}>
@@ -58,7 +60,7 @@ export function BackupDialog({ onClose }: BackupDialogProps) {
             {backups.map((name) => (
               <li key={name}>
                 <span>{name}</span>{' '}
-                <button type="button" disabled={busy} onClick={() => void run(async () => restoreMessage(await restoreBackup(name)))}>
+                <button type="button" disabled={busy || preparing} onClick={() => void run(async () => restoreMessage(await restoreBackup(name)))}>
                   Restore
                 </button>
               </li>

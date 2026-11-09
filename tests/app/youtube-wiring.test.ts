@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { Clock } from '../../src/audio/clock';
 import { FREE, embedAllowed, type TierState } from '../../src/app/tier';
-import { chooseClock, exportVideoNotice, ownClock, videoIsHeard, videoOffered } from '../../src/app/youtube-backing';
+import {
+  chooseClock,
+  createRestoreHold,
+  exportVideoNotice,
+  ownClock,
+  takesOverFromVideo,
+  videoIsHeard,
+  videoOffered,
+} from '../../src/app/youtube-backing';
 import { dockRules } from '../../src/app/youtube-dock';
 
 const clock = (name: string) => ({ name }) as unknown as Clock;
@@ -81,5 +89,73 @@ describe('videoOffered', () => {
 
   it('does not offer it when the build flag is off', () => {
     expect(videoOffered(false, PRO)).toBe(false);
+  });
+});
+
+describe('restore hold (AE2)', () => {
+  /** Whether a recording or stems arriving now take over from the video's Original audio on the open tab. */
+  const takesOver = (hold: ReturnType<typeof createRestoreHold>, openTab: string | null) =>
+    takesOverFromVideo({ videoReady: true, ownLoaded: true, source: 'original', restoring: hold.holds(openTab) });
+
+  it("applies a source restored before its tab opens on that tab's open, and not on another tab's", () => {
+    const hold = createRestoreHold();
+    expect(hold.restore('song', 'synth', null)).toBeNull();
+    expect(hold.tabOpened('song')).toBe('synth');
+
+    const other = createRestoreHold();
+    other.restore('song', 'synth', null);
+    expect(other.tabOpened('different')).toBe('original');
+  });
+
+  it('applies the source at once when its tab is already open', () => {
+    const hold = createRestoreHold();
+    hold.tabOpened('song');
+    expect(hold.restore('song', 'synth', 'song')).toBe('synth');
+    expect(hold.holds('song')).toBe(true);
+  });
+
+  it('keeps a recording or stems from taking over while the hold covers the open tab', () => {
+    const hold = createRestoreHold();
+    hold.restore('song', 'original', null);
+    hold.tabOpened('song');
+    expect(takesOver(hold, 'song')).toBe(false);
+  });
+
+  it("ends the hold on endRestore or a choice of the player's own, so a recording takes over again", () => {
+    // attach, remove, the player's source choice and endRestore all end the hold the same way.
+    for (const choice of ['attach', 'remove', 'source', 'endRestore']) {
+      const hold = createRestoreHold();
+      hold.restore('song', 'original', null);
+      hold.tabOpened('song');
+      hold.end();
+      expect(hold.holds('song'), choice).toBe(false);
+      expect(takesOver(hold, 'song'), choice).toBe(true);
+    }
+  });
+
+  it('clears the hold when another tab opens, and does not bring it back on returning', () => {
+    const hold = createRestoreHold();
+    hold.restore('song', 'synth', null);
+    hold.tabOpened('song');
+    expect(hold.tabOpened('other')).toBe('original');
+    expect(hold.holds('other')).toBe(false);
+    expect(takesOver(hold, 'other')).toBe(true);
+    expect(hold.tabOpened('song')).toBe('original');
+    expect(hold.holds('song')).toBe(false);
+  });
+
+  it('consumes a waiting source once, so the tab reopening later opens with Original', () => {
+    const hold = createRestoreHold();
+    hold.restore('song', 'synth', null);
+    expect(hold.tabOpened('song')).toBe('synth');
+    expect(hold.tabOpened('song')).toBe('original');
+  });
+
+  it('never reports a player change: restore only hands back the source for the caller to apply silently', () => {
+    const hold = createRestoreHold();
+    // The hold has no callbacks to call; restoring yields a value or null and nothing else.
+    expect(hold.restore('song', 'synth', 'song')).toBe('synth');
+    expect(hold.restore('song', 'original', null)).toBeNull();
+    expect(Object.keys(hold).sort()).toEqual(['end', 'holds', 'restore', 'tabOpened']);
   });
 });

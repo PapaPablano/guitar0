@@ -6,6 +6,8 @@ import {
   PROFILE_CAP,
   PROFILE_VERSION,
   normalizeProfile,
+  withProfile,
+  wouldTrim,
   type ProfileFileBackend,
 } from '../../src/audio/recording-profile';
 
@@ -85,6 +87,33 @@ describe('FileProfileStore', () => {
     await expect(store.load('b')).resolves.not.toBeNull();
   });
 
+  it('with 201 profiles where the oldest belongs to a library song, keeps that one and drops the next oldest (KTD6)', async () => {
+    const entries = Array.from({ length: PROFILE_CAP }, (_, i) => ({ hash: `h${i}`, profile: { version: PROFILE_VERSION, offset: 1 } }));
+    const store = new FileProfileStore(memoryBackend({ version: PROFILE_VERSION, entries }));
+    store.keepHashes(async () => ['h0']);
+    await store.save('new', { version: PROFILE_VERSION, offset: 1 });
+    await expect(store.load('h0')).resolves.not.toBeNull();
+    await expect(store.load('h1')).resolves.toBeNull();
+    await expect(store.load('h2')).resolves.not.toBeNull();
+    await expect(store.load('new')).resolves.not.toBeNull();
+  });
+
+  it('keeps every library profile even past the cap, and still keeps the newest', () => {
+    const file = { version: PROFILE_VERSION, entries: ['a', 'b'].map((hash) => ({ hash, profile: { version: PROFILE_VERSION, offset: 1 } })) };
+    const next = withProfile(file, 'c', { version: PROFILE_VERSION, offset: 1 }, 2, new Set(['a', 'b']));
+    expect(next.entries.map((e) => e.hash)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('trims as before when the list of library hashes cannot be had', async () => {
+    const store = new FileProfileStore(memoryBackend(), 2);
+    store.keepHashes(async () => {
+      throw new Error('library unreadable');
+    });
+    for (const h of ['a', 'b', 'c']) await store.save(h, { version: PROFILE_VERSION, offset: 1 });
+    await expect(store.load('a')).resolves.toBeNull();
+    await expect(store.load('c')).resolves.not.toBeNull();
+  });
+
   it('re-saving a hash refreshes it so it is not the next evicted', async () => {
     const store = new FileProfileStore(memoryBackend(), 2);
     await store.save('a', { version: PROFILE_VERSION, offset: 1 });
@@ -133,6 +162,31 @@ describe('FileProfileStore', () => {
 
   it('has a sensible default cap', () => {
     expect(PROFILE_CAP).toBeGreaterThan(10);
+  });
+});
+
+describe('wouldTrim', () => {
+  const profile = { version: PROFILE_VERSION, offset: 1 };
+  const fileOf = (n: number) => ({ version: PROFILE_VERSION, entries: Array.from({ length: n }, (_, i) => ({ hash: `h${i}`, profile })) });
+  const cap = 3;
+
+  it.each([cap - 2, cap - 1, cap])('matches whether withProfile drops an entry when the file holds %i before a new hash', (n) => {
+    const file = fileOf(n);
+    const trimmed = withProfile(file, 'new', profile, cap).entries.length < n + 1;
+    expect(wouldTrim(file, 'new', cap)).toBe(trimmed);
+    expect(trimmed).toBe(n + 1 > cap);
+  });
+
+  it('does not trim when re-saving a hash already in a full file', () => {
+    const file = fileOf(cap);
+    expect(wouldTrim(file, 'h0', cap)).toBe(false);
+    expect(withProfile(file, 'h0', profile, cap).entries).toHaveLength(cap);
+  });
+
+  it('treats a cap that is not a number as trimming, as withProfile does', () => {
+    const file = fileOf(2);
+    expect(wouldTrim(file, 'new', Number.NaN)).toBe(true);
+    expect(withProfile(file, 'new', profile, Number.NaN).entries.map((e) => e.hash)).toEqual(['new']);
   });
 });
 

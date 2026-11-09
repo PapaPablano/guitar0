@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Clock } from '../audio/clock';
 import { createSynthSession, type SynthClock } from '../audio/synth-bridge';
 import { loadUserAudio, type UserAudioClock } from '../audio/user-audio';
@@ -16,6 +16,7 @@ import { applyFileTuning, captureTunings, type WrittenTunings } from '../model/f
 import type { Timeline } from '../model/score';
 import { getStripLayout, scoreBarStartSeconds, stripBarFor, type LoopBars } from '../render/tab-strip';
 import { DropZone } from './DropZone';
+import { SongsMenu, UndoNotices } from './LibraryList';
 import { LoopControls } from './LoopControls';
 import { decodeUserRecording, exportLength, outputWindow } from '../export/audio';
 import { slicePcm } from '../export/audio-file';
@@ -54,9 +55,36 @@ import type { LandingReport } from '../audio/user-audio';
 import { playbackBarIndexAt } from '../model/bars';
 import { WebProfileStore } from '../audio/profile-store-web';
 import { shellProfileStore } from '../stems/profile-store-shell';
+import { SongLibrary, displayTitle, type LibraryEntry, type LibraryListing } from './library';
+import { checkFiles, deleteFile, desktopLibraryShell, hashBytes, readRecording, readTab, sameChecks, saveRecording, saveTab, shellLibraryBackend, type FileCheck } from './library-shell';
+import { createDeleteGuard, createRemovalCommit, createRemovals, guardedStore, type PendingRemoval } from './library-removals';
+import {
+  createResumeTracker,
+  createStemsAutoStart,
+  expectedResumeClocks,
+  isOpenSong,
+  leaveThenOpen,
+  parkSong as parkWith,
+  planRestore,
+  positionAt,
+  prepareReopen,
+  resumeFor,
+  runRestore,
+  seedVideoStore,
+  shouldSaveOnPause,
+  storedVideo,
+  TAB_MISSING,
+  tabWithTuning,
+  type OpenSong,
+  type ResumeClock,
+} from './library-restore';
+import { shellStemIndex } from '../stems/saved-stems';
+import { audioContext } from '../stems/load-stems';
+import { backingSourceFor, createLibrarySession, entryTuningId, libraryRecordingHashes } from './library-session';
 import { hashFile } from '../stems/file-hash';
 import { createRunGuard } from '../stems/run-guard';
-import { isDesktop, openExternal } from './desktop';
+import { invokeShell, isDesktop, listenShell, openExternal } from './desktop';
+import { createCloseHandler, openSongSettled } from './window-close';
 import { createDebouncer, DEBOUNCE_MS, decideRestore, fetchProfile } from './restore-profile';
 import { BackingTrack } from './BackingTrack';
 import { VideoPanel } from './VideoPanel';
@@ -110,6 +138,11 @@ interface Session {
   written: WrittenTunings;
 }
 
+/** Stands in for the removals' store on the web, which has none. */
+const noSubscribe = () => () => {};
+const NO_REMOVALS: readonly PendingRemoval[] = [];
+const noRemovals = () => NO_REMOVALS;
+
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [trackIndex, setTrackIndex] = useState(0);
@@ -126,6 +159,12 @@ export function App() {
   const [upgradeFor, setUpgradeFor] = useState<ProFeature | null>(null);
   /** Whether the back up and restore dialog is open (desktop only). */
   const [backupOpen, setBackupOpen] = useState(false);
+  /** True while the pending removals commit for Back up and restore, which keeps its buttons disabled (R7). */
+  const [backupPreparing, setBackupPreparing] = useState(false);
+  /** Which opening of the dialog set `backupPreparing`, so an earlier commit landing late does not clear it. */
+  const backupPrepareRun = useRef(0);
+  /** A note about the open song's library copy (R13, R14), shown in the player view until dismissed or a recording loads. */
+  const [libraryNote, setLibraryNote] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     const refresh = () => {
@@ -229,6 +268,156 @@ export function App() {
   const profileStore = useMemo<ProfileStore>(() => (isDesktop() ? shellProfileStore : new WebProfileStore()), []);
   /** Where each recording's alignment is remembered: its own readable file on the desktop, browser storage on the web. */
   const alignmentStore = useMemo<AlignmentStore>(() => (isDesktop() ? shellAlignmentStore : new WebAlignmentStore()), []);
+  /** The saved songs, desktop only (R17). */
+  const library = useMemo(() => (isDesktop() ? new SongLibrary(shellLibraryBackend()) : null), []);
+  /** The shell's library files, desktop only. */
+  const libraryShell = useMemo(() => (library ? desktopLibraryShell() : null), [library]);
+  /** The stored files a removal is deleting right now; a copy of one waits for its delete and copies afresh (KTD3). */
+  const deleteGuard = useMemo(() => createDeleteGuard(), []);
+  /**
+   * Stored copies found damaged when a song opened this session, by content hash (KTD7, R9): the lists badge them, and
+   * loading the same file again copies it afresh, which replaces the damaged copy and clears the badge (KTD6, R11).
+   */
+  const damagedHashes = useRef(new Set<string>());
+  const [damaged, setDamaged] = useState<ReadonlySet<string>>(() => new Set());
+  const markDamaged = useCallback((hash: string, isDamaged: boolean) => {
+    if (damagedHashes.current.has(hash) === isDamaged) return;
+    if (isDamaged) damagedHashes.current.add(hash);
+    else damagedHashes.current.delete(hash);
+    setDamaged(new Set(damagedHashes.current));
+  }, []);
+  /** Hashes `onFile` already worked out for the bytes it opened, by those bytes, so saving them does not hash them again. */
+  const openedTabHashes = useRef(new WeakMap<Uint8Array, string>());
+  /** Keeps the open song's library entry current; on the web it saves nothing. */
+  const librarySession = useMemo(() => {
+    const shell = libraryShell;
+    /** A copy that landed replaced any damaged copy of the same file. */
+    const stored = (hash: string | null | undefined) => {
+      if (hash) markDamaged(hash, false);
+    };
+    return createLibrarySession(
+      library && shell
+        ? {
+            library,
+            files: {
+              saveTab: async (bytes, storing) => {
+                const hash = await saveTab(
+                  shell,
+                  bytes,
+                  guardedStore(deleteGuard, storing, damagedHashes.current),
+                  openedTabHashes.current.get(bytes),
+                );
+                stored(hash);
+                return hash;
+              },
+              saveRecording: async (file, storing) => {
+                const ref = await saveRecording(shell, file, guardedStore(deleteGuard, storing, damagedHashes.current));
+                stored(ref?.hash);
+                return ref;
+              },
+            },
+            now: Date.now,
+            onNote: setLibraryNote,
+          }
+        : null,
+    );
+  }, [library, libraryShell, deleteGuard, markDamaged]);
+  /**
+   * Songs removed with an undo window (KTD2, R2–R7), desktop only: hidden from both lists until they commit, when the
+   * timer runs out, Back up and restore opens, or the window closes. The undo notices read `items` and call undo, pause, resume.
+   */
+  const removals = useMemo(() => {
+    const shell = libraryShell;
+    if (!library || !shell) return null;
+    return createRemovals({
+      commit: createRemovalCommit({
+        settledAll: () => librarySession.settledAll(),
+        commitRemoval: (tabHash, context) => library.commitRemoval(tabHash, context),
+        storingHashes: librarySession.storingHashes,
+        deleting: deleteGuard,
+        deleteFile: (kind, hash, extension) => deleteFile(shell, kind, hash, extension),
+      }),
+      dropEntries: (pending) => library.removeEntries(pending),
+    });
+  }, [library, libraryShell, librarySession, deleteGuard]);
+  const pendingRemovals = useSyncExternalStore(removals?.subscribe ?? noSubscribe, removals?.items ?? noRemovals);
+  /** The file tuning chosen for each track this session, as the library stores it; a track not listed is as written. */
+  const fileTunings = useRef(new Map<number, string>());
+  /** The saved songs on the start screen, and the recordings among them with saved stems (R7). */
+  const [songs, setSongs] = useState<LibraryListing[]>([]);
+  const [stemHashes, setStemHashes] = useState<ReadonlySet<string>>(() => new Set());
+  /** Whether each listed song's stored files were there when the list was last read (KTD7, R8), by tab hash. */
+  const [fileChecks, setFileChecks] = useState<ReadonlyMap<string, FileCheck>>(() => new Map());
+  /** The library file was set aside this session (R10, KTD5); the start screen says so until dismissed. */
+  const [setAside, setSetAside] = useState<'no' | 'shown' | 'dismissed'>('no');
+  /** What the start screen's status line says while a song reopens. */
+  const [loadingText, setLoadingText] = useState<string | undefined>(undefined);
+  /** Which reopen is the latest; opening another file or song makes an earlier one stale (R15). */
+  const reopenRuns = useRef(createRunGuard());
+  /** The song a reopen is opening and that reopen's run, so removing it can abandon the open (R5). */
+  const reopening = useRef<{ tabHash: string; run: number } | null>(null);
+  /** A reopened recording's saved stems, started once the engine is ready unless the player changes the mix first (KTD8). */
+  const stemsAuto = useMemo(() => createStemsAutoStart(), []);
+  /** The song open in the player, from `openTab`'s result or the reopened entry; null for the sample or no song (KTD7). */
+  const openSong = useRef<OpenSong | null>(null);
+  /** A reopened song's saved bar, applied to each clock that leads until they all have it (KTD4). */
+  const resume = useMemo(() => createResumeTracker(), []);
+  /** Cancels the separation running in the stem panel, while one runs; leaving the song calls it (KTD1). */
+  const cancelSeparation = useRef<(() => void) | null>(null);
+  /** Whether stems are being separated or loaded; the Songs menu reads it to warn that switching cancels it (R4). */
+  const [separating, setSeparating] = useState(false);
+  /** Which read of the saved songs is the latest; an earlier one that lands later is dropped. */
+  const songsRead = useRef(0);
+  /**
+   * Reads the saved songs and their saved stems again; the last-read list shows until this one lands. Songs whose removal
+   * is pending when it lands are left out (KTD2).
+   */
+  const refreshSongs = useCallback(() => {
+    if (!library) return;
+    const run = ++songsRead.current;
+    void Promise.all([library.list(), shellStemIndex.read().catch(() => ({}))]).then(([listing, stemIndex]) => {
+      if (run !== songsRead.current) return;
+      const pending = removals?.pendingHashes();
+      setSongs(pending ? listing.filter((song) => !pending.has(song.entry.tabHash)) : listing);
+      setStemHashes(new Set(Object.keys(stemIndex)));
+      if (library.quarantined) setSetAside((was) => (was === 'no' ? 'shown' : was));
+      // The cheap exists checks run after the rows show; a check that fails reads as present (KTD7).
+      const shell = libraryShell;
+      if (!shell) return;
+      void Promise.all(listing.map(async ({ entry }) => [entry.tabHash, await checkFiles(shell, entry)] as const)).then((checks) => {
+        if (run !== songsRead.current) return;
+        const next = new Map(checks);
+        setFileChecks((prev) => (sameChecks(prev, next) ? prev : next));
+      });
+    });
+  }, [library, libraryShell, removals]);
+  // The list is read again whenever the pending removals change: an undo brings a song back, and a finished commit makes
+  // any read that started before it stale. A pause or resume changes nothing here.
+  const pendingRead = useRef('');
+  useEffect(() => {
+    if (!removals) return;
+    return removals.subscribe(() => {
+      const key = [...removals.pendingHashes()].sort().join(',');
+      if (key === pendingRead.current) return;
+      pendingRead.current = key;
+      refreshSongs();
+    });
+  }, [removals, refreshSongs]);
+  // The list is read whenever the start screen shows, and again after the back up and restore dialog closes. The player's
+  // Songs menu reads it each time it opens.
+  const onStartScreen = session === null;
+  useEffect(() => {
+    if (!onStartScreen || backupOpen) return;
+    refreshSongs();
+    return () => {
+      songsRead.current += 1;
+    };
+  }, [refreshSongs, onStartScreen, backupOpen]);
+  // A saved song's recording keeps its offset and mix however many other recordings are opened (KTD6).
+  useEffect(() => {
+    if (!library) return;
+    shellProfileStore.keepHashes(async () => libraryRecordingHashes((await library.list()).map((listing) => listing.entry)));
+  }, [library]);
   // The strip and its line follow the store as parts become exact, a few times a second at most.
   useEffect(() => {
     if (!exactSession) return;
@@ -448,6 +637,26 @@ export function App() {
     };
   }, []);
 
+  // Closing the desktop window saves the open song's position first (KTD6, R7): the shell holds the close and emits
+  // `close-requested`, and exits itself after 2 s if this never answers. The latest render's park is used.
+  const parkOnClose = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    parkOnClose.current = () => parkSong();
+  });
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const close = createCloseHandler({
+      // Pending removals leave the index first; their files go in the next startup sweep (KTD2).
+      removePending: () => removals?.dropEntriesAll() ?? Promise.resolve(),
+      park: () => parkOnClose.current(),
+      flush: () => profileSaver.current?.flush(),
+      // A song whose tab is still being saved waits for its hash, so the parked position queued behind it lands (KTD6).
+      settled: () => openSongSettled(openSong.current, (tabHash) => librarySession.settled(tabHash)),
+      ready: () => invokeShell('app_close_ready'),
+    });
+    return listenShell('close-requested', () => void close());
+  }, [librarySession, removals]);
+
   /** Forgets the loaded recording's profile state, saving any pending change for it first. */
   function resetProfile() {
     profileSaver.current?.flush();
@@ -522,6 +731,8 @@ export function App() {
       setMix(plan.mix);
       stemsRef.current?.clock.setMix(plan.mix);
     }
+    // The saved alignment keeps the recording's place and moves tab time, so a reopen's resume is applied again (KTD4).
+    if (userClockRef.current === clockForLoad) applyResume('recording', (s) => clockForLoad.seek(s));
     // Something the user changed before the hash resolved: remember it, alongside whatever was restored.
     if (hash && userClockRef.current === clockForLoad && (offsetMoved.current || mixMoved.current)) {
       scheduleProfileSave(live.current.offset);
@@ -581,16 +792,31 @@ export function App() {
     setStems(null);
     userClockRef.current?.dispose();
     userClockRef.current = next;
+    live.current.userClock = next;
     setUserClock(next);
   }
 
-  function startSession(score: AlphaModel.Score, timeline: Timeline) {
-    session?.clock.dispose();
+  /**
+   * Opens a tab as the new session. A reopened song passes its track and file tuning, which is applied before the timeline
+   * and synth are built (KTD7). The new session is in `live` at once, so a recording loaded straight after, before the page
+   * renders again, plays against this tab (KTD5).
+   */
+  function startSession(score: AlphaModel.Score, opened: Timeline, overrides?: { trackIndex: number; tuningId: string }): Session {
+    live.current.session?.clock.dispose();
     replaceUserClock(null);
     resetProfile();
     setUserAudioError(null);
-    setSession({ timeline, score, clock: connectAudio(score, timeline), written: captureTunings(score) });
-    setTrackIndex(firstPlayableTrack(timeline));
+    stemsAuto.cancel();
+    // The caller says which song this is, and a reopen sets its resume, once the session exists.
+    resume.clear();
+    openSong.current = null;
+    const tuned = overrides && overrides.tuningId !== FILE_TUNING ? tabWithTuning(score, overrides.trackIndex, overrides.tuningId) : null;
+    const timeline = tuned?.timeline ?? opened;
+    const next: Session = { timeline, score, clock: connectAudio(score, timeline), written: tuned?.written ?? captureTunings(score) };
+    const track = overrides?.trackIndex ?? firstPlayableTrack(timeline);
+    setSession(next);
+    live.current = { ...live.current, session: next, trackIndex: track, tempoPercent: 100, userClock: null, offset: 0, mix: initialMix() };
+    setTrackIndex(track);
     setPlayAlong(false);
     setTones({});
     setLookahead(initialViewState().lookahead);
@@ -603,15 +829,111 @@ export function App() {
     setPlaying(false);
     setSeconds(0);
     setError(null);
+    setLibraryNote(null);
+    fileTunings.current = new Map(overrides ? [[track, overrides.tuningId]] : []);
+    return next;
   }
 
+  /**
+   * The first half of leaving the open song (KTD1): makes any running reopen stale (except from onReopen, whose own run did),
+   * pauses every clock, the video's included, and saves the song's position (KTD8). Nothing is released, so a new song that
+   * fails to open leaves this one where it was. On the start screen only the invalidate runs.
+   */
+  function parkSong(fromReopen = false) {
+    parkWith(
+      { fromReopen, song: openSong.current, pending: resume.pending, timeline: live.current.session?.timeline ?? null },
+      {
+        invalidateReopen: () => {
+          reopenRuns.current.invalidate();
+          // The reopen made stale no longer clears its loading notice; a newer reopen or file sets its own (onFile after this park).
+          setLoading(false);
+          setLoadingText(undefined);
+        },
+        pause: pauseAll,
+        tabSeconds: () => followedClock.current?.time() ?? 0,
+        save: saveSongPosition,
+      },
+    );
+  }
+
+  /** Pauses everything that can play: the clock followed, the synth, the recording, the stems and the video. */
+  function pauseAll() {
+    ytBacking.pause();
+    followedClock.current?.pause();
+    live.current.session?.clock.pause();
+    live.current.userClock?.pause();
+    stemsRef.current?.clock.pause();
+    playingRef.current = false;
+    setPlaying(false);
+  }
+
+  /** Saves a position to that song; one whose tab is still being saved gets it through the session once it is. */
+  function saveSongPosition(song: OpenSong, index: number) {
+    if (song.tabHash) void librarySession.savePosition(song.tabHash, index);
+    else if (song.tabHash === undefined) void librarySession.positionChanged(index);
+  }
+
+  /**
+   * The second half of leaving the open song (KTD1): stems no longer start by themselves, a running separation is cancelled,
+   * and the recording and its stems are released; later changes save nothing to the song. Its pending saves keep running
+   * and are not waited for (KTD3). The video stays attached, paused, until the next tab opens. Does nothing on the start screen.
+   */
+  function releaseSong() {
+    if (!live.current.session) return;
+    stemsAuto.cancel();
+    cancelSeparation.current?.();
+    resume.clear();
+    replaceUserClock(null);
+    resetProfile();
+    openSong.current = null;
+    librarySession.closeSong();
+  }
+
+  /** Leaves the open song for good: parks it, then releases it. Only a new file or song waits to release until it has opened (KTD1). */
+  function leaveSong() {
+    parkSong();
+    releaseSong();
+  }
+
+  /** Seeks a clock to a reopen's pending resume while that reopen is current (KTD4). */
+  function applyResume(kind: ResumeClock, seek: (tabSeconds: number) => void) {
+    resume.apply(kind, seek, (run) => reopenRuns.current.isCurrent(run));
+  }
+
+  /** Leaves the open song for a file the player opened or dropped; a file that fails to open leaves the song parked (KTD1). */
   async function onFile(file: File) {
-    setLoading(true);
     try {
-      const { score, timeline } = openTabBytes(new Uint8Array(await file.arrayBuffer()));
+      const { bytes, tabHash: openedHash, score, timeline } = await leaveThenOpen(
+        () => {
+          // After the park, which clears a stale reopen's loading notice.
+          parkSong();
+          setLoadingText(undefined);
+          setLoading(true);
+        },
+        async () => {
+          const read = new Uint8Array(await file.arrayBuffer());
+          const parsed = openTabBytes(read);
+          // The song's library identity, so a pending removal of this tab can be cancelled before it is saved (R6).
+          const readHash = removals ? await hashBytes(read).catch(() => null) : null;
+          if (readHash) openedTabHashes.current.set(read, readHash);
+          return { bytes: read, tabHash: readHash, ...parsed };
+        },
+        releaseSong,
+      );
       startSession(score, timeline);
+      // Loading the file of a song whose removal is pending keeps the song, with its setup (R6, AE3).
+      if (openedHash) removals?.cancel(openedHash);
+      // Saved in the background on the desktop; it never rejects, so it cannot get in the way of opening (R1, R12). A new song
+      // starts with the video the YouTube store already has for the tab, so its first reopen does not detach it.
+      const fingerprint = tabFingerprint(barSpansOf(timeline));
+      const hash = librarySession.openTab(bytes, { title: timeline.title, fileName: file.name, fingerprint }, storedVideo(videoStore, fingerprint));
+      const song: OpenSong = { tabHash: undefined, hash };
+      openSong.current = song;
+      void hash.then((tabHash) => {
+        song.tabHash = tabHash;
+      });
     } catch (e) {
-      // keep the previous session; just report the problem
+      // keep the previous session, paused; just report the problem
       setError(e instanceof Error && e.message ? e.message : 'Could not open that file.');
     } finally {
       setLoading(false);
@@ -619,9 +941,12 @@ export function App() {
   }
 
   function onSample() {
+    leaveSong();
     try {
       const score = loadAlphaTex(SAMPLE_ALPHATEX);
       startSession(score, buildTimeline(score));
+      // The sample is never saved, and nothing done with it changes a saved song (R1).
+      librarySession.closeSong();
     } catch {
       setError('Could not load the sample.');
     }
@@ -659,6 +984,7 @@ export function App() {
       next.clock.setLandingListener(recordLanding);
       next.clock.setMix(mix);
       next.clock.seek(position);
+      applyResume('stems', (s) => next.clock.seek(s));
     } else {
       (userClock ?? session?.clock)?.seek(position);
     }
@@ -676,6 +1002,8 @@ export function App() {
     own: () => ownClock({ stems: stems?.clock, userClock, session: session?.clock }),
     ownIdentity: stems?.clock ?? userClock ?? null,
     store: videoStore,
+    onPlayerVideoChange: (video) => void librarySession.videoChanged(video),
+    onPlayerSourceChange: (source) => void librarySession.sourceChanged(backingSourceFor(source)),
   });
   /** The clock the page follows now, which may be the video's; stems take their starting position from it. */
   const followedClock = useRef<Clock | undefined>(undefined);
@@ -758,20 +1086,54 @@ export function App() {
     if (audioReady) clock?.setRate(tempoPercent / 100);
   }, [clock, tempoPercent, audioReady]);
 
-  async function onLoadRecording(file: File) {
+  // A reopen's resume goes to the synth once its sound is ready, since a seek before then can be lost (KTD4).
+  useEffect(() => {
+    if (audio.status === 'ready') applyResume('synth', (s) => live.current.session?.clock.seek(s));
+    // applyResume reads only refs
+  }, [audio.status, session]);
+  // ...and to the video when its player takes over, since it copies the position it takes over from only once (KTD4).
+  const videoClock = ytBacking.activeClock;
+  useEffect(() => {
+    if (videoClock) applyResume('video', (s) => videoClock.seek(s));
+  }, [videoClock]);
+
+  /** The open song when playback last started, so a pause saves only for the song that played (KTD5). */
+  const playedSong = useRef<OpenSong | null>(null);
+  // Pausing saves the song's position (R7); playing means the player has moved on from a reopen's resume (KTD4).
+  useEffect(() => {
+    if (playing) {
+      resume.clear();
+      playedSong.current = openSong.current;
+      return;
+    }
+    const song = playedSong.current;
+    playedSong.current = null;
+    const tab = live.current.session?.timeline;
+    const tabSeconds = followedClock.current?.time();
+    if (!song || !tab || tabSeconds === undefined || !shouldSaveOnPause(song, openSong.current, resume.pending !== null)) return;
+    saveSongPosition(song, positionAt(tab, tabSeconds));
+    // reads only refs at the moment playback stops
+  }, [playing]);
+
+  /**
+   * Loads a recording against the open tab. The session, clock and tempo come from `live` and the followed-clock ref, not
+   * this render, because a reopen calls it from the start screen's render straight after startSession (KTD5). A reopen
+   * passes `startSeconds`, the song's resume, since the followed clock can still be the left song's (KTD4).
+   */
+  async function onLoadRecording(file: File, startSeconds?: number) {
     setUserAudioError(null);
     const token = sessionToken.current;
     const run = loadRuns.current.begin();
     try {
-      const next = await loadUserAudio(file, session?.timeline.durationSeconds ?? 0);
+      const next = await loadUserAudio(file, live.current.session?.timeline.durationSeconds ?? 0);
       if (token !== sessionToken.current || !loadRuns.current.isCurrent(run)) {
         // another song was opened, or a newer recording was picked, while this recording loaded
         next.dispose();
         return;
       }
-      const position = clock?.time() ?? 0;
-      session?.clock.pause();
-      next.setRate(tempoPercent / 100);
+      const position = startSeconds ?? followedClock.current?.time() ?? 0;
+      live.current.session?.clock.pause();
+      next.setRate(live.current.tempoPercent / 100);
       next.seek(position);
       replaceUserClock(next);
       next.setLandingListener(recordLanding);
@@ -786,6 +1148,9 @@ export function App() {
       stopExactCopy.current = startExactCopy(file, next, setCopyState, undefined, setExactSession);
       resetProfile();
       void restoreProfile(file, next);
+      // Copied into the library in the background, so playback never waits for it (R3, R14).
+      setLibraryNote(null);
+      void librarySession.recordingLoaded(file);
     } catch (e) {
       // keep whatever was playing before
       if (!loadRuns.current.isCurrent(run)) return;
@@ -798,6 +1163,166 @@ export function App() {
     replaceUserClock(null);
     resetProfile();
     session?.clock.seek(position);
+    void librarySession.recordingRemoved();
+  }
+
+  /**
+   * Reopens a saved song: its tab on the saved track and tuning, its video and source, then its recording, whose offset,
+   * alignment, sections and mix come back through the per-recording restore (R8-R11). A tab that cannot be read keeps the
+   * start screen with an error; a recording that cannot be read opens the tab with the R13 note. Opening another file or
+   * song abandons the rest (R15). From a live session the open song is left first (KTD1): a picked song whose tab can't be
+   * read leaves it open, paused, with the error (R10). The song comes back paused at its saved bar (R8). False when the
+   * song did not open.
+   */
+  async function onReopen(entry: LibraryEntry): Promise<boolean> {
+    if (!libraryShell || !library) return false;
+    // Opening a song whose removal is pending keeps it (R6).
+    removals?.cancel(entry.tabHash);
+    // Picking the song already open does nothing (R3).
+    if (live.current.session && isOpenSong(openSong.current, entry.tabHash)) return true;
+    const run = reopenRuns.current.begin();
+    const isCurrent = () => reopenRuns.current.isCurrent(run);
+    reopening.current = { tabHash: entry.tabHash, run };
+    const name = displayTitle(entry);
+    // Saved stems start later, once the engine is ready and long after this click; the click is what lets their audio play.
+    if (entry.recording) void audioContext().resume().catch(() => undefined);
+    setError(null);
+    setLoadingText(`Opening ${name}…`);
+    setLoading(true);
+    try {
+      // The open song is parked first and released only once the picked song's tab has opened (KTD1, R10); the picked
+      // song's entry is read again after its pending saves land, so a quick A→B→A sees them (KTD3).
+      const prep = await prepareReopen(entry, {
+        park: () => parkSong(true),
+        // Missing and damaged both keep the start screen with the error; a damaged copy is marked for the session (R9).
+        readTab: async (tabHash) => {
+          const read = await readTab(libraryShell, tabHash);
+          if (read.kind === 'damaged') markDamaged(tabHash, true);
+          return read.kind === 'ok' ? read.value : null;
+        },
+        parse: openTabBytes,
+        release: releaseSong,
+        settled: (tabHash) => librarySession.settled(tabHash),
+        find: (tabHash) => library.find(tabHash),
+        // A recording that can't be read opens the tab with the R13 note, as a missing one does; a damaged one is marked (R9).
+        readRecording: (ref) =>
+          readRecording(libraryShell, ref).then(
+            (read) => {
+              if (read.kind === 'damaged') markDamaged(ref.hash, true);
+              return read.kind === 'ok' ? read.value : null;
+            },
+            () => null,
+          ),
+        isCurrent,
+      });
+      if (prep.kind === 'stale') return false;
+      if (prep.kind === 'tab-missing') {
+        setError(TAB_MISSING);
+        return false;
+      }
+      const { bytes, entry: saved, recording } = prep;
+      const { score, timeline } = prep.parsed;
+      const steps = planRestore(saved, timeline, recording);
+      let fingerprint = '';
+      let resumeSecondsAt = 0;
+      await runRestore(
+        steps,
+        (step) => {
+          switch (step.kind) {
+            case 'tab': {
+              const opened = startSession(score, timeline, { trackIndex: step.trackIndex, tuningId: step.tuningId });
+              fingerprint = tabFingerprint(barSpansOf(opened.timeline));
+              openSong.current = { tabHash: saved.tabHash };
+              // Set with the tab, so leaving the song before its clocks have the bar still keeps its saved bar (KTD8, R11).
+              resume.start(resumeFor(saved, timeline, run), expectedResumeClocks(steps));
+              setLoading(false);
+              // Updates the song's last-opened time and makes it the song later changes are saved to.
+              void librarySession.openTab(bytes, { title: opened.timeline.title, fileName: saved.fileName, fingerprint });
+              return;
+            }
+            case 'seek':
+              // A seek before the sound is ready can be lost, so the resume is applied again when it is (KTD4).
+              resumeSecondsAt = step.tabSeconds;
+              live.current.session?.clock.seek(step.tabSeconds);
+              setSeconds(step.tabSeconds);
+              return;
+            case 'seed-video':
+              seedVideoStore(videoStore, fingerprint, step.video);
+              return;
+            case 'select-source':
+              ytBacking.restore(fingerprint, step.source);
+              return;
+            case 'note':
+              setLibraryNote(step.text);
+              return;
+            case 'load-recording':
+              stemsAuto.arm(step.file);
+              return onLoadRecording(step.file, resumeSecondsAt);
+          }
+        },
+        isCurrent,
+      );
+      return true;
+    } catch (e) {
+      if (isCurrent()) setError(e instanceof Error && e.message ? e.message : 'Could not open that song.');
+      return false;
+    } finally {
+      if (reopening.current?.run === run) reopening.current = null;
+      if (isCurrent()) {
+        setLoading(false);
+        setLoadingText(undefined);
+      }
+    }
+  }
+
+  /**
+   * Removes a saved song with an undo window (R2, R5): it leaves both lists at once and commits later. Removing the open
+   * song leaves it for the start screen, as "Open another file" does, so nothing more is saved to it and no "not saved"
+   * note shows for it; removing a song that is still reopening abandons that reopen. The open song can't be removed while
+   * a recording with video is captured.
+   */
+  async function onRemoveSong(entry: LibraryEntry) {
+    if (!removals) return;
+    const song = openSong.current;
+    // A file just opened knows its tab hash only once its save lands.
+    const openHash = song?.tabHash === undefined ? await song?.hash : song.tabHash;
+    const isOpen = song !== null && song === openSong.current && openHash === entry.tabHash;
+    if (isOpen && locks.locked) return;
+    if (isOpen) {
+      toStartScreen();
+      setLibraryNote(null);
+    } else if (reopening.current?.tabHash === entry.tabHash && reopenRuns.current.isCurrent(reopening.current.run)) {
+      // Parking invalidates the reopen and clears its loading notice; the song open before it stays parked.
+      parkSong();
+    }
+    if (removals.remove(entry)) setSongs((list) => list.filter((listing) => listing.entry.tabHash !== entry.tabHash));
+  }
+
+  /** Leaves the open song for the start screen (R6): its position is saved and its recording, stems and video let go. */
+  function toStartScreen() {
+    leaveSong();
+    sessionToken.current += 1;
+    live.current.session?.clock.dispose();
+    setSession(null);
+  }
+
+  /** Renames a saved song (R1); an empty name brings back the tab's own title. False when it could not be saved. */
+  async function onRenameSong(tabHash: string, title: string): Promise<boolean> {
+    if (!library) return false;
+    const renamed = await library.rename(tabHash, title);
+    refreshSongs();
+    return renamed;
+  }
+
+  /** Opens Back up and restore; its buttons wait until pending removals have committed (R7). */
+  function openBackup() {
+    setBackupOpen(true);
+    if (!removals) return;
+    const run = ++backupPrepareRun.current;
+    setBackupPreparing(true);
+    void removals.commitAll().finally(() => {
+      if (run === backupPrepareRun.current) setBackupPreparing(false);
+    });
   }
 
   /** Sets the tuning the file is really in; the sound is rebuilt from the changed score. */
@@ -813,6 +1338,9 @@ export function App() {
     setTuningId(FILE_TUNING);
     playingRef.current = false;
     setPlaying(false);
+    const saved = entryTuningId(id);
+    fileTunings.current.set(trackIndex, saved);
+    void librarySession.trackAndTuningChanged(trackIndex, saved);
   }
 
   function retryAudio() {
@@ -861,6 +1389,15 @@ export function App() {
 
   const closeFullscreen = useCallback(() => setFullscreenPanel(null), []);
 
+  /** A seek the player made: a reopen's resume no longer applies (KTD4). */
+  const userSeek = useCallback(
+    (seconds: number) => {
+      resume.clear();
+      clock?.seek(seconds);
+    },
+    [clock, resume],
+  );
+
   const setLoopRange = useCallback((next: LoopBars | null) => {
     setLoop(next);
     setLoopOn(next !== null);
@@ -879,10 +1416,10 @@ export function App() {
           togglePlay();
           break;
         case 'seek-back':
-          clock.seek(seekByBar(timeline, clock.time(), -1));
+          userSeek(seekByBar(timeline, clock.time(), -1));
           break;
         case 'seek-forward':
-          clock.seek(seekByBar(timeline, clock.time(), 1));
+          userSeek(seekByBar(timeline, clock.time(), 1));
           break;
         case 'tempo-up':
           requestTempo(stepTempo(live.current.tempoPercent, 1));
@@ -900,7 +1437,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top, requestTempo]);
+  }, [clock, timeline, loop, togglePlay, exportOpen, layout.top, requestTempo, userSeek]);
 
   const barCount = timeline?.scoreBarCount ?? 0;
   const title = timeline?.title || 'Untitled';
@@ -918,6 +1455,20 @@ export function App() {
     );
   }
 
+  /** Both song lists' songs, badges and actions; the row menus call onRemove and onRename. */
+  const libraryProps = library
+    ? { songs, stemHashes, onOpen: onReopen, onRemove: onRemoveSong, onRename: onRenameSong, fileChecks, damaged }
+    : undefined;
+  /** The undo notices of pending removals, one stack per screen (KTD8); desktop only. */
+  const undoNotices = removals ? (
+    <UndoNotices
+      items={pendingRemovals}
+      onUndo={(hash) => removals.undo(hash)}
+      onPause={(hash) => removals.pause(hash)}
+      onResume={(hash) => removals.resume(hash)}
+    />
+  ) : null;
+
   if (!session || !clock || !timeline) {
     return (
       <main className="app">
@@ -926,8 +1477,20 @@ export function App() {
             {support.notice}
           </p>
         )}
-        <DropZone onFile={onFile} onSample={onSample} error={error} loading={loading} onBackup={isDesktop() ? () => setBackupOpen(true) : undefined} />
-        {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
+        <DropZone
+          onFile={onFile}
+          onSample={onSample}
+          error={error}
+          loading={loading}
+          loadingText={loadingText}
+          // Only a song reopening sets the loading text; while one does, the rows stay enabled (KTD8).
+          songOpening={loadingText !== undefined}
+          onBackup={isDesktop() ? openBackup : undefined}
+          library={libraryProps}
+          undoNotices={undoNotices}
+          setAside={setAside === 'shown' ? { onDismiss: () => setSetAside('dismissed') } : null}
+        />
+        {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} preparing={backupPreparing} />}
       <Notices />
       </main>
     );
@@ -948,7 +1511,7 @@ export function App() {
     sections: (
       <SectionPanel
         rows={describeSectionRows(sections, timeline, barHealth, landings)}
-        onJump={(index) => clock.seek(jumpTarget(sections[index], timeline))}
+        onJump={(index) => userSeek(jumpTarget(sections[index], timeline))}
         onLoop={(index) => setLoopRange(loopFor(sections[index], timeline))}
         onRename={(index, name) => {
           const next = renameSection(live.current.sections, index, name);
@@ -968,7 +1531,12 @@ export function App() {
             offsetControl={stateControls.showOffset}
             fileName={userClock?.file?.name ?? stems?.title ?? null}
             error={userAudioError}
-            onLoad={(file) => (locks.locked ? undefined : void onLoadRecording(file))}
+            onLoad={(file) => {
+              if (locks.locked) return;
+              // A recording the player loads takes over from the video as usual, even on a reopened song.
+              ytBacking.endRestore();
+              void onLoadRecording(file);
+            }}
             loadLockedReason={locks.reason}
             onOffsetChange={(raw) => {
               const seconds = clampOffset(raw);
@@ -990,12 +1558,22 @@ export function App() {
             onMixChange={(next) => {
               setMix(next);
               mixMoved.current = true;
+              stemsAuto.cancel();
               if (isDesktop()) {
                 profileMix.current = next;
                 scheduleProfileSave(live.current.offset);
               }
             }}
-            onActivate={activateStems}
+            onActivate={(next, auto) => {
+              // Stems the player starts or leaves take over from the video as usual; a reopened song's own stems do not.
+              if (!auto) ytBacking.endRestore();
+              activateStems(next);
+            }}
+            autoStart={stemsAuto}
+            onSeparatingChange={(cancel) => {
+              cancelSeparation.current = cancel;
+              setSeparating(cancel !== null);
+            }}
           />
         )}
       />
@@ -1020,7 +1598,7 @@ export function App() {
   };
   const seekToBar = (bar: number) => {
     const start = scoreBarStartSeconds(getStripLayout(timeline, trackIndex, 1, 1), bar);
-    if (start !== null) clock.seek(start);
+    if (start !== null) userSeek(start);
   };
   const seekBarMarks = {
     sections:
@@ -1050,6 +1628,7 @@ export function App() {
             onChange={(i) => {
               setTrackIndex(i);
               setTuningId(FILE_TUNING);
+              void librarySession.trackAndTuningChanged(i, fileTunings.current.get(i) ?? FILE_TUNING);
             }}
           />
           {!userClock && !stems && !videoHeard && canPlayAlong(timeline.tracks, trackIndex) && (
@@ -1110,25 +1689,41 @@ export function App() {
             )}
             <button
               type="button"
-              onClick={() => {
-                sessionToken.current += 1;
-                session.clock.dispose();
-                replaceUserClock(null);
-                setSession(null);
-              }}
+              onClick={toStartScreen}
             >
               Open another file
             </button>
             {isDesktop() && (
-              <button type="button" onClick={() => setBackupOpen(true)}>
+              <button type="button" onClick={openBackup}>
                 Back up and restore…
               </button>
             )}
           </Menu>
+          <SongsMenu
+            library={libraryProps}
+            currentTabHash={openSong.current?.tabHash ?? undefined}
+            lockedReason={locks.reason}
+            separating={separating}
+            onMenuOpen={refreshSongs}
+          />
         </header>
+        {loadingText && (
+          <p className="notice" role="status">
+            {loadingText}
+          </p>
+        )}
+        {undoNotices}
         {track && !track.hasTabData && (
           <p className="notice" role="status">
             This file has no tab data for this track, so fret positions were chosen automatically and may differ from a real tab.
+          </p>
+        )}
+        {libraryNote && (
+          <p className="notice" role="status">
+            {libraryNote}{' '}
+            <button type="button" onClick={() => setLibraryNote(null)}>
+              Dismiss
+            </button>
           </p>
         )}
         <Stage
@@ -1167,9 +1762,9 @@ export function App() {
           seconds={seconds}
           durationSeconds={timeline.durationSeconds}
           onTogglePlay={togglePlay}
-          onRestart={() => clock.seek(0)}
+          onRestart={() => userSeek(0)}
           onTempoChange={requestTempo}
-          onSeek={(s) => clock.seek(s)}
+          onSeek={userSeek}
           marks={seekBarMarks}
         />
         {userClock && exactNotice && (
@@ -1246,7 +1841,7 @@ export function App() {
           <YoutubeDock key={`${tabKey}:${ytBacking.videoId}`} videoId={ytBacking.videoId} source={ytBacking.source} onPlayer={ytBacking.onPlayer} onError={ytBacking.onError} />
         )}
         <UpgradePrompt feature={upgradeFor} onClose={() => setUpgradeFor(null)} />
-        {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
+        {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} preparing={backupPreparing} />}
         <ShortcutLegend />
         <Notices />
       </main>

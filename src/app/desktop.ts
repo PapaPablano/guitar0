@@ -23,6 +23,32 @@ export function isDesktop(host: object = globalThis): boolean {
   return getShell(host) !== null;
 }
 
+type Listen = (event: string, handler: () => void) => Promise<() => void>;
+
+/**
+ * Runs `handler` each time the shell emits `event`, through the shell's global event surface. Returns a function that
+ * stops listening, safe to call before the registration has finished and more than once. Does nothing on the web.
+ */
+export function listenShell(event: string, handler: () => void, host: object = globalThis): () => void {
+  const listen = getShell(host) && (host as { __TAURI__: { event?: { listen?: unknown } } }).__TAURI__.event?.listen;
+  if (typeof listen !== 'function') return () => undefined;
+  let stopped = false;
+  let unlisten: (() => void) | null = null;
+  void (listen as Listen)(event, () => handler()).then(
+    (stop) => {
+      if (stopped) stop();
+      else unlisten = stop;
+    },
+    () => undefined,
+  );
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    unlisten?.();
+    unlisten = null;
+  };
+}
+
 /** Calls a shell command; rejects with DesktopUnavailable on the web. */
 export async function invokeShell<T>(command: string, args?: Record<string, unknown>, host: object = globalThis): Promise<T> {
   const shell = getShell(host);
@@ -44,4 +70,15 @@ export async function invokeShellRaw(command: string, bytes: Uint8Array, headers
   const shell = getShell(host);
   if (!shell) throw new DesktopUnavailable();
   await shell.core.invoke(command, bytes, { headers });
+}
+
+/** Calls a shell command whose answer is raw bytes (a `tauri::ipc::Response`), returned as a byte array; rejects on the web. */
+export async function invokeShellBytes(command: string, args: Record<string, unknown>, host: object = globalThis): Promise<Uint8Array> {
+  const shell = getShell(host);
+  if (!shell) throw new DesktopUnavailable();
+  const answer = await shell.core.invoke(command, args);
+  if (answer instanceof ArrayBuffer) return new Uint8Array(answer);
+  if (ArrayBuffer.isView(answer)) return new Uint8Array(answer.buffer.slice(answer.byteOffset, answer.byteOffset + answer.byteLength));
+  if (Array.isArray(answer) && answer.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) return Uint8Array.from(answer as number[]);
+  throw new Error(`${command} did not answer with bytes.`);
 }

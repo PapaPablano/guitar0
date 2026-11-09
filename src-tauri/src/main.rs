@@ -7,6 +7,7 @@ mod backup;
 mod engine;
 mod entitlement;
 mod exports;
+mod library;
 mod links;
 mod model_progress;
 mod profiles;
@@ -16,11 +17,12 @@ mod setup;
 use std::collections::HashMap;
 use std::fs;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::RunEvent;
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 #[derive(Clone, Serialize, Default)]
 struct Status {
@@ -219,14 +221,24 @@ fn stem_index_write(index: HashMap<String, String>) -> Result<(), String> {
     write_atomic(&index_path()?, serde_json::to_string(&index).map_err(|e| e.to_string())?)
 }
 
-/// Writes through a temporary file and a rename, so a crash never leaves a half-written file.
+/// Makes each write_atomic temp name unique within this process.
+static WRITE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Writes through a temporary file and a rename, so a crash never leaves a half-written file. The temp file sits beside
+/// the target with a name unique to this call (`<file>.<pid>-<n>.tmp`), so two writes to the same file at once (a page
+/// save and an off-thread restore) never share one, and it is removed if the write fails.
 fn write_atomic(path: &std::path::Path, text: String) -> Result<(), String> {
-    let tmp = path.with_extension("json.tmp");
+    let file_name = path.file_name().ok_or_else(|| "no file name to write".to_string())?.to_string_lossy();
+    let n = WRITE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!("{file_name}.{}-{n}.tmp", std::process::id()));
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    let written = fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, path));
+    written.map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 /// Per-recording profiles live in their own file so a profile problem can never touch the saved-stems index.
@@ -276,15 +288,145 @@ fn alignment_write(hash: String, alignment: serde_json::Value) -> Result<(), Str
     write_atomic(&path, text)
 }
 
+/// The song library folder. See library.rs for what lives there and how names are guarded.
+fn library_dir() -> Result<std::path::PathBuf, String> {
+    Ok(engine::Layout::locate()?.data.join("library"))
+}
+
+#[tauri::command]
+fn library_index_read() -> Result<library::IndexRead, String> {
+    library::read_index(&library_dir()?)
+}
+
+#[tauri::command]
+fn library_index_write(index: serde_json::Value) -> Result<(), String> {
+    let text = library::serialize_index(&index).ok_or_else(|| "not a library index".to_string())?;
+    write_atomic(&library_dir()?.join(library::INDEX_FILE), text)
+}
+
+#[tauri::command]
+fn library_write_begin(writes: tauri::State<library::Writes>, kind: String, hash: String, extension: String) -> Result<u64, String> {
+    writes.begin(&library_dir()?, &kind, &hash, &extension)
+}
+
+/// Appends one slice of raw bytes to a library write. The handle travels in the `x-save-id` header, as for exports.
+#[tauri::command]
+fn library_write_append(request: tauri::ipc::Request<'_>, writes: tauri::State<library::Writes>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw bytes".to_string());
+    };
+    let id: u64 = request
+        .headers()
+        .get("x-save-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| "missing save handle".to_string())?;
+    writes.append(id, bytes)
+}
+
+#[tauri::command]
+fn library_write_finish(writes: tauri::State<library::Writes>, id: u64) -> Result<bool, String> {
+    writes.finish(id)
+}
+
+/// Deletes a stored tab or recording. True when it is gone or was already missing; false when a write to that same
+/// file is open, and the file is kept.
+#[tauri::command]
+fn library_delete(writes: tauri::State<library::Writes>, kind: String, hash: String, extension: String) -> Result<bool, String> {
+    writes.delete(&library_dir()?, &kind, &hash, &extension)
+}
+
+#[tauri::command]
+fn library_write_cancel(writes: tauri::State<library::Writes>, id: u64) {
+    writes.cancel(id)
+}
+
+/// One slice of a stored file as raw bytes. An empty slice means the end of the file.
+#[tauri::command]
+fn library_read(kind: String, hash: String, extension: String, offset: u64, len: u64) -> Result<tauri::ipc::Response, String> {
+    library::read_chunk(&library_dir()?, &kind, &hash, &extension, offset, len).map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
+fn library_exists(kind: String, hash: String, extension: String) -> Result<bool, String> {
+    library::exists(&library_dir()?, &kind, &hash, &extension)
+}
+
+/// How long a closing window waits for the page to say it has saved before the app exits anyway (KTD6).
+const CLOSE_FALLBACK: Duration = Duration::from_secs(2);
+
+/// Whether a window close is already waiting on the page, so a second close request starts no second fallback.
+#[derive(Default)]
+struct Closing(AtomicBool);
+
+impl Closing {
+    /// True for the first close request only; later ones join the one in flight.
+    fn begin(&self) -> bool {
+        !self.0.swap(true, Ordering::SeqCst)
+    }
+}
+
+/// The page has saved what it needs after `close-requested`; exit now. `RunEvent::Exit` still runs the engine shutdown.
+#[tauri::command]
+fn app_close_ready(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// Holds a close of the main window so the page can save the open song's position (R7): the page is told with
+/// `close-requested` and answers with `app_close_ready`; if it never does, the app exits after `CLOSE_FALLBACK`.
+fn hold_close(app: &tauri::AppHandle) {
+    if !app.state::<Closing>().begin() {
+        return;
+    }
+    let _ = app.emit_to("main", "close-requested", ());
+    let fallback = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_FALLBACK);
+        fallback.exit(0);
+    });
+}
+
+/// Removes the temp files `write_atomic` leaves when the app is closed between a write and its rename. Only names of
+/// the shape `<name>.json.<pid>-<n>.tmp` are touched, so nothing else in the folder is ever deleted.
+fn sweep_atomic_temps(dir: &std::path::Path) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(stem) = name.strip_suffix(".tmp") else { continue };
+        let Some((_, counter)) = stem.rsplit_once(".json.") else { continue };
+        let Some((pid, n)) = counter.split_once('-') else { continue };
+        let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        if numeric(pid) && numeric(n) && path.is_file() && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 fn main() {
+    let started = std::time::SystemTime::now();
     let state: State = Arc::new(Shared::default());
+    // A copy the app was closed in the middle of leaves only a temp file; remove it before the page can start another.
+    // Then remove stored files no index names (a removal committed on close leaves its files for this sweep).
+    if let Ok(dir) = library_dir() {
+        library::sweep_temp(&dir);
+        library::sweep_orphans(&dir, started);
+    }
+    if let Ok(layout) = engine::Layout::locate() {
+        sweep_atomic_temps(&layout.data);
+        sweep_atomic_temps(&layout.data.join("alignments"));
+    }
     set(&state, "starting", None, Some("Starting".to_string()));
 
     let app = tauri::Builder::default()
         .manage(state.clone())
         .manage(exports::Exports::default())
+        .manage(library::Writes::default())
+        .manage(Closing::default())
         .manage(entitlement::Entitlements::load(engine::Layout::locate().ok().map(|layout| layout.data)))
-        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder])
+        .invoke_handler(tauri::generate_handler![engine_status, engine_setup, stem_index_read, stem_index_write, profiles_read, profiles_write, alignment_read, alignment_write, exports::export_begin, exports::export_append, exports::export_finish, exports::export_cancel, exports::export_open_folder, links::open_external, entitlement::entitlement_status, entitlement::entitlement_store, entitlement::entitlement_clear, backup::backup_create, backup::backup_list, backup::backup_restore, backup::backup_open_folder, library_index_read, library_index_write, library_write_begin, library_write_append, library_write_finish, library_write_cancel, library_read, library_exists, library_delete, app_close_ready])
         .setup({
             let state = state.clone();
             move |_app| {
@@ -299,10 +441,13 @@ fn main() {
         .expect("failed to build the Tab Highway shell");
 
     let exit_state = state.clone();
-    app.run(move |_handle, event| {
-        if let RunEvent::Exit = event {
-            shutdown(&exit_state);
+    app.run(move |handle, event| match event {
+        RunEvent::WindowEvent { label, event: WindowEvent::CloseRequested { api, .. }, .. } if label == "main" => {
+            api.prevent_close();
+            hold_close(handle);
         }
+        RunEvent::Exit => shutdown(&exit_state),
+        _ => {}
     });
 }
 
@@ -312,6 +457,14 @@ mod tests {
 
     fn ready() -> Status {
         Status { phase: "ready".to_string(), progress: None, message: None, url: Some("http://127.0.0.1:1".to_string()), secret: Some("s".to_string()) }
+    }
+
+    #[test]
+    fn only_the_first_close_request_starts_the_close() {
+        let closing = Closing::default();
+        assert!(closing.begin());
+        assert!(!closing.begin());
+        assert!(!closing.begin());
     }
 
     #[test]
@@ -327,5 +480,80 @@ mod tests {
         let pro = gate(ready(), true);
         assert_eq!(pro.url.as_deref(), Some("http://127.0.0.1:1"));
         assert_eq!(pro.secret.as_deref(), Some("s"));
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tabhighway-main-test-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn leftovers(dir: &std::path::Path) -> Vec<String> {
+        fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".tmp")).collect()
+    }
+
+    #[test]
+    fn concurrent_atomic_writes_to_one_file_never_share_a_temp_file_and_leave_none_behind() {
+        let dir = scratch("atomic-concurrent");
+        let path = dir.join("library.json");
+        let texts: Vec<String> = (0..16).map(|i| format!("{{\"writer\":{i},\"pad\":\"{}\"}}", "x".repeat(64 * 1024))).collect();
+        std::thread::scope(|scope| {
+            for text in &texts {
+                let path = path.clone();
+                scope.spawn(move || {
+                    for _ in 0..8 {
+                        // On Windows a rename can lose to another writer's rename; the file must still never be torn.
+                        let _ = write_atomic(&path, text.clone());
+                    }
+                });
+            }
+        });
+        let result = fs::read_to_string(&path).unwrap();
+        assert!(texts.contains(&result), "the file holds one whole write, never a mix");
+        assert!(leftovers(&dir).is_empty(), "no temp file is left behind");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_atomic_write_removes_its_temp_file() {
+        let dir = scratch("atomic-fail");
+        // A directory where the file should go: the rename into place fails.
+        let path = dir.join("stem-index.json");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("keep"), "x").unwrap();
+        assert!(write_atomic(&path, "{}".to_string()).is_err());
+        assert!(leftovers(&dir).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_atomic_write_temp_name_is_one_the_library_sweep_removes() {
+        let dir = scratch("atomic-sweep");
+        write_atomic(&dir.join("library.json"), "{}".to_string()).unwrap();
+        let n = WRITE_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        // What a crash between write and rename would leave: the same shape of name.
+        fs::write(dir.join(format!("library.json.{}-{n}.tmp", std::process::id())), "half").unwrap();
+        assert_eq!(library::sweep_temp(&dir), 1);
+        assert_eq!(fs::read_to_string(dir.join("library.json")).unwrap(), "{}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_startup_sweep_removes_only_atomic_write_leftovers() {
+        let dir = scratch("atomic-root-sweep");
+        fs::write(dir.join("recording-profiles.json"), "{}").unwrap();
+        fs::write(dir.join("recording-profiles.json.123-4.tmp"), "half").unwrap();
+        fs::write(dir.join("stem-index.json.9-0.tmp"), "half").unwrap();
+        // Not ours: kept.
+        fs::write(dir.join("model.tmp"), "x").unwrap();
+        fs::write(dir.join("notes.json.tmp"), "x").unwrap();
+        fs::write(dir.join("a.json.x-1.tmp"), "x").unwrap();
+        assert_eq!(sweep_atomic_temps(&dir), 2);
+        let mut left: Vec<String> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["a.json.x-1.tmp", "model.tmp", "notes.json.tmp", "recording-profiles.json"]);
+        assert_eq!(sweep_atomic_temps(&dir.join("missing")), 0);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

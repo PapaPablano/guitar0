@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Clock } from '../audio/clock';
 import { clampOffset } from '../audio/offset-range';
 import { rateNotice, YoutubeClock } from '../audio/youtube-clock';
+import type { VideoRef } from './library';
+import { createRestoreHold, takesOverFromVideo } from './youtube-backing';
 import { dockRules, type AudioSource, type DockRules } from './youtube-dock';
 import { parseYoutubeLink } from './youtube-link';
 import type { EmbeddedPlayer } from './youtube-player';
@@ -18,6 +20,13 @@ interface Options {
   /** Changes when a loaded recording or stems replace what plays without the video; the video is muted then. */
   ownIdentity: unknown;
   store: YoutubeVideoStore;
+  /**
+   * Called when the player attaches, removes or moves the video, with the video and offset now in use. A tab opening with
+   * the video its store remembers is not a change the player made, so it is not reported (KTD4).
+   */
+  onPlayerVideoChange?: (video: VideoRef | null) => void;
+  /** Called when the player chooses which audio is heard, or a recording they load takes over from the video. */
+  onPlayerSourceChange?: (source: AudioSource) => void;
 }
 
 export interface YoutubeBacking {
@@ -45,6 +54,16 @@ export interface YoutubeBacking {
   syncHere: (firstNoteSeconds: number) => void;
   onPlayer: (player: EmbeddedPlayer | null) => void;
   onError: (message: string) => void;
+  /**
+   * A reopened song's saved source for the tab named `tabKey` (the tab about to open, or the one open now). Nothing is
+   * reported back to the library, and a recording or stems that appear afterwards do not take over from the video until
+   * the player makes a choice of their own or calls `endRestore` (AE2).
+   */
+  restore: (tabKey: string, source: AudioSource) => void;
+  /** The player loaded a recording or stems themselves, so it takes over from the video as usual again. */
+  endRestore: () => void;
+  /** Pauses the video's player, for leaving the song (KTD1); the video stays attached until the next tab opens. */
+  pause: () => void;
 }
 
 /** The attached YouTube video: its player, its clock, which audio is heard, and what is remembered for the tab. */
@@ -58,6 +77,12 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
   opts.current = options;
   const clockRef = useRef<YoutubeClock | null>(null);
   const sourceRef = useRef<AudioSource>('original');
+  /** The attached video, for callbacks with no dependencies. */
+  const videoIdRef = useRef<string | null>(null);
+  const applyVideo = useCallback((id: string | null) => {
+    videoIdRef.current = id;
+    setVideoId(id);
+  }, []);
 
   /** Records which audio is heard; the ref lets callbacks with no dependencies read the latest choice. */
   const applySource = useCallback((next: AudioSource) => {
@@ -86,13 +111,16 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
     applySource(next);
   }, [applySource]);
 
-  // A tab opens with the video last attached to it.
+  /** A reopened song's saved source and the hold it puts on recordings or stems taking over (AE2). */
+  const [hold] = useState(createRestoreHold);
+
+  // A tab opens with the video last attached to it, and with the source a reopened song saved (Original otherwise).
   const { tabKey, store } = options;
   useEffect(() => {
     setMessage(null);
-    applySource('original');
-    setVideoId(tabKey ? store.videoFor(tabKey) : null);
-  }, [tabKey, store, applySource]);
+    applySource(hold.tabOpened(tabKey));
+    applyVideo(tabKey ? store.videoFor(tabKey) : null);
+  }, [tabKey, store, hold, applySource, applyVideo]);
 
   // A recording or stems loaded while the video's audio plays take over, and the video is muted.
   const previousOwn = useRef(options.ownIdentity);
@@ -100,12 +128,14 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
     if (previousOwn.current === options.ownIdentity) return;
     previousOwn.current = options.ownIdentity;
     const video = clockRef.current;
-    if (video && options.ownIdentity !== null && sourceRef.current === 'original') {
+    const restoring = hold.holds(opts.current.tabKey);
+    if (video && takesOverFromVideo({ videoReady: true, ownLoaded: options.ownIdentity !== null, source: sourceRef.current, restoring })) {
       video.park();
       applySource('synth');
       setMessage('Your recording is playing now, so the video is muted. Choose Original to hear the video again.');
+      opts.current.onPlayerSourceChange?.('synth');
     }
-  }, [options.ownIdentity, applySource]);
+  }, [options.ownIdentity, hold, applySource]);
 
   const onPlayer = useCallback((player: EmbeddedPlayer | null) => {
     if (!player) {
@@ -155,10 +185,16 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
       other?.seek(position);
       if (wasPlaying) other?.play();
     }
-    if (key) videos.attach(key, id);
+    hold.end();
     setMessage(null);
-    setVideoId(id);
-  }, []);
+    applyVideo(id);
+    if (key) {
+      videos.attach(key, id);
+      const { onPlayerVideoChange, onPlayerSourceChange } = opts.current;
+      onPlayerVideoChange?.({ videoId: id, offsetSeconds: videos.offsetFor(key) ?? 0 });
+      onPlayerSourceChange?.(sourceRef.current);
+    }
+  }, [hold, applyVideo]);
 
   const attachLink = useCallback(
     (text: string) => {
@@ -180,19 +216,47 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
       if (wasPlaying) other?.play();
     }
     const { tabKey: key, store: videos } = opts.current;
-    if (key) videos.detach(key);
+    hold.end();
     applySource('original');
     setMessage(null);
-    setVideoId(null);
-  }, [applySource]);
+    applyVideo(null);
+    if (key) {
+      videos.detach(key);
+      opts.current.onPlayerVideoChange?.(null);
+    }
+  }, [hold, applySource, applyVideo]);
 
   const setOffset = useCallback((seconds: number) => {
     const value = clampOffset(seconds);
     clockRef.current?.setOffset(value);
     setOffsetState(value);
-    const { tabKey: key, store: videos } = opts.current;
+    const { tabKey: key, store: videos, onPlayerVideoChange } = opts.current;
     if (key) videos.saveOffset(key, value);
+    const id = videoIdRef.current;
+    if (key && id) onPlayerVideoChange?.({ videoId: id, offsetSeconds: value });
   }, []);
+
+  /** The player's own choice of audio, which is remembered; a hand-over after a playback error is not. */
+  const chooseSource = useCallback(
+    (next: AudioSource) => {
+      hold.end();
+      changeSource(next);
+      opts.current.onPlayerSourceChange?.(next);
+    },
+    [hold, changeSource],
+  );
+
+  const restore = useCallback(
+    (key: string, next: AudioSource) => {
+      const now = hold.restore(key, next, opts.current.tabKey);
+      if (now !== null) changeSource(now);
+    },
+    [hold, changeSource],
+  );
+
+  const endRestore = useCallback(() => hold.end(), [hold]);
+
+  const pause = useCallback(() => clockRef.current?.pause(), []);
 
   const syncHere = useCallback(
     (firstNoteSeconds: number) => {
@@ -226,10 +290,13 @@ export function useYoutubeBacking(options: Options): YoutubeBacking {
     attachLink,
     attachId,
     remove,
-    setSource: changeSource,
+    setSource: chooseSource,
     setOffset,
     syncHere,
     onPlayer,
     onError,
+    restore,
+    endRestore,
+    pause,
   };
 }
