@@ -8,6 +8,7 @@ import {
   leaveThenOpen,
   parkSong,
   planRestore,
+  positionAt,
   positionToSave,
   prepareReopen,
   resumeFor,
@@ -193,6 +194,24 @@ describe('positionToSave', () => {
     const index = positionToSave(played, t, false);
     expect(index).toBe(7);
     expect(resumeSeconds(entryWith({ position: index }), played)).toBe(played.bars[7].startSeconds);
+  });
+});
+
+describe('positionAt', () => {
+  const timeline = makeTimeline([], 2, 4);
+
+  it('saves the played bar before the end of the song (R7)', () => {
+    expect(positionAt(timeline, 5.9)).toBe(2);
+    expect(positionAt(timeline, 7.9)).toBe(3);
+  });
+
+  it('saves bar 1 within 50 ms of the end of the song or past it (R7)', () => {
+    expect(positionAt(timeline, 7.96)).toBe(0);
+    expect(positionAt(timeline, timeline.durationSeconds)).toBe(0);
+  });
+
+  it('saves bar 1 for a tab with no bars', () => {
+    expect(positionAt(makeTimeline([], 2, 0), 3)).toBe(0);
   });
 });
 

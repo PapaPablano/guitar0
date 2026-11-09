@@ -152,14 +152,19 @@ export interface PendingResume {
 
 /** The resume for a reopened song: its saved bar, or bar 1 when it has none or the bar is gone (R8, R9). */
 export function resumeFor(entry: Pick<LibraryEntry, 'position'>, timeline: Timeline, run: number): PendingResume {
-  const tabSeconds = resumeSeconds(entry, timeline);
-  const index = entry.position !== undefined && timeline.bars[entry.position] ? entry.position : 0;
-  return { index, tabSeconds, run };
+  const { position } = entry;
+  const bar = position === undefined ? undefined : timeline.bars[position];
+  return bar ? { index: position as number, tabSeconds: bar.startSeconds, run } : { index: 0, tabSeconds: 0, run };
 }
 
 /** Whether playback stopped at the end of the song, which saves bar 1 (R7). */
 export function atSongEnd(tabSeconds: number, durationSeconds: number): boolean {
   return durationSeconds > 0 && tabSeconds >= durationSeconds - 0.05;
+}
+
+/** The position to save for a song stopped at `tabSeconds`: its played bar, or bar 1 when it stopped at the end (R7). */
+export function positionAt(timeline: Timeline, tabSeconds: number): number {
+  return positionToSave(timeline, tabSeconds, atSongEnd(tabSeconds, timeline.durationSeconds));
 }
 
 export interface ParkDeps {
@@ -192,8 +197,7 @@ export function parkSong(
     // A half-opened song keeps its saved bar (R11).
     index = pending.index;
   } else {
-    const tabSeconds = deps.tabSeconds();
-    index = positionToSave(timeline, tabSeconds, atSongEnd(tabSeconds, timeline.durationSeconds));
+    index = positionAt(timeline, deps.tabSeconds());
   }
   deps.save(song, index);
   return index;

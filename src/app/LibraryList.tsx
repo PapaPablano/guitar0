@@ -22,6 +22,8 @@ interface Props extends LibraryListProps {
   notice?: string | null;
   /** Shown when there are no saved songs; without it the list renders nothing then. */
   emptyText?: string;
+  /** Renders nothing but keeps the rows' state, such as which song is opening, for when they are shown again. */
+  hidden?: boolean;
 }
 
 /** What the Songs menu says while stems are being separated; picking a song cancels the separation (R4). */
@@ -64,7 +66,7 @@ export function backingText(entry: LibraryEntry, stemHashes: ReadonlySet<string>
  * The saved songs, on the start screen and in the player's Songs menu. Renders nothing when there are none unless given
  * `emptyText`, so the first run looks as it always has.
  */
-export function LibraryList({ songs, stemHashes, onOpen, disabled, now, currentTabHash, notice, emptyText }: Props) {
+export function LibraryList({ songs, stemHashes, onOpen, disabled, now, currentTabHash, notice, emptyText, hidden }: Props) {
   const headingId = useId();
   const noticeId = useId();
   const [opening, setOpening] = useState<string | null>(null);
@@ -76,7 +78,7 @@ export function LibraryList({ songs, stemHashes, onOpen, disabled, now, currentT
     rows.current.get(refocus)?.focus();
     setRefocus(null);
   }, [refocus, disabled]);
-  if (songs.length === 0 && !emptyText) return null;
+  if (hidden || (songs.length === 0 && !emptyText)) return null;
 
   async function open(entry: LibraryEntry) {
     if (!opensOnPick(entry.tabHash, currentTabHash)) return;
@@ -151,19 +153,36 @@ interface SongsMenuProps {
   onMenuOpen: () => void;
 }
 
-/** The player's Songs menu: the saved songs, newest first, with the open one marked (R1, KTD7). Desktop only. */
+/** What the Songs menu's list shows while the menu is open, with `now` read when it opened. */
+export function songsMenuList(
+  library: LibraryListProps,
+  { currentTabHash, lockedReason, separating }: Pick<SongsMenuProps, 'currentTabHash' | 'lockedReason' | 'separating'>,
+  now: number,
+): Props {
+  return {
+    ...library,
+    disabled: lockedReason !== null,
+    now,
+    currentTabHash,
+    notice: lockedReason ?? (separating ? SEPARATION_WARNING : null),
+    emptyText: 'No saved songs yet',
+  };
+}
+
+/**
+ * The player's Songs menu: the saved songs, newest first, with the open one marked (R1, KTD7). Desktop only. The rows render
+ * only while the menu is open, since the player re-renders many times a second while playing.
+ */
 export function SongsMenu({ library, currentTabHash, lockedReason, separating, onMenuOpen }: SongsMenuProps) {
+  /** When the menu last opened, for the last-opened times; null while it is closed. */
+  const openedAt = useRef<number | null>(null);
   if (!library) return null;
   return (
     <Menu label="Songs" ariaLabel="Songs: switch to another saved song" className="songs-menu" onOpen={onMenuOpen}>
-      <LibraryList
-        {...library}
-        disabled={lockedReason !== null}
-        now={Date.now()}
-        currentTabHash={currentTabHash}
-        notice={lockedReason ?? (separating ? SEPARATION_WARNING : null)}
-        emptyText="No saved songs yet"
-      />
+      {(open) => {
+        openedAt.current = open ? (openedAt.current ?? Date.now()) : null;
+        return <LibraryList {...songsMenuList(library, { currentTabHash, lockedReason, separating }, openedAt.current ?? 0)} hidden={!open} />;
+      }}
     </Menu>
   );
 }

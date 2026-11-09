@@ -13,6 +13,17 @@ describe('Menu onOpen', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('reports whether the panel is open on every toggle, before onOpen', () => {
+    const calls: string[] = [];
+    const handler = menuToggleHandler(
+      () => calls.push('onOpen'),
+      (open) => calls.push(open ? 'open' : 'closed'),
+    );
+    handler(toggle(true));
+    handler(toggle(false));
+    expect(calls).toEqual(['open', 'onOpen', 'closed']);
+  });
+
   it('does nothing without a callback', () => {
     expect(() => menuToggleHandler(undefined)(toggle(true))).not.toThrow();
   });

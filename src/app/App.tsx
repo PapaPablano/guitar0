@@ -58,7 +58,6 @@ import { shellProfileStore } from '../stems/profile-store-shell';
 import { SongLibrary, displayTitle, type LibraryEntry, type LibraryListing } from './library';
 import { desktopLibraryShell, readRecording, readTab, saveRecording, saveTab, shellLibraryBackend } from './library-shell';
 import {
-  atSongEnd,
   createResumeTracker,
   createStemsAutoStart,
   expectedResumeClocks,
@@ -66,7 +65,7 @@ import {
   leaveThenOpen,
   parkSong as parkWith,
   planRestore,
-  positionToSave,
+  positionAt,
   prepareReopen,
   resumeFor,
   runRestore,
@@ -789,6 +788,12 @@ export function App() {
     librarySession.closeSong();
   }
 
+  /** Leaves the open song for good: parks it, then releases it. Only a new file or song waits to release until it has opened (KTD1). */
+  function leaveSong() {
+    parkSong();
+    releaseSong();
+  }
+
   /** Seeks a clock to a reopen's pending resume while that reopen is current (KTD4). */
   function applyResume(kind: ResumeClock, seek: (tabSeconds: number) => void) {
     resume.apply(kind, seek, (run) => reopenRuns.current.isCurrent(run));
@@ -825,8 +830,7 @@ export function App() {
   }
 
   function onSample() {
-    parkSong();
-    releaseSong();
+    leaveSong();
     try {
       const score = loadAlphaTex(SAMPLE_ALPHATEX);
       startSession(score, buildTimeline(score));
@@ -996,7 +1000,7 @@ export function App() {
     const tab = live.current.session?.timeline;
     const tabSeconds = followedClock.current?.time();
     if (!song || !tab || tabSeconds === undefined || !shouldSaveOnPause(song, openSong.current, resume.pending !== null)) return;
-    saveSongPosition(song, positionToSave(tab, tabSeconds, atSongEnd(tabSeconds, tab.durationSeconds)));
+    saveSongPosition(song, positionAt(tab, tabSeconds));
     // reads only refs at the moment playback stops
   }, [playing]);
 
@@ -1490,8 +1494,7 @@ export function App() {
               type="button"
               onClick={() => {
                 // Leaving for the start screen (R6): the song's position is saved and its recording, stems and video let go.
-                parkSong();
-                releaseSong();
+                leaveSong();
                 sessionToken.current += 1;
                 session.clock.dispose();
                 setSession(null);

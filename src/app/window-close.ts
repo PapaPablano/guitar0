@@ -8,7 +8,7 @@
 export const CLOSE_SAVE_CAP_MS = 1500;
 
 export interface CloseSteps {
-  /** Pauses every clock and saves the open song's position (U3's park). */
+  /** Pauses every clock and saves the open song's position (App's parkSong). */
   park(): void;
   /** Writes the profile saver's pending change now; exiting through the shell may skip `pagehide`. */
   flush(): void;

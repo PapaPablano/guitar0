@@ -78,7 +78,7 @@ interface SongKey {
 }
 
 /** One opened song. Its hash is a promise so changes made before the tab is saved wait for it. */
-interface OpenSong extends SongKey {
+interface TrackedSong extends SongKey {
   /** Bumped by every recording load or removal, so only the latest one decides the song's recording. */
   recordingRun: number;
   saveVideo: (video: VideoRef | null) => Promise<void>;
@@ -124,7 +124,7 @@ function latestOnly<T>(write: (value: T) => Promise<unknown>): (value: T) => Pro
 export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
   if (!deps) return webSession;
   const { library, files, now, onNote } = deps;
-  let current: OpenSong | null = null;
+  let current: TrackedSong | null = null;
   /** Saves still running, each with the song it goes to. */
   const inFlight = new Set<{ song: SongKey; done: Promise<void> }>();
 
@@ -143,7 +143,7 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
   }
 
   /** Copies a recording into the library and makes it the song's recording, unless a newer change decides it instead. */
-  async function saveRecording(song: OpenSong, file: File): Promise<void> {
+  async function saveRecording(song: TrackedSong, file: File): Promise<void> {
     const run = ++song.recordingRun;
     const tabHash = await song.hash;
     if (!tabHash) return;
@@ -162,7 +162,7 @@ export function createLibrarySession(deps: LibraryDeps | null): LibrarySession {
 
   return {
     openTab(bytes, details, initialVideo = null) {
-      const song = { recordingRun: 0 } as OpenSong;
+      const song = { recordingRun: 0 } as TrackedSong;
       song.hash = (async () => {
         let saved: string | null = null;
         try {

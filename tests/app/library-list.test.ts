@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { DropZone } from '../../src/app/DropZone';
 import { listSongs, type LibraryEntry } from '../../src/app/library';
-import { backingText, lastOpenedText, LibraryList, opensOnPick, SEPARATION_WARNING, SongsMenu } from '../../src/app/LibraryList';
+import { backingText, lastOpenedText, LibraryList, opensOnPick, SEPARATION_WARNING, SongsMenu, songsMenuList } from '../../src/app/LibraryList';
 import { FILE_TUNING } from '../../src/model/retune';
 
 const DAY = 24 * 3600 * 1000;
@@ -168,16 +168,20 @@ describe('LibraryList in the Songs menu', () => {
 });
 
 describe('SongsMenu', () => {
+  const riff = { songs: listSongs([entry({ title: 'Riff' })]), stemHashes: new Set<string>(), onOpen: open };
   const songsMenu = (props: Partial<Parameters<typeof SongsMenu>[0]>) =>
     renderToStaticMarkup(
       createElement(SongsMenu, {
-        library: { songs: listSongs([entry({ title: 'Riff' })]), stemHashes: new Set<string>(), onOpen: open },
+        library: riff,
         lockedReason: null,
         separating: false,
         onMenuOpen: () => {},
         ...props,
       }),
     );
+  /** The list the menu shows once it is open. */
+  const openMenu = (props: Partial<Parameters<typeof songsMenuList>[1]> = {}, library = riff) =>
+    renderToStaticMarkup(createElement(LibraryList, songsMenuList(library, { lockedReason: null, separating: false, ...props }, NOW)));
 
   it('is not shown on the web (R1)', () => {
     expect(songsMenu({ library: undefined })).toBe('');
@@ -187,24 +191,45 @@ describe('SongsMenu', () => {
     const out = songsMenu({});
     expect(out).toContain('<details');
     expect(out).toMatch(/<summary[^>]*>Songs<\/summary>/);
-    expect(out).toContain('Riff');
+    expect(openMenu()).toContain('Riff');
+  });
+
+  it('renders its rows only while open, so the player re-rendering while it plays does not redraw a hidden list', () => {
+    const out = songsMenu({});
+    expect(out).not.toContain('Riff');
+    expect(out).not.toContain('Your songs');
+  });
+
+  it('dates the rows from the moment the menu opened', () => {
+    const out = openMenu({}, { ...riff, songs: listSongs([entry({ title: 'Riff', openedAt: NOW - 3 * DAY })]) });
+    expect(out).toContain('Opened 3 days ago');
   });
 
   it('keeps its rows enabled while a song opens; only the recording lock disables them (R11)', () => {
     // The menu has no "opening" input at all: a song opening elsewhere never reaches its rows.
-    expect(songsMenu({})).not.toContain('disabled');
-    expect(songsMenu({ separating: true })).not.toContain('disabled');
-    expect(songsMenu({ lockedReason: 'Busy recording.' })).toContain('disabled');
+    expect(openMenu()).not.toContain('disabled');
+    expect(openMenu({ separating: true })).not.toContain('disabled');
+    expect(openMenu({ lockedReason: 'Busy recording.' })).toContain('disabled');
   });
 
   it('prefers the recording lock over the separation warning, since nothing can be picked then', () => {
-    const out = songsMenu({ lockedReason: 'Busy recording.', separating: true });
+    const out = openMenu({ lockedReason: 'Busy recording.', separating: true });
     expect(out).toContain('Busy recording.');
     expect(out).not.toContain(SEPARATION_WARNING);
   });
 
   it('says "No saved songs yet" with an empty library', () => {
-    expect(songsMenu({ library: { songs: [], stemHashes: new Set<string>(), onOpen: open } })).toContain('No saved songs yet');
+    expect(openMenu({}, { songs: [], stemHashes: new Set<string>(), onOpen: open })).toContain('No saved songs yet');
+  });
+});
+
+describe('LibraryList hidden', () => {
+  it('renders nothing while hidden, even with songs or empty text', () => {
+    const songs = listSongs([entry({ title: 'Riff' })]);
+    const hidden = (s: typeof songs) =>
+      renderToStaticMarkup(createElement(LibraryList, { songs: s, stemHashes: new Set<string>(), onOpen: open, disabled: false, now: NOW, emptyText: 'None', hidden: true }));
+    expect(hidden(songs)).toBe('');
+    expect(hidden([])).toBe('');
   });
 });
 
