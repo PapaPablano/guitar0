@@ -40,7 +40,7 @@ export function BackupDialog({ onClose }: BackupDialogProps) {
       <section className="dialog" role="dialog" aria-modal="true" aria-label="Back up and restore">
         <h2>Back up and restore</h2>
         <p className="muted">
-          A backup keeps your saved recording settings, alignments and list of saved stems. It does not include the stem audio itself, which can be made again, or your Pro status.
+          A backup keeps your saved songs with their tabs and recordings, your saved recording settings, alignments and list of saved stems. Recordings make a backup large, so it can take a minute. It does not include the stem audio itself, which can be made again, or your Pro status.
         </p>
         <div className="actions">
           <button type="button" disabled={busy} onClick={() => void run(async () => backupMessage(await createBackup()))}>

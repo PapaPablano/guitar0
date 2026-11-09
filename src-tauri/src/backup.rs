@@ -1,30 +1,54 @@
-// Backup and restore of a player's own practice data: saved recording profiles, per-recording alignments and the
-// saved-stems index. The stem audio itself is not included (it is large and can be made again; the page already forgets
-// an index entry whose stems are gone), and neither are the models, FFmpeg or the Pro status, which belongs to one device.
+// Backup and restore of a player's own practice data: saved recording profiles, per-recording alignments, the
+// saved-stems index, and the song library (its index, saved tabs and copied recordings). The stem audio itself is not
+// included (it is large and can be made again; the page already forgets an index entry whose stems are gone), and
+// neither are the models, FFmpeg or the Pro status, which belongs to one device.
 //
 // A backup is one zip with a small manifest. A restore reads only names it knows, checks each file before it writes
-// anything, and keeps the file it replaces as `.bak`, so a bad or hostile archive can never write outside the data folder
-// or leave half a restore behind.
+// anything under a real name, and keeps the file it replaces as `.bak`, so a bad or hostile archive can never write
+// outside the data folder or leave half a restore behind. Library tabs and recordings are binary and can be large: they
+// are streamed into the zip uncompressed, streamed back out to a temp file, and put in place only when their bytes match
+// the hash in their name. The library index is merged by tab hash rather than replaced, so a song saved only on this
+// machine survives a restore.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, TryLockError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tauri::Manager;
 use zip::write::SimpleFileOptions;
 
+use crate::library::{self, Kind};
+
 const MANIFEST: &str = "tabhighway-backup.json";
 const APP_NAME: &str = "tab-highway";
-const BACKUP_VERSION: u64 = 1;
+/// Version 2 added the song library. Every version from OLDEST_VERSION up still restores.
+const BACKUP_VERSION: u64 = 2;
+const OLDEST_VERSION: u64 = 1;
 const PROFILES: &str = "recording-profiles.json";
 const STEM_INDEX: &str = "stem-index.json";
 const ALIGNMENTS_DIR: &str = "alignments";
-/// No single file in a backup is larger than this; a bigger entry is not ours.
+const LIBRARY_DIR: &str = "library";
+const LIBRARY_INDEX: &str = "library/library.json";
+const LIBRARY_TABS: &str = "library/tabs";
+const LIBRARY_RECORDINGS: &str = "library/recordings";
+/// No single text file in a backup is larger than this; a bigger entry is not ours.
 const MAX_ENTRY_BYTES: u64 = 50 * 1024 * 1024;
+/// No stored tab or recording is larger than this. They go through a file, never memory, so the bound is about disk.
+const MAX_BINARY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_ENTRIES: usize = 20_000;
+const COPY_BUFFER: usize = 1024 * 1024;
+
+/// One backup or restore at a time: the commands run off the main thread now, so a second click could otherwise start
+/// a second restore merging the same index.
+static BUSY: Mutex<()> = Mutex::new(());
+/// Makes each restore temp file name unique within this process.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -35,14 +59,37 @@ pub struct Summary {
     pub name: String,
 }
 
-/// Which names in a backup are ours: the profile file, the stem index and `alignments/<64 hex>.json`.
+/// Which names in a backup are ours: the profile file, the stem index, `alignments/<64 hex>.json`, the library index
+/// and the library's hash-named tabs and recordings. `library.json.bad` and temp files are not.
 fn is_user_content(name: &str) -> bool {
-    if name == PROFILES || name == STEM_INDEX {
+    if name == PROFILES || name == STEM_INDEX || name == LIBRARY_INDEX {
+        return true;
+    }
+    if library_file(name).is_some() {
         return true;
     }
     name.strip_prefix("alignments/")
         .and_then(|rest| rest.strip_suffix(".json"))
         .is_some_and(crate::alignments::is_valid_hash)
+}
+
+/// A stored library file: `library/tabs/<64 hex>.bin` or `library/recordings/<64 hex>.<allowed type>`. Returns its
+/// kind, hash and extension, or None for any other name (so nothing like `..` or a separator can get through).
+fn library_file(name: &str) -> Option<(Kind, &str, &str)> {
+    let (kind, file) = if let Some(file) = name.strip_prefix("library/tabs/") {
+        (Kind::Tab, file)
+    } else {
+        (Kind::Recording, name.strip_prefix("library/recordings/")?)
+    };
+    let (hash, extension) = file.split_once('.')?;
+    (crate::alignments::is_valid_hash(hash) && library::is_allowed_extension(kind, extension)).then_some((kind, hash, extension))
+}
+
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Tab => "tab",
+        Kind::Recording => "recording",
+    }
 }
 
 fn now_secs() -> u64 {
@@ -52,16 +99,17 @@ fn now_secs() -> u64 {
 /// Writes a backup of `data` to `out`. Fails if `out` already exists, so a backup is never overwritten.
 pub fn create_backup(data: &Path, out: &Path) -> Result<Summary, String> {
     let mut names: Vec<(String, PathBuf)> = Vec::new();
-    for name in [PROFILES, STEM_INDEX] {
+    for name in [PROFILES, STEM_INDEX, LIBRARY_INDEX] {
         let path = data.join(name);
         if path.is_file() {
             names.push((name.to_string(), path));
         }
     }
-    if let Ok(entries) = fs::read_dir(data.join(ALIGNMENTS_DIR)) {
+    for dir in [ALIGNMENTS_DIR, LIBRARY_TABS, LIBRARY_RECORDINGS] {
+        let Ok(entries) = fs::read_dir(data.join(dir)) else { continue };
         for entry in entries.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
-            let name = format!("{ALIGNMENTS_DIR}/{file_name}");
+            let name = format!("{dir}/{file_name}");
             if is_user_content(&name) && entry.path().is_file() {
                 names.push((name, entry.path()));
             }
@@ -70,21 +118,41 @@ pub fn create_backup(data: &Path, out: &Path) -> Result<Summary, String> {
     names.sort();
 
     let file = fs::OpenOptions::new().write(true).create_new(true).open(out).map_err(|e| format!("could not create the backup file: {e}"))?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let manifest = serde_json::json!({ "app": APP_NAME, "version": BACKUP_VERSION, "createdAt": now_secs(), "files": names.len() });
-    zip.start_file(MANIFEST, options).map_err(|e| e.to_string())?;
-    zip.write_all(manifest.to_string().as_bytes()).map_err(|e| e.to_string())?;
-    for (name, path) in &names {
-        let bytes = fs::read(path).map_err(|e| format!("could not read {name}: {e}"))?;
-        zip.start_file(name.as_str(), options).map_err(|e| e.to_string())?;
-        zip.write_all(&bytes).map_err(|e| e.to_string())?;
+    let written = write_archive(BufWriter::with_capacity(COPY_BUFFER, file), &names);
+    if let Err(e) = written {
+        // A half-written backup (a full disk, a file that vanished) must not sit in the folder looking like a good one.
+        let _ = fs::remove_file(out);
+        return Err(e);
     }
-    zip.finish().map_err(|e| format!("could not finish the backup: {e}"))?;
     Ok(Summary { files: names.len(), name: out.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() })
 }
 
-/// A file from the archive that passed its checks and is ready to write.
+fn write_archive(out: BufWriter<fs::File>, names: &[(String, PathBuf)]) -> Result<(), String> {
+    let mut zip = zip::ZipWriter::new(out);
+    let text_options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let manifest = serde_json::json!({ "app": APP_NAME, "version": BACKUP_VERSION, "createdAt": now_secs(), "files": names.len() });
+    zip.start_file(MANIFEST, text_options).map_err(|e| e.to_string())?;
+    zip.write_all(manifest.to_string().as_bytes()).map_err(|e| e.to_string())?;
+    for (name, path) in names {
+        if library_file(name).is_some() {
+            // Audio barely compresses, and storing it keeps a large backup fast. Streamed, never held in memory.
+            let mut source = fs::File::open(path).map_err(|e| format!("could not read {name}: {e}"))?;
+            let len = source.metadata().map_err(|e| format!("could not read {name}: {e}"))?.len();
+            let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(len >= u64::from(u32::MAX));
+            zip.start_file(name.as_str(), options).map_err(|e| e.to_string())?;
+            io::copy(&mut source, &mut zip).map_err(|e| format!("could not back up {name}: {e}"))?;
+        } else {
+            let bytes = fs::read(path).map_err(|e| format!("could not read {name}: {e}"))?;
+            zip.start_file(name.as_str(), text_options).map_err(|e| e.to_string())?;
+            zip.write_all(&bytes).map_err(|e| e.to_string())?;
+        }
+    }
+    let mut out = zip.finish().map_err(|e| format!("could not finish the backup: {e}"))?;
+    out.flush().map_err(|e| format!("could not finish the backup: {e}"))?;
+    out.get_ref().sync_all().map_err(|e| format!("could not finish the backup: {e}"))
+}
+
+/// A text file from the archive that passed its checks and is ready to write.
 struct Checked {
     name: String,
     text: String,
@@ -94,6 +162,7 @@ fn check_entry(name: &str, text: String) -> Option<Checked> {
     let ok = match name {
         PROFILES => serde_json::from_str::<Value>(&text).ok().and_then(|v| crate::profiles::serialize_profiles(&v)).is_some(),
         STEM_INDEX => serde_json::from_str::<std::collections::HashMap<String, String>>(&text).is_ok(),
+        LIBRARY_INDEX => library::parse_index(&text).is_some(),
         _ => {
             let hash = name.strip_prefix("alignments/").and_then(|r| r.strip_suffix(".json"))?;
             crate::alignments::parse_alignment(&text, hash).is_some()
@@ -102,8 +171,83 @@ fn check_entry(name: &str, text: String) -> Option<Checked> {
     ok.then(|| Checked { name: name.to_string(), text })
 }
 
-/// Restores from `archive` into `data`. Everything is read and checked before the first write; an invalid file is
-/// skipped, an archive that is not a Tab Highway backup is refused whole.
+/// A library file from the archive whose bytes are in a temp file beside their target and match the hash in the name.
+struct Staged {
+    temp: PathBuf,
+    target: PathBuf,
+}
+
+/// Temp files a restore made. Any still on disk when this is dropped (a refused entry, an error, a panic) are removed,
+/// so a restore never leaves a partial file behind. The startup sweep in library.rs catches any left by a crash.
+#[derive(Default)]
+struct Temps(Vec<PathBuf>);
+
+impl Drop for Temps {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Streams one library entry to a temp file and checks it against `hash`. Ok(true) when the bytes match, Ok(false)
+/// when the entry is refused (wrong bytes, too large, damaged in the archive), and Err when the disk write itself
+/// failed, which stops the whole restore.
+fn stage(entry: &mut impl Read, temp: &Path, hash: &str) -> Result<bool, String> {
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(temp).map_err(|e| format!("could not restore the library: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; COPY_BUFFER];
+    let mut total: u64 = 0;
+    loop {
+        let read = match entry.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            // A damaged entry (the zip reader checks each entry's CRC) is skipped like any other invalid file.
+            Err(_) => return Ok(false),
+        };
+        total += read as u64;
+        if total > MAX_BINARY_BYTES {
+            return Ok(false);
+        }
+        hasher.update(&buffer[..read]);
+        file.write_all(&buffer[..read]).map_err(|e| format!("could not restore the library: {e}"))?;
+    }
+    file.sync_all().map_err(|e| format!("could not restore the library: {e}"))?;
+    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    Ok(digest == hash)
+}
+
+/// The library index to write: the backup's entries, then the entries only this machine has. Songs are matched by
+/// their `tabHash`; for a song in both, the backup's entry wins. A local index that is missing or unreadable adds
+/// nothing (the unreadable one is still kept as `.bak`). A local index that cannot be read for another reason stops
+/// the restore, so it is never overwritten unread.
+fn merge_index(backup_text: &str, local_path: &Path) -> Result<String, String> {
+    let backup = library::parse_index(backup_text).ok_or_else(|| "the backup's library index is not readable".to_string())?;
+    let local = match fs::read(local_path) {
+        Ok(bytes) => std::str::from_utf8(&bytes).ok().and_then(library::parse_index),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("could not read this computer's library index: {e}")),
+    };
+    let mut entries: Vec<Value> = backup["entries"].as_array().cloned().unwrap_or_default();
+    let in_backup: std::collections::HashSet<String> = entries.iter().filter_map(tab_hash).collect();
+    if let Some(local) = local {
+        for entry in local["entries"].as_array().into_iter().flatten() {
+            if !tab_hash(entry).is_some_and(|hash| in_backup.contains(&hash)) {
+                entries.push(entry.clone());
+            }
+        }
+    }
+    let merged = serde_json::json!({ "version": library::INDEX_VERSION, "entries": entries });
+    library::serialize_index(&merged).ok_or_else(|| "could not merge the library index".to_string())
+}
+
+fn tab_hash(entry: &Value) -> Option<String> {
+    entry.get("tabHash").and_then(Value::as_str).map(str::to_string)
+}
+
+/// Restores from `archive` into `data`. Everything is read and checked before the first write under a real name; an
+/// invalid file is skipped, an archive that is not a Tab Highway backup is refused whole.
 pub fn restore_backup(data: &Path, archive: &Path) -> Result<Summary, String> {
     let file = fs::File::open(archive).map_err(|e| format!("could not open the backup: {e}"))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| "that file is not a Tab Highway backup".to_string())?;
@@ -120,16 +264,39 @@ pub fn restore_backup(data: &Path, archive: &Path) -> Result<Summary, String> {
         return Err("that file is not a Tab Highway backup".to_string());
     }
     match manifest.get("version").and_then(Value::as_u64) {
-        Some(BACKUP_VERSION) => {}
-        Some(_) => return Err("that backup was made by a newer version of Tab Highway; update the app to restore it".to_string()),
-        None => return Err("that file is not a Tab Highway backup".to_string()),
+        Some(version) if (OLDEST_VERSION..=BACKUP_VERSION).contains(&version) => {}
+        Some(version) if version > BACKUP_VERSION => return Err("that backup was made by a newer version of Tab Highway; update the app to restore it".to_string()),
+        _ => return Err("that file is not a Tab Highway backup".to_string()),
     }
 
+    let library_dir = data.join(LIBRARY_DIR);
+    let mut temps = Temps::default();
     let mut checked = Vec::new();
+    let mut staged = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| format!("the backup is damaged: {e}"))?;
         let name = entry.name().to_string();
-        if name == MANIFEST || !entry.is_file() || !is_user_content(&name) || entry.size() > MAX_ENTRY_BYTES {
+        if name == MANIFEST || !entry.is_file() || !is_user_content(&name) {
+            continue;
+        }
+        if let Some((kind, hash, extension)) = library_file(&name) {
+            // Binary: never read as text or held in memory.
+            if entry.size() > MAX_BINARY_BYTES {
+                continue;
+            }
+            let target = library::file_path(&library_dir, kind_name(kind), hash, extension)?;
+            let dir = target.parent().ok_or_else(|| "no library folder".to_string())?;
+            fs::create_dir_all(dir).map_err(|e| format!("could not create the library folder: {e}"))?;
+            let temp = dir.join(format!("{hash}.restore-{}-{}.tmp", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
+            temps.0.push(temp.clone());
+            if stage(&mut entry, &temp, hash)? {
+                staged.push(Staged { temp, target });
+            } else {
+                let _ = fs::remove_file(&temp);
+            }
+            continue;
+        }
+        if entry.size() > MAX_ENTRY_BYTES {
             continue;
         }
         let mut text = String::new();
@@ -140,7 +307,21 @@ pub fn restore_backup(data: &Path, archive: &Path) -> Result<Summary, String> {
             checked.push(item);
         }
     }
+    // The library index is merged with this machine's, not replaced. Worked out before any write, so a local index
+    // that cannot be read stops the restore with nothing changed.
+    for item in checked.iter_mut().filter(|item| item.name == LIBRARY_INDEX) {
+        item.text = merge_index(&item.text, &data.join(LIBRARY_INDEX))?;
+    }
 
+    // Tabs and recordings go in place before the index that names them. A file already here under the same hash has the
+    // same bytes, so it is kept; nothing already in the library is ever deleted.
+    for item in &staged {
+        if item.target.exists() {
+            let _ = fs::remove_file(&item.temp);
+        } else {
+            fs::rename(&item.temp, &item.target).map_err(|e| format!("could not put a restored library file in place: {e}"))?;
+        }
+    }
     for item in &checked {
         let path = data.join(&item.name);
         if path.is_file() {
@@ -148,7 +329,24 @@ pub fn restore_backup(data: &Path, archive: &Path) -> Result<Summary, String> {
         }
         crate::write_atomic(&path, item.text.clone())?;
     }
-    Ok(Summary { files: checked.len(), name: archive.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() })
+    drop(temps);
+    Ok(Summary { files: checked.len() + staged.len(), name: archive.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() })
+}
+
+/// Runs `work` unless another backup or restore is already running.
+fn exclusive<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _guard = match BUSY.try_lock() {
+        Ok(guard) => guard,
+        // A panic in an earlier run leaves nothing half-held that matters here: every write is atomic or a temp file.
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return Err("a backup or restore is already running".to_string()),
+    };
+    work()
+}
+
+/// Runs the file work of a backup command on a blocking thread, so a large backup never stalls the window.
+async fn off_main_thread<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || exclusive(work)).await.map_err(|e| format!("the backup stopped unexpectedly: {e}"))?
 }
 
 /// Where backups are kept: the player's Documents folder, in a Tab Highway folder.
@@ -163,22 +361,25 @@ fn is_backup_name(name: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn backup_create(app: tauri::AppHandle, stamp: String) -> Result<Summary, String> {
+pub async fn backup_create(app: tauri::AppHandle, stamp: String) -> Result<Summary, String> {
     if !crate::exports::is_valid_stamp(&stamp) {
         return Err("that is not a time stamp".to_string());
     }
-    let data = crate::engine::Layout::locate()?.data;
     let dir = backups_dir(&app)?;
-    fs::create_dir_all(&dir).map_err(|e| format!("could not create the Backups folder: {e}"))?;
-    for attempt in 1..=100u32 {
-        let name = if attempt == 1 { format!("tab-highway-backup-{stamp}.zip") } else { format!("tab-highway-backup-{stamp}-{attempt}.zip") };
-        let path = dir.join(&name);
-        if path.exists() {
-            continue;
+    off_main_thread(move || {
+        let data = crate::engine::Layout::locate()?.data;
+        fs::create_dir_all(&dir).map_err(|e| format!("could not create the Backups folder: {e}"))?;
+        for attempt in 1..=100u32 {
+            let name = if attempt == 1 { format!("tab-highway-backup-{stamp}.zip") } else { format!("tab-highway-backup-{stamp}-{attempt}.zip") };
+            let path = dir.join(&name);
+            if path.exists() {
+                continue;
+            }
+            return create_backup(&data, &path);
         }
-        return create_backup(&data, &path);
-    }
-    Err("could not find a free backup name".to_string())
+        Err("could not find a free backup name".to_string())
+    })
+    .await
 }
 
 /// The backups in the Backups folder, newest name first.
@@ -195,12 +396,16 @@ pub fn backup_list(app: tauri::AppHandle) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn backup_restore(app: tauri::AppHandle, name: String) -> Result<Summary, String> {
+pub async fn backup_restore(app: tauri::AppHandle, name: String) -> Result<Summary, String> {
     if !is_backup_name(&name) {
         return Err("that is not one of the backups in the Backups folder".to_string());
     }
-    let data = crate::engine::Layout::locate()?.data;
-    restore_backup(&data, &backups_dir(&app)?.join(name))
+    let archive = backups_dir(&app)?.join(name);
+    off_main_thread(move || {
+        let data = crate::engine::Layout::locate()?.data;
+        restore_backup(&data, &archive)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -341,7 +546,7 @@ mod tests {
         let data = root.join("data");
         fs::create_dir_all(&data).unwrap();
         let archive = root.join("newer.zip");
-        write_zip(&archive, &[(MANIFEST, r#"{"app":"tab-highway","version":2}"#)]);
+        write_zip(&archive, &[(MANIFEST, r#"{"app":"tab-highway","version":3}"#)]);
         assert!(restore_backup(&data, &archive).unwrap_err().contains("newer version"));
     }
 
@@ -373,6 +578,256 @@ mod tests {
         assert!(!data.join(STEM_INDEX).exists());
         assert!(!root.join("escape.json").exists());
         assert!(!data.join("stems").exists());
+    }
+
+    // --- The song library ---
+
+    fn sha(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn library_index(entries: &[(&str, &str)]) -> String {
+        let entries: Vec<Value> = entries.iter().map(|(tab, title)| serde_json::json!({ "tabHash": tab, "title": title })).collect();
+        serde_json::json!({ "version": 1, "entries": entries }).to_string()
+    }
+
+    fn entries_by_tab(path: &Path) -> Vec<(String, String)> {
+        let index: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(index["version"], 1);
+        let mut out: Vec<(String, String)> = index["entries"].as_array().unwrap().iter().map(|e| (e["tabHash"].as_str().unwrap().to_string(), e["title"].as_str().unwrap().to_string())).collect();
+        out.sort();
+        out
+    }
+
+    /// A library with one tab and one recording of `recording_len` bytes: (tab hash, recording hash, tab, recording).
+    fn fill_library(data: &Path, recording_len: usize) -> (String, String, Vec<u8>, Vec<u8>) {
+        let lib = data.join("library");
+        fs::create_dir_all(lib.join("tabs")).unwrap();
+        fs::create_dir_all(lib.join("recordings")).unwrap();
+        let tab = b"a guitar pro file".to_vec();
+        // Not all one byte, so a stream that dropped or repeated a block would show.
+        let recording: Vec<u8> = (0..recording_len).map(|i| (i % 251) as u8 ^ (i / 4096) as u8).collect();
+        let (tab_hash, rec_hash) = (sha(&tab), sha(&recording));
+        fs::write(lib.join("tabs").join(format!("{tab_hash}.bin")), &tab).unwrap();
+        fs::write(lib.join("recordings").join(format!("{rec_hash}.wav")), &recording).unwrap();
+        fs::write(lib.join("library.json"), library_index(&[(&tab_hash, "Song")])).unwrap();
+        (tab_hash, rec_hash, tab, recording)
+    }
+
+    fn temp_files_under(dir: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    out.extend(temp_files_under(&path));
+                } else if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+
+    fn write_binary_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        for (name, bytes) in entries {
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn a_library_with_a_60_mb_recording_round_trips_byte_for_byte_into_an_empty_folder() {
+        // Covers AE4.
+        let root = scratch("library-round-trip");
+        let data = root.join("data");
+        fill(&data);
+        let (tab_hash, rec_hash, tab, recording) = fill_library(&data, 60 * 1024 * 1024);
+        let out = root.join("backup.zip");
+        let summary = create_backup(&data, &out).unwrap();
+        assert_eq!(summary.files, 7);
+
+        let mut zip = zip::ZipArchive::new(fs::File::open(&out).unwrap()).unwrap();
+        assert_eq!(zip.by_name(&format!("library/recordings/{rec_hash}.wav")).unwrap().compression(), zip::CompressionMethod::Stored, "audio is stored, not compressed");
+        assert_eq!(zip.by_name(&format!("library/tabs/{tab_hash}.bin")).unwrap().compression(), zip::CompressionMethod::Stored);
+        drop(zip);
+
+        let fresh = root.join("fresh");
+        fs::create_dir_all(&fresh).unwrap();
+        let summary = restore_backup(&fresh, &out).unwrap();
+        assert_eq!(summary.files, 7);
+        let lib = fresh.join("library");
+        assert_eq!(fs::read(lib.join("library.json")).unwrap(), fs::read(data.join("library").join("library.json")).unwrap());
+        assert_eq!(fs::read(lib.join("tabs").join(format!("{tab_hash}.bin"))).unwrap(), tab);
+        assert!(fs::read(lib.join("recordings").join(format!("{rec_hash}.wav"))).unwrap() == recording, "the recording is byte-identical");
+        assert!(temp_files_under(&fresh).is_empty(), "no temp file is left behind");
+        assert!(!fresh.join("stems").exists(), "stem audio is still not part of a backup");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_backup_leaves_out_the_set_aside_index_temp_files_and_unknown_library_names() {
+        let root = scratch("library-contents");
+        let data = root.join("data");
+        let (tab_hash, rec_hash, _, _) = fill_library(&data, 10);
+        let lib = data.join("library");
+        fs::write(lib.join("library.json.bad"), "{corrupt").unwrap();
+        fs::write(lib.join("library.json.bak"), "old").unwrap();
+        fs::write(lib.join("recordings").join(format!("{rec_hash}.3.tmp")), "half").unwrap();
+        fs::write(lib.join("recordings").join(format!("{}.exe", "ab".repeat(32))), "no").unwrap();
+        fs::write(lib.join("recordings").join("notes.wav"), "not a hash").unwrap();
+        fs::write(lib.join("tabs").join(format!("{}.mp3", "ab".repeat(32))), "a tab is always bin").unwrap();
+        let out = root.join("backup.zip");
+        create_backup(&data, &out).unwrap();
+        let mut expected = vec![MANIFEST.to_string(), "library/library.json".to_string(), format!("library/recordings/{rec_hash}.wav"), format!("library/tabs/{tab_hash}.bin")];
+        expected.sort();
+        assert_eq!(names_in(&out), expected);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_recording_whose_bytes_do_not_match_its_name_is_refused_and_leaves_no_file() {
+        let root = scratch("library-mismatch");
+        let data = root.join("data");
+        fs::create_dir_all(&data).unwrap();
+        let good = b"the real recording".to_vec();
+        let good_hash = sha(&good);
+        let liar_hash = sha(b"something else");
+        let archive = root.join("mismatch.zip");
+        write_binary_zip(
+            &archive,
+            &[
+                (MANIFEST, br#"{"app":"tab-highway","version":2}"#),
+                (&format!("library/recordings/{liar_hash}.mp3"), b"tampered bytes"),
+                (&format!("library/tabs/{liar_hash}.bin"), b"tampered tab"),
+                (&format!("library/recordings/{good_hash}.mp3"), &good),
+            ],
+        );
+        let summary = restore_backup(&data, &archive).unwrap();
+        assert_eq!(summary.files, 1, "only the recording that matches its name");
+        assert_eq!(fs::read(data.join("library").join("recordings").join(format!("{good_hash}.mp3"))).unwrap(), good);
+        assert!(!data.join("library").join("recordings").join(format!("{liar_hash}.mp3")).exists());
+        assert!(!data.join("library").join("tabs").join(format!("{liar_hash}.bin")).exists());
+        assert!(temp_files_under(&data).is_empty(), "the refused bytes left no temp file");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn library_names_that_could_escape_or_are_not_ours_are_never_written() {
+        let root = scratch("library-hostile");
+        let data = root.join("data");
+        fs::create_dir_all(&data).unwrap();
+        let bytes = b"audio".to_vec();
+        let hash = sha(&bytes);
+        let archive = root.join("hostile.zip");
+        write_binary_zip(
+            &archive,
+            &[
+                (MANIFEST, br#"{"app":"tab-highway","version":2}"#),
+                ("library/recordings/../../escape.mp3", &bytes),
+                (&format!("library/recordings/../{hash}.mp3"), &bytes),
+                (&format!("library/tabs/../recordings/{hash}.bin"), &bytes),
+                (&format!("library/recordings/{hash}.exe"), &bytes),
+                (&format!("library/recordings/{hash}.tmp"), &bytes),
+                (&format!("library/tabs/{hash}.mp3"), &bytes),
+                (&format!("library/stems/{hash}.wav"), &bytes),
+                ("library/library.json.bad", br#"{"version":1,"entries":[]}"#),
+                ("library/library.json", b"not an index"),
+            ],
+        );
+        let summary = restore_backup(&data, &archive).unwrap();
+        assert_eq!(summary.files, 0);
+        assert!(!root.join("escape.mp3").exists());
+        assert!(!data.join("library").join("library.json.bad").exists(), "a set-aside index is never restored");
+        assert!(!data.join("library").join("library.json").exists(), "an index that is not an envelope is refused");
+        assert!(fs::read_dir(&data).unwrap().all(|e| e.unwrap().file_name() == "library"), "nothing outside the library");
+        assert!(temp_files_under(&data).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn restoring_over_a_library_merges_the_index_by_tab_hash_and_deletes_no_recording() {
+        let root = scratch("library-merge");
+        let data = root.join("data");
+        let lib = data.join("library");
+        let (shared, rec_hash, _, recording) = fill_library(&data, 1000);
+        let backup_only = "b".repeat(64);
+        fs::write(lib.join("library.json"), library_index(&[(&shared, "Backup title"), (&backup_only, "Only in backup")])).unwrap();
+        let out = root.join("backup.zip");
+        create_backup(&data, &out).unwrap();
+
+        // Later on this machine: the shared song was renamed and a new song saved with its own recording.
+        let local_only = "c".repeat(64);
+        let local_index = library_index(&[(&shared, "Local title"), (&local_only, "Only here")]);
+        fs::write(lib.join("library.json"), &local_index).unwrap();
+        let local_recording = b"a recording made after the backup".to_vec();
+        let local_rec_hash = sha(&local_recording);
+        fs::write(lib.join("recordings").join(format!("{local_rec_hash}.mp3")), &local_recording).unwrap();
+
+        restore_backup(&data, &out).unwrap();
+        let mut expected = vec![(backup_only.clone(), "Only in backup".to_string()), (shared.clone(), "Backup title".to_string()), (local_only.clone(), "Only here".to_string())];
+        expected.sort();
+        assert_eq!(entries_by_tab(&lib.join("library.json")), expected, "the backup's entry wins, and a song only on this machine is kept");
+        assert_eq!(fs::read_to_string(lib.join("library.json.bak")).unwrap(), local_index, "the replaced index is kept as .bak");
+        assert_eq!(fs::read(lib.join("recordings").join(format!("{local_rec_hash}.mp3"))).unwrap(), local_recording, "existing recordings are not deleted");
+        assert!(fs::read(lib.join("recordings").join(format!("{rec_hash}.wav"))).unwrap() == recording);
+        assert!(temp_files_under(&data).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_restore_over_an_unreadable_local_index_writes_the_backup_index_and_keeps_the_old_one_as_bak() {
+        let root = scratch("library-merge-corrupt");
+        let data = root.join("data");
+        let lib = data.join("library");
+        let (tab_hash, _, _, _) = fill_library(&data, 10);
+        let out = root.join("backup.zip");
+        create_backup(&data, &out).unwrap();
+        fs::write(lib.join("library.json"), "{corrupt").unwrap();
+        restore_backup(&data, &out).unwrap();
+        assert_eq!(entries_by_tab(&lib.join("library.json")), vec![(tab_hash, "Song".to_string())]);
+        assert_eq!(fs::read_to_string(lib.join("library.json.bak")).unwrap(), "{corrupt");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_version_1_backup_still_restores_as_before() {
+        let root = scratch("version-1");
+        let data = root.join("data");
+        fs::create_dir_all(&data).unwrap();
+        let archive = root.join("v1.zip");
+        let alignment = alignment_text(HASH_A);
+        write_zip(&archive, &[(MANIFEST, r#"{"app":"tab-highway","version":1,"createdAt":0,"files":3}"#), (PROFILES, &profile_text()), (STEM_INDEX, r#"{"abc":"job1"}"#), (&format!("alignments/{HASH_A}.json"), &alignment)]);
+        assert_eq!(restore_backup(&data, &archive).unwrap().files, 3);
+        assert_eq!(fs::read_to_string(data.join(PROFILES)).unwrap(), profile_text());
+        assert_eq!(fs::read_to_string(data.join("alignments").join(format!("{HASH_A}.json"))).unwrap(), alignment);
+        assert!(!data.join("library").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_new_backup_says_version_2() {
+        let root = scratch("version-2");
+        let data = root.join("data");
+        fs::create_dir_all(&data).unwrap();
+        let out = root.join("backup.zip");
+        create_backup(&data, &out).unwrap();
+        let mut zip = zip::ZipArchive::new(fs::File::open(&out).unwrap()).unwrap();
+        let mut text = String::new();
+        zip.by_name(MANIFEST).unwrap().read_to_string(&mut text).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["version"], 2);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_second_backup_or_restore_while_one_runs_is_refused() {
+        let held = BUSY.lock().unwrap();
+        assert!(exclusive(|| Ok(())).unwrap_err().contains("already running"));
+        drop(held);
+        assert_eq!(exclusive(|| Ok(7)).unwrap(), 7);
     }
 
     #[test]
