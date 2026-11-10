@@ -9,6 +9,7 @@ import { copyStateText, exactLine, holdText } from './exactness-text';
 import { ExactnessStrip } from './ExactnessStrip';
 import { addLanding, emptyLandingStats, type LandingStats } from './landing-stats';
 import { readNeckCues, writeNeckCues } from './neck-cues-setting';
+import { readSynthEffects, writeSynthEffects } from './effects-setting';
 import { ClickCountIn } from '../audio/count-in';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -242,6 +243,10 @@ export function App() {
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
   /** Whether the neck shows technique cues: remembered between sessions, on until the player turns it off. */
   const [neckCues, setNeckCues] = useState(() => readNeckCues());
+  /** Whether the synth plays through its EQ and room: remembered between sessions, on until the player turns it off (R11). */
+  const [synthEffects, setSynthEffects] = useState(() => readSynthEffects());
+  /** The same choice for a synth session being built, which may happen in a callback that saw an older render. */
+  const synthEffectsRef = useRef(synthEffects);
   const [tuningId, setTuningId] = useState(FILE_TUNING);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
@@ -763,6 +768,8 @@ export function App() {
     const synth = createSynthSession(score, timelineToPlay.durationSeconds, timelineToPlay.tempoMap, {
       banks: bundledBankSources(),
       keep: bundledBankUrls(),
+      // A rebuilt session starts where the switch is, live and for its exports (R14).
+      effects: synthEffectsRef.current,
       onProgress: (progress) => {
         if (isCurrent()) setAudio((a) => (a.status === 'loading' ? { status: 'loading', progress } : a));
       },
@@ -963,6 +970,14 @@ export function App() {
   function changeNeckCues(on: boolean) {
     setNeckCues(on);
     writeNeckCues(on);
+  }
+
+  /** Turns the synth's EQ and room on or off: heard at once, followed by exports, and kept for the next session (R11, R14). */
+  function changeSynthEffects(on: boolean) {
+    synthEffectsRef.current = on;
+    setSynthEffects(on);
+    writeSynthEffects(on);
+    live.current.session?.clock.setEffects(on);
   }
 
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
@@ -1669,7 +1684,7 @@ export function App() {
           >
             Export video
           </button>
-          <Menu label="More" ariaLabel="More: find on Songsterr, open another file, back up and restore" className="more-menu">
+          <Menu label="More" ariaLabel="More: find on Songsterr, synth EQ and room, open another file, back up and restore" className="more-menu">
             {songsterrLink && (
               <a
                 className="link-button"
@@ -1685,6 +1700,11 @@ export function App() {
                 Find on Songsterr
               </a>
             )}
+            {/* A label, not a button, so the menu stays open for flipping back and forth (Menu closes on buttons and links). */}
+            <label className="field">
+              <input type="checkbox" role="switch" checked={synthEffects} onChange={(e) => changeSynthEffects(e.target.checked)} /> Synth
+              EQ and room
+            </label>
             <button
               type="button"
               onClick={toStartScreen}

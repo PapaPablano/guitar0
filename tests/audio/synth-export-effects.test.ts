@@ -5,7 +5,7 @@ const renderWithEffects = vi.hoisted(() => vi.fn(async (pcm: unknown) => ({ ...(
 
 vi.mock('../../src/audio/synth-effects', () => ({
   renderWithEffects,
-  installLiveEffects: () => () => {},
+  installLiveEffects: () => ({ remove: () => {}, setEnabled: () => {}, output: null }),
 }));
 
 import { SynthClock } from '../../src/audio/synth-bridge';
@@ -39,5 +39,39 @@ describe('exportAudio effects', () => {
     const pcm = await clockWithExport().exportAudio(undefined, { effects: false });
     expect(renderWithEffects).not.toHaveBeenCalled();
     expect((pcm as unknown as { marker?: string }).marker).toBeUndefined();
+  });
+
+  it('covers AE5: with the effects switched off, the export is plain too, matching what was heard', async () => {
+    const clock = clockWithExport();
+    clock.setEffects(false);
+    expect(clock.effectsOn).toBe(false);
+    const pcm = await clock.exportAudio();
+    expect(renderWithEffects).not.toHaveBeenCalled();
+    expect((pcm as unknown as { marker?: string }).marker).toBeUndefined();
+  });
+
+  it('follows the switch back on', async () => {
+    const clock = clockWithExport();
+    clock.setEffects(false);
+    clock.setEffects(true);
+    await clock.exportAudio();
+    expect(renderWithEffects).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the alignment plain while the effects are on', async () => {
+    const clock = clockWithExport();
+    clock.setEffects(true);
+    await clock.exportAudio(undefined, { fullBand: true, effects: false });
+    expect(renderWithEffects).not.toHaveBeenCalled();
+  });
+
+  it('passes the switch to the live chain it is bound to', () => {
+    const clock = clockWithExport();
+    const live = vi.fn();
+    clock.bindLiveEffects(live);
+    clock.setEffects(false);
+    expect(live).toHaveBeenLastCalledWith(false);
+    clock.setEffects(true);
+    expect(live).toHaveBeenLastCalledWith(true);
   });
 });

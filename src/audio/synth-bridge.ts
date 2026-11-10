@@ -17,7 +17,7 @@ interface WrittenSound {
 }
 
 export interface ExportAudioOptions {
-  /** Apply the light effects heard live. Off for the alignment, which needs the plain sound. */
+  /** Apply the light effects. Defaults to the effects switch, so the export sounds like live playback (R14); the alignment passes false for the plain sound. */
   effects?: boolean;
   /** Keep every track, including the one Play along silences. The alignment compares the recording with the whole band. */
   fullBand?: boolean;
@@ -41,6 +41,8 @@ export interface SynthOptions {
   keep?: readonly string[];
   /** Called with 0..1 while the banks download, weighted by their sizes. */
   onProgress?: (fraction: number) => void;
+  /** Whether the synth's effects start switched on. Defaults to on. */
+  effects?: boolean;
 }
 
 /**
@@ -67,6 +69,8 @@ export class SynthClock implements Clock {
   private disposed = false;
   /** The score the session hands alphaTab once its banks are in. Until then alphaTab has no score, so track changes go to this one. */
   private scoreToLoad: alphaTab.model.Score | null = null;
+  private effectsSwitch = true;
+  private liveEffects: (on: boolean) => void = () => {};
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -287,13 +291,29 @@ export class SynthClock implements Clock {
     if (this.resumeAfterReload) this.api.play();
   }
 
+  /** Whether the effects are switched on, live and for the export. */
+  get effectsOn(): boolean {
+    return this.effectsSwitch;
+  }
+
+  /** Switches the effects on or off: heard at once in live playback (R11), and followed by the next export (R14). */
+  setEffects(on: boolean): void {
+    this.effectsSwitch = on;
+    this.liveEffects(on);
+  }
+
+  /** Connects the effects switch to the live effects chain. */
+  bindLiveEffects(setEnabled: (on: boolean) => void): void {
+    this.liveEffects = setEnabled;
+  }
+
   /**
    * Renders the whole song's synth audio offline, at original tempo, for the video export.
    * Calls `onProgress` with 0..1 as it goes. The silenced track is left out unless `fullBand` is set, which the alignment
-   * needs so it compares the recording with every part. The light effects heard live are applied too, unless `effects` is
-   * false: the alignment needs the plain sound.
+   * needs so it compares the recording with every part. The light effects are applied when they are switched on, unless
+   * `effects` is false: the alignment needs the plain sound.
    */
-  async exportAudio(onProgress?: (fraction: number) => void, { effects = true, fullBand = false, onlyTrack }: ExportAudioOptions = {}): Promise<PcmAudio> {
+  async exportAudio(onProgress?: (fraction: number) => void, { effects = this.effectsSwitch, fullBand = false, onlyTrack }: ExportAudioOptions = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
@@ -462,6 +482,8 @@ export interface SynthSession {
   clock: SynthClock;
   /** Resolves when every bank and the score are loaded and playback can start. */
   ready: Promise<void>;
+  /** What the speakers are fed, after the effects switch, for a level meter in dev tools; null when the effects are not installed. */
+  output: AudioNode | null;
 }
 
 /**
@@ -492,7 +514,10 @@ export function createSynthSession(
   const clock = new SynthClock(api, durationSeconds, tempoMap);
   let disposed = false;
   // The same effects the export applies, so the video sounds like what was practised to.
-  const removeEffects = installLiveEffects(api);
+  const effectsOn = options.effects ?? true;
+  const effects = installLiveEffects(api, effectsOn);
+  clock.bindLiveEffects(effects.setEnabled);
+  clock.setEffects(effectsOn);
 
   // Until the banks are in, alphaTab has no score, so tones and the silenced track chosen meanwhile go straight to it.
   clock.awaitScore(score);
@@ -505,9 +530,9 @@ export function createSynthSession(
   const originalDispose = clock.dispose.bind(clock);
   clock.dispose = () => {
     disposed = true;
-    removeEffects();
+    effects.remove();
     originalDispose();
     host.remove();
   };
-  return { clock, ready };
+  return { clock, ready, output: effects.output };
 }

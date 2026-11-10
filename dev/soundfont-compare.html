@@ -19,6 +19,10 @@
       Start at second <input id="start" type="number" value="0" min="0" step="1" style="width: 5em" />
       <button id="stop">Stop</button>
     </div>
+    <div class="row">
+      <label><input id="effects" type="checkbox" role="switch" checked /> Synth EQ and room</label>
+      Level (3 s RMS): <output id="level">-</output>
+    </div>
     <div id="fonts"></div>
     <pre id="out">waiting</pre>
     <script type="module" src="./soundfont-compare.ts"></script>
