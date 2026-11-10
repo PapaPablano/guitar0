@@ -4,7 +4,7 @@ import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import { readOutputLatency } from './output-latency';
-import { loadSoundFontBytes } from './soundfont-cache';
+import { loadSoundFontBytes, type SoundFontEnv } from './soundfont-cache';
 import { substituteUnplayablePrograms } from './font-substitutes';
 import { programGain } from './track-balance';
 import { installLiveEffects, renderWithEffects } from './synth-effects';
@@ -28,10 +28,18 @@ export interface ExportAudioOptions {
 /** How long a rebuild of the synth's audio may take before it is given up on. */
 const RELOAD_TIMEOUT_MS = 20_000;
 
+/**
+ * One sound bank for the synth: a URL (relative URLs resolve against the page), downloaded once and kept in the browser's
+ * cache, or bytes already in hand, such as a bank the player chose.
+ */
+export type BankSource = { url: string } | { bytes: Uint8Array };
+
 export interface SynthOptions {
-  /** URL of the SoundFont; relative URLs resolve against the page. It is downloaded once and kept in the browser's cache. */
-  soundFontUrl: string;
-  /** Called with 0..1 while the SoundFont loads. */
+  /** The banks in layering order: the first replaces whatever the synth had, each later one is added over it. Not empty. */
+  banks: readonly BankSource[];
+  /** Cached bank URLs to keep when a download is stored; every other cached entry is an older build's. Defaults to the URL banks. */
+  keep?: readonly string[];
+  /** Called with 0..1 while the banks download, weighted by their sizes. */
   onProgress?: (fraction: number) => void;
 }
 
@@ -57,6 +65,8 @@ export class SynthClock implements Clock {
   private stopListening: (() => void) | null = null;
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  /** The score the session hands alphaTab once its banks are in. Until then alphaTab has no score, so track changes go to this one. */
+  private scoreToLoad: alphaTab.model.Score | null = null;
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -90,6 +100,15 @@ export class SynthClock implements Clock {
 
   get loop(): LoopRange | null {
     return this.loopRange;
+  }
+
+  /** Track changes made before alphaTab has the score are applied to this one, and reach the synth when it is handed over. */
+  awaitScore(score: alphaTab.model.Score): void {
+    this.scoreToLoad = score;
+  }
+
+  private tracks(): alphaTab.model.Track[] {
+    return (this.api.score ?? this.scoreToLoad)?.tracks ?? [];
   }
 
   /** The synth position interpolated to now, before the output latency is taken off. */
@@ -152,7 +171,7 @@ export class SynthClock implements Clock {
 
   /** Sets each guitar track to the common level for its sound. alphaTab drops a level set before its synth exists, so this runs on every ready. */
   private applyBalance(): void {
-    const tracks = this.api.score?.tracks ?? [];
+    const tracks = this.tracks();
     tracks.forEach((track, index) => {
       const gain = programGain(track.playbackInfo.program);
       if (gain === 1 && !this.levelled.has(index)) return;
@@ -163,14 +182,14 @@ export class SynthClock implements Clock {
 
   private applySilence(): void {
     if (this.silentTrack === null) return;
-    const track = this.api.score?.tracks[this.silentTrack];
+    const track = this.tracks()[this.silentTrack];
     if (track) this.api.changeTrackMute([track], true);
   }
 
   /** Silences one track, or none, so the rest of the band plays without it. The export follows, unless it asks for the full band. */
   setSilentTrack(index: number | null): void {
     if (index === this.silentTrack) return;
-    const tracks = this.api.score?.tracks ?? [];
+    const tracks = this.tracks();
     const previous = this.silentTrack === null ? undefined : tracks[this.silentTrack];
     const next = index === null ? undefined : tracks[index];
     if (index !== null && !next) return;
@@ -184,7 +203,7 @@ export class SynthClock implements Clock {
    * sound the tab wrote. The change reaches the live synth and the export alike, because both build their audio from the score.
    */
   setTrackPrograms(overrides: ReadonlyMap<number, number>): void {
-    const tracks = this.api.score?.tracks ?? [];
+    const tracks = this.tracks();
     let changed = false;
     tracks.forEach((track, index) => {
       const wanted = overrides.get(index);
@@ -210,7 +229,8 @@ export class SynthClock implements Clock {
    * that never finishes is given up on so later changes still get through.
    */
   private reloadMidi(): void {
-    if (this.disposed) return;
+    // Before alphaTab has the score there is nothing to rebuild: the audio it builds when the score arrives has the change.
+    if (this.disposed || !this.api.score) return;
     if (this.reloading) {
       this.reloadAgain = true;
       return;
@@ -352,9 +372,95 @@ function applyProgram(track: alphaTab.model.Track, written: WrittenSound, progra
   for (const entry of written.automations) entry.automation.value = program ?? entry.value;
 }
 
+export interface BankLoadOptions {
+  onProgress?: (fraction: number) => void;
+  /** Cached URLs to keep; defaults to the URL sources. */
+  keep?: readonly string[];
+  /** True once the session is closed; nothing is handed to alphaTab after that and `ready` never settles. */
+  isDisposed?: () => boolean;
+  env?: SoundFontEnv;
+}
+
+/**
+ * Fetches every bank, then hands them to alphaTab in order (the first replacing, the rest appended) and only then the score.
+ * alphaTab rebuilds its presets and reports ready again for each bank that arrives after the score's MIDI, so posting
+ * them all first gives a single ready that covers every bank. Resolves on that ready; rejects when any bank fails to
+ * download or load, so the caller can offer a retry.
+ */
+export function loadBanksThenScore(
+  api: alphaTab.AlphaTabApi,
+  score: alphaTab.model.Score,
+  banks: readonly BankSource[],
+  { onProgress, keep, isDisposed = () => false, env }: BankLoadOptions = {},
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (banks.length === 0) {
+      reject(new Error('The sound player has no sound bank.'));
+      return;
+    }
+    let scoreGiven = false;
+    // A ready before the score is handed over cannot cover every bank, so only one after it counts.
+    api.playerReady.on(() => {
+      if (scoreGiven) resolve();
+    });
+    api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
+    const urls = banks.flatMap((bank) => ('url' in bank ? [bank.url] : []));
+    const progress = combinedProgress(urls.length, onProgress);
+    let next = 0;
+    // The banks are fetched here, not by alphaTab, so they can be cached, show progress and be retried.
+    Promise.all(
+      banks.map((bank) => {
+        if (!('url' in bank)) return Promise.resolve(bank.bytes);
+        const report = progress(next++);
+        return loadSoundFontBytes(bank.url, report, env, keep ?? urls);
+      }),
+    )
+      .then((all) => {
+        if (isDisposed()) return;
+        for (const [index, bytes] of all.entries()) {
+          if (!api.loadSoundFont(bytes, index > 0)) {
+            reject(new Error('The sound player could not start.'));
+            return;
+          }
+        }
+        scoreGiven = true;
+        api.renderScore(score);
+      })
+      .catch(reject);
+  });
+}
+
+/**
+ * Joins the progress of several downloads into one 0..1, weighted by their sizes. A download whose size is not known yet
+ * counts as the average of the known ones. Never goes back, and reaches 1 only when every download is whole.
+ */
+function combinedProgress(count: number, onProgress?: (fraction: number) => void) {
+  const fractions = new Array<number>(count).fill(0);
+  const totals = new Array<number>(count).fill(0);
+  let shown = 0;
+  return (index: number) => (fraction: number, totalBytes: number) => {
+    fractions[index] = fraction;
+    totals[index] = totalBytes;
+    const known = totals.filter((total) => total > 0);
+    const guess = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+    let received = 0;
+    let whole = 0;
+    for (let i = 0; i < count; i++) {
+      const size = totals[i] > 0 ? totals[i] : guess;
+      whole += size;
+      received += totals[i] > 0 ? fractions[i] * size : 0;
+    }
+    const allIn = fractions.every((f) => f >= 1);
+    const combined = allIn ? 1 : Math.min(received / whole, 0.999);
+    if (combined <= shown) return;
+    shown = combined;
+    onProgress?.(shown);
+  };
+}
+
 export interface SynthSession {
   clock: SynthClock;
-  /** Resolves when the SoundFont and score are loaded and playback can start. */
+  /** Resolves when every bank and the score are loaded and playback can start. */
   ready: Promise<void>;
 }
 
@@ -388,17 +494,12 @@ export function createSynthSession(
   // The same effects the export applies, so the video sounds like what was practised to.
   const removeEffects = installLiveEffects(api);
 
-  const ready = new Promise<void>((resolve, reject) => {
-    api.playerReady.on(() => resolve());
-    api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
-    api.renderScore(score);
-    // The SoundFont is fetched here, not by alphaTab, so it can be cached, show progress and be retried.
-    loadSoundFontBytes(options.soundFontUrl, options.onProgress)
-      .then((bytes) => {
-        if (disposed) return;
-        if (!api.loadSoundFont(bytes, false)) reject(new Error('The sound player could not start.'));
-      })
-      .catch(reject);
+  // Until the banks are in, alphaTab has no score, so tones and the silenced track chosen meanwhile go straight to it.
+  clock.awaitScore(score);
+  const ready = loadBanksThenScore(api, score, options.banks, {
+    onProgress: options.onProgress,
+    keep: options.keep,
+    isDisposed: () => disposed,
   });
 
   const originalDispose = clock.dispose.bind(clock);

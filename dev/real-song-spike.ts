@@ -68,7 +68,7 @@ async function run() {
   say('rendering the tab');
   const score = loadScoreFromBytes(new Uint8Array(tabBytes));
   const timeline = buildTimeline(score);
-  const session = createSynthSession(score, timeline.durationSeconds, timeline.tempoMap, { soundFontUrl: '../soundfont/sonivox.sf3' });
+  const session = createSynthSession(score, timeline.durationSeconds, timeline.tempoMap, { banks: [{ url: '../soundfont/sonivox.sf3' }] });
   await session.ready;
   const pcm = await session.clock.exportAudio((fraction) => say(`rendering the tab ${Math.round(fraction * 100)}%`));
   const tab = downsampleMono(pcm, FEATURE_RATE);

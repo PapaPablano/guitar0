@@ -58,7 +58,7 @@ async function run() {
         stop();
         return;
       }
-      const session = createSynthSession(score, timeline.durationSeconds, timeline.tempoMap, { soundFontUrl: `./local/${font}` });
+      const session = createSynthSession(score, timeline.durationSeconds, timeline.tempoMap, { banks: [{ url: `./local/${font}` }] });
       current = session;
       try {
         await session.ready;
