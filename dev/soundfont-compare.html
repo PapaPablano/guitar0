@@ -10,20 +10,38 @@
       button { padding: 6px 12px; }
       button.on { outline: 2px solid #2b5fd9; }
       pre { background: #8881; padding: 8px; white-space: pre-wrap; }
+      ol { padding-left: 1.4em; }
     </style>
   </head>
   <body>
     <h1>SoundFont comparison</h1>
-    <p>Dev-only. Put fonts and a tab in <code>dev/local/</code>. Open <code>?tab=ozzy.gp&amp;fonts=sonivox.sf3,MuseScore_General.sf3,GeneralUser-GS.sf2</code>.</p>
+    <p>Dev-only listening page for choosing the bundled guitar and bass banks (plan U4).</p>
+    <ol>
+      <li>Make the prepared files with <code>node scripts/prepare-bank.ts</code> into <code>dev/local/prepared/</code>
+        (<code>guitar-clean.sf3</code>, <code>guitar-distortion.sf3</code>, <code>bass-finger.sf3</code>, <code>bass-picked.sf3</code>),
+        and put a tab in <code>dev/local/</code>.</li>
+      <li>Run <code>npm run dev</code> and open <code>http://localhost:5173/dev/soundfont-compare.html?tab=ozzy.gp</code>
+        (use the port Vite prints, and any tab name in <code>dev/local/</code>).</li>
+      <li>Pick a start second, then switch between <b>A</b> and <b>B</b>. Both play the same passage at matched loudness, with the
+        synth's effects off unless you switch them on.</li>
+    </ol>
     <div class="row">
       Start at second <input id="start" type="number" value="0" min="0" step="1" style="width: 5em" />
       <button id="stop">Stop</button>
     </div>
     <div class="row">
-      <label><input id="effects" type="checkbox" role="switch" checked /> Synth EQ and room</label>
+      <label><input id="effects" type="checkbox" role="switch" /> Synth EQ and room</label>
       Level (3 s RMS): <output id="level">-</output>
     </div>
-    <div id="fonts"></div>
+    <h2>A/B</h2>
+    <div class="row">Layer in B: <span id="prepared" class="row"></span></div>
+    <div class="row">
+      <button id="play-a">Play A: MuseScore General</button>
+      <button id="play-b">Play B: MuseScore General + ticked files</button>
+    </div>
+    <p>B measures its levels the first time each selection is played, which takes a few seconds and freezes the page meanwhile.</p>
+    <h2>Other whole fonts</h2>
+    <div id="fonts" class="row"></div>
     <pre id="out">waiting</pre>
     <script type="module" src="./soundfont-compare.ts"></script>
   </body>
