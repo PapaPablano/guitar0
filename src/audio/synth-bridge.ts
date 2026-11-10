@@ -5,8 +5,9 @@ import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import { readOutputLatency } from './output-latency';
 import { loadSoundFontBytes, type SoundFontEnv } from './soundfont-cache';
-import { substituteUnplayablePrograms } from './font-substitutes';
 import { programGain } from './track-balance';
+import { mutedLevelProgram, type MutedPresets } from './guitar-tone';
+import { buildSynthScore, deriveCompanionSounds, type Companion } from './synth-score';
 import { installLiveEffects, renderWithEffects } from './synth-effects';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
@@ -43,6 +44,8 @@ export interface SynthOptions {
   onProgress?: (fraction: number) => void;
   /** Whether the synth's effects start switched on. Defaults to on. */
   effects?: boolean;
+  /** The palm-mute preset the active banks have for each tone; a tone without one plays the shared muted sound. Defaults to none. */
+  mutedPresets?: MutedPresets;
 }
 
 /**
@@ -71,6 +74,9 @@ export class SynthClock implements Clock {
   private scoreToLoad: alphaTab.model.Score | null = null;
   private effectsSwitch = true;
   private liveEffects: (on: boolean) => void = () => {};
+  /** The palm-mute parts in the synth score, each played alongside its parent track (KTD4). */
+  private companions: readonly Companion[] = [];
+  private mutedPresets: MutedPresets = {};
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -113,6 +119,39 @@ export class SynthClock implements Clock {
 
   private tracks(): alphaTab.model.Track[] {
     return (this.api.score ?? this.scoreToLoad)?.tracks ?? [];
+  }
+
+  /**
+   * Tells the clock which tracks of the synth score are palm-mute parts and whose. Everything set by track index (the tone,
+   * the silenced track, the export's single track) reaches a part's companions through its parent.
+   */
+  useCompanions(companions: readonly Companion[], mutedPresets: MutedPresets = {}): void {
+    this.companions = companions;
+    this.mutedPresets = mutedPresets;
+  }
+
+  private isCompanion(index: number): boolean {
+    return this.companions.some((c) => c.index === index);
+  }
+
+  /** A real track's index followed by its companions' indices. */
+  private withCompanions(index: number): number[] {
+    return [index, ...this.companions.filter((c) => c.parent === index).map((c) => c.index)];
+  }
+
+  /** A real track and its companions; empty for an index the song does not have, or for a companion's own. */
+  private group(index: number | null): alphaTab.model.Track[] {
+    if (index === null || this.isCompanion(index)) return [];
+    const tracks = this.tracks();
+    if (!tracks[index]) return [];
+    return this.withCompanions(index).flatMap((i) => (tracks[i] ? [tracks[i]] : []));
+  }
+
+  /** The program a track's level is evened out with: a companion's comes from its muted sound, not its parent's. */
+  private levelProgram(tracks: readonly alphaTab.model.Track[], index: number): number {
+    const companion = this.companions.find((c) => c.index === index);
+    const parent = companion ? tracks[companion.parent] : undefined;
+    return parent ? mutedLevelProgram(parent.playbackInfo.program) : tracks[index].playbackInfo.program;
   }
 
   /** The synth position interpolated to now, before the output latency is taken off. */
@@ -177,7 +216,7 @@ export class SynthClock implements Clock {
   private applyBalance(): void {
     const tracks = this.tracks();
     tracks.forEach((track, index) => {
-      const gain = programGain(track.playbackInfo.program);
+      const gain = programGain(this.levelProgram(tracks, index));
       if (gain === 1 && !this.levelled.has(index)) return;
       this.levelled.add(index);
       this.api.changeTrackVolume?.([track], gain);
@@ -185,31 +224,34 @@ export class SynthClock implements Clock {
   }
 
   private applySilence(): void {
-    if (this.silentTrack === null) return;
-    const track = this.tracks()[this.silentTrack];
-    if (track) this.api.changeTrackMute([track], true);
+    const group = this.group(this.silentTrack);
+    if (group.length > 0) this.api.changeTrackMute(group, true);
   }
 
-  /** Silences one track, or none, so the rest of the band plays without it. The export follows, unless it asks for the full band. */
+  /**
+   * Silences one track, or none, so the rest of the band plays without it; its palm-mute part goes silent with it. The export
+   * follows, unless it asks for the full band.
+   */
   setSilentTrack(index: number | null): void {
     if (index === this.silentTrack) return;
-    const tracks = this.tracks();
-    const previous = this.silentTrack === null ? undefined : tracks[this.silentTrack];
-    const next = index === null ? undefined : tracks[index];
-    if (index !== null && !next) return;
-    if (previous) this.api.changeTrackMute([previous], false);
-    if (next) this.api.changeTrackMute([next], true);
+    const previous = this.group(this.silentTrack);
+    const next = this.group(index);
+    if (index !== null && next.length === 0) return;
+    if (previous.length > 0) this.api.changeTrackMute(previous, false);
+    if (next.length > 0) this.api.changeTrackMute(next, true);
     this.silentTrack = index;
   }
 
   /**
    * Plays the given tracks with the given General MIDI programs (track index -> program), and every other track with the
    * sound the tab wrote. The change reaches the live synth and the export alike, because both build their audio from the score.
+   * A palm-mute part is never given a sound here: it follows its parent's new sound with the matching muted one (KTD5).
    */
   setTrackPrograms(overrides: ReadonlyMap<number, number>): void {
     const tracks = this.tracks();
     let changed = false;
     tracks.forEach((track, index) => {
+      if (this.isCompanion(index)) return;
       const wanted = overrides.get(index);
       if (wanted === undefined) {
         // A track nobody chose a tone for goes back to what the tab wrote, whichever clock changed it.
@@ -224,7 +266,9 @@ export class SynthClock implements Clock {
       applyProgram(track, written, wanted);
       changed = true;
     });
-    if (changed) this.reloadMidi();
+    if (!changed) return;
+    deriveCompanionSounds(tracks, this.companions, this.mutedPresets);
+    this.reloadMidi();
   }
 
   /**
@@ -319,16 +363,20 @@ export class SynthClock implements Clock {
     options.useSyncPoints = false;
     options.masterVolume = 1;
     options.metronomeVolume = 0;
-    (this.api.score?.tracks ?? []).forEach((track, index) => {
-      const gain = programGain(track.playbackInfo.program);
+    const tracks = this.api.score?.tracks ?? [];
+    tracks.forEach((_, index) => {
+      const gain = programGain(this.levelProgram(tracks, index));
       if (gain !== 1) options.trackVolume.set(index, gain);
     });
-    const tracks = this.api.score?.tracks ?? [];
-    if (onlyTrack !== undefined && onlyTrack >= 0 && onlyTrack < tracks.length) {
+    // A track's palm-mute part is recorded with it, and left out with it.
+    if (onlyTrack !== undefined && onlyTrack >= 0 && onlyTrack < tracks.length && !this.isCompanion(onlyTrack)) {
+      const kept = new Set(this.withCompanions(onlyTrack));
       tracks.forEach((_, index) => {
-        if (index !== onlyTrack) options.trackVolume.set(index, 0);
+        if (!kept.has(index)) options.trackVolume.set(index, 0);
       });
-    } else if (!fullBand && this.silentTrack !== null) options.trackVolume.set(this.silentTrack, 0);
+    } else if (!fullBand && this.silentTrack !== null) {
+      for (const index of this.withCompanions(this.silentTrack)) options.trackVolume.set(index, 0);
+    }
     const exporter = await this.api.exportAudio(options);
     const chunks: { left: Float32Array; right: Float32Array }[] = [];
     try {
@@ -508,8 +556,10 @@ export function createSynthSession(
   settings.player.scrollMode = alphaTab.ScrollMode.Off;
   settings.core.fontDirectory = './font/';
 
-  // Sounds the font has but alphaTab cannot play are swapped for ones it can, before the audio is built from the score.
-  substituteUnplayablePrograms(score);
+  // The synth plays a copy with palm mutes moved to parts of their own (KTD4); the timeline and tab strip keep the loaded score.
+  // The copy also has the font's unplayable sounds swapped for ones it can play.
+  const mutedPresets = options.mutedPresets ?? {};
+  const synthScore = buildSynthScore(score, mutedPresets);
   const api = new alphaTab.AlphaTabApi(host, settings);
   const clock = new SynthClock(api, durationSeconds, tempoMap);
   let disposed = false;
@@ -520,8 +570,9 @@ export function createSynthSession(
   clock.setEffects(effectsOn);
 
   // Until the banks are in, alphaTab has no score, so tones and the silenced track chosen meanwhile go straight to it.
-  clock.awaitScore(score);
-  const ready = loadBanksThenScore(api, score, options.banks, {
+  clock.awaitScore(synthScore.score);
+  clock.useCompanions(synthScore.companions, mutedPresets);
+  const ready = loadBanksThenScore(api, synthScore.score, options.banks, {
     onProgress: options.onProgress,
     keep: options.keep,
     isDisposed: () => disposed,
