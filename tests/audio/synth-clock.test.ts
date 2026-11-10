@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as alphaTab from '@coderline/alphatab';
 import { SynthClock } from '../../src/audio/synth-bridge';
+import { DEFAULT_EFFECTS } from '../../src/audio/synth-effects';
 import { AUDIO_SAMPLE_RATE } from '../../src/export/presets';
 
 type Handler<T> = (e: T) => void;
@@ -225,9 +226,12 @@ describe('SynthClock', () => {
     it('keeps the export length and rate unchanged', async () => {
       const { clock } = setup();
       clock.setSilentTrack(1);
-      const pcm = await clock.exportAudio();
-      expect(pcm.sampleRate).toBe(AUDIO_SAMPLE_RATE);
-      expect(pcm.left.length).toBe(0);
+      const plain = await clock.exportAudio(undefined, { effects: false });
+      expect(plain.sampleRate).toBe(AUDIO_SAMPLE_RATE);
+      expect(plain.left.length).toBe(0);
+      // With the effects on, the length is the tab plus the room's tail, silenced track or not (KTD9).
+      const withRoom = await clock.exportAudio();
+      expect(withRoom.left.length).toBe(Math.ceil((60 + DEFAULT_EFFECTS.roomSeconds) * AUDIO_SAMPLE_RATE));
     });
   });
 });

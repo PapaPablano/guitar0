@@ -26,6 +26,7 @@ export function startExport(args: {
   timeline: Timeline;
   trackIndex: number;
   preset: ExportPreset;
+  /** The sound; one with a tail (the room after the last note) makes the video that much longer. */
   audio: PcmAudio;
   /** The panels each frame shows, top to bottom. */
   panels: readonly PanelId[];
@@ -45,7 +46,8 @@ export function startExport(args: {
   onProgress: (fraction: number) => void;
 }): ExportJob {
   const worker = new Worker(new URL('./encoder.worker.ts', import.meta.url), { type: 'module' });
-  const outputSeconds = exportLength(args.timeline.durationSeconds, args.alignment);
+  // A synth export carries the room's tail past the tab; the video runs through it, holding the last frame (KTD9).
+  const outputSeconds = exportLength(args.timeline.durationSeconds, args.alignment) + (args.audio.tailSeconds ?? 0);
   const audio = fitPcm(args.audio, outputSeconds);
   const alignment: AlignmentData | undefined = args.alignment && (args.alignment.hasAnchors || args.alignment.holds.length > 0) ? args.alignment.toData() : undefined;
 

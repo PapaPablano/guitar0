@@ -4,7 +4,7 @@ import { hydrateTimeline, type TimelineData } from '../model/serialize';
 import type { PanelId } from '../app/stage-layout';
 import type { NeckProfile } from '../render/neck-profile';
 import { renderStageFrame, type ExportViewOptions, type FrameContext } from '../render/stage-frame';
-import { tabTimeAt, type PcmAudio } from './audio';
+import { frameTabTime, type PcmAudio } from './audio';
 import { audioConfig, videoConfigFor } from './capability';
 import { AUDIO_CHANNELS, frameCount, frameTime, type ExportPreset } from './presets';
 import { photosNeeded } from './photos-needed';
@@ -28,7 +28,7 @@ export interface StartMessage {
   bassPhoto?: ImageBitmap;
   /** The pick view's photo and the profile it was measured with, sent together; needed when the pick view is one of the panels. */
   pickPhoto?: { photo: ImageBitmap; profile: NeckProfile };
-  /** How long the video lasts: the tab plus any extra playing the tab waits through. */
+  /** How long the video lasts: the tab plus any extra playing the tab waits through, plus any tail on the audio. */
   outputSeconds: number;
   /** Where the recording sits against the tab; absent when the video is the tab's own length. */
   alignment?: AlignmentData;
@@ -118,7 +118,7 @@ async function run(msg: StartMessage): Promise<void> {
   for (let frame = 0; frame < total; frame++) {
     if (cancelled) return finishCancelled(videoEncoder, audioEncoder);
     if (failure) throw failure;
-    const t = tabTimeAt(alignment, frameTime(frame, preset.fps));
+    const t = frameTabTime(alignment, frameTime(frame, preset.fps), timeline.durationSeconds);
     renderStageFrame(ctx as unknown as FrameContext, timeline, tracks, t, preset.width, preset.height, msg.panels, { ...msg.view, photo: msg.photo ?? null, bassPhoto: msg.bassPhoto ?? null, pickPhoto: msg.pickPhoto ?? null });
     if (msg.watermark) drawWatermark(ctx as unknown as MarkContext, preset.width, preset.height);
     const videoFrame = new VideoFrame(canvas, {

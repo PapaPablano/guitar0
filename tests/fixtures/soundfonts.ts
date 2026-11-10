@@ -21,6 +21,11 @@ export interface FixturePreset {
   readonly bank: number;
   readonly program: number;
   readonly samples: readonly FixtureSampleType[];
+  /**
+   * Makes the preset playable like a real instrument: each sample covers every key, loops while the note is held and fades
+   * over this many seconds once it is released. Absent: each sample covers ten keys of its own and plays once, as before.
+   */
+  readonly releaseSeconds?: number;
 }
 
 const FRAMES_PER_SAMPLE = 64;
@@ -31,6 +36,8 @@ const GEN_PAN = 17;
 const GEN_KEY_RANGE = 43;
 const GEN_INSTRUMENT = 41;
 const GEN_SAMPLE_ID = 53;
+const GEN_RELEASE_VOL_ENV = 38;
+const GEN_SAMPLE_MODES = 54;
 
 class Writer {
   private readonly parts: number[] = [];
@@ -168,10 +175,19 @@ export function buildSoundFont(presets: readonly FixturePreset[]): Uint8Array {
       ibag.u16(imods);
       ibags++;
       igen.u16(GEN_KEY_RANGE);
-      igen.u16(zone * 10 | ((zone * 10 + 9) << 8));
+      igen.u16(p.releaseSeconds !== undefined ? 127 << 8 : zone * 10 | ((zone * 10 + 9) << 8));
+      igens++;
+      if (p.releaseSeconds !== undefined) {
+        // The sample id must stay the zone's last generator.
+        igen.u16(GEN_SAMPLE_MODES);
+        igen.u16(1);
+        igen.u16(GEN_RELEASE_VOL_ENV);
+        igen.i16(Math.round(1200 * Math.log2(p.releaseSeconds)));
+        igens += 2;
+      }
       igen.u16(GEN_SAMPLE_ID);
       igen.u16(sampleId);
-      igens += 2;
+      igens++;
 
       const start = sampleId * (FRAMES_PER_SAMPLE + SAMPLE_GAP);
       shdr.text(`smp${sampleId} ${type}`, 20);

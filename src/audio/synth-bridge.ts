@@ -1,6 +1,6 @@
 import * as alphaTab from '@coderline/alphatab';
 import { secondsToTicks, ticksToSeconds } from '../model/alphatab-adapter';
-import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
+import { concatPcm, deinterleave, fitPcm, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import { readOutputLatency } from './output-latency';
@@ -8,7 +8,7 @@ import { loadSoundFontBytes, type SoundFontEnv } from './soundfont-cache';
 import { programGain } from './track-balance';
 import { mutedLevelProgram, type MutedPresets } from './guitar-tone';
 import { buildSynthScore, deriveCompanionSounds, type Companion } from './synth-score';
-import { installLiveEffects, renderWithEffects } from './synth-effects';
+import { DEFAULT_EFFECTS, installLiveEffects, renderWithEffects } from './synth-effects';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
 /** What a track played before a tone was chosen for it: its program and every instrument change written into its beats. */
@@ -356,6 +356,10 @@ export class SynthClock implements Clock {
    * Calls `onProgress` with 0..1 as it goes. The silenced track is left out unless `fullBand` is set, which the alignment
    * needs so it compares the recording with every part. The light effects are applied when they are switched on, unless
    * `effects` is false: the alignment needs the plain sound.
+   *
+   * With the effects on, the export runs on past the tab's end for the room's length (KTD9, R13), so the last notes fade
+   * out and the room decays instead of stopping dead; the result says how long that tail is. With them off it is the
+   * tab's length, as the alignment needs.
    */
   async exportAudio(onProgress?: (fraction: number) => void, { effects = this.effectsSwitch, fullBand = false, onlyTrack }: ExportAudioOptions = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
@@ -377,6 +381,17 @@ export class SynthClock implements Clock {
     } else if (!fullBand && this.silentTrack !== null) {
       for (const index of this.withCompanions(this.silentTrack)) options.trackVolume.set(index, 0);
     }
+    const tailSeconds = effects ? DEFAULT_EFFECTS.roomSeconds : 0;
+    const endTick = tailSeconds > 0 ? secondsToTicks(this.tempoMap, this.duration + tailSeconds) : 0;
+    if (endTick > 0) {
+      // alphaTab's exporter cuts every voice off where its range ends, which by default is the last note's end. A range
+      // reaching past the end lets the last notes release naturally while nothing new plays, without touching the score
+      // that live playback and the timeline use. alphaTab times ticks past the end at the last tempo, as secondsToTicks does.
+      const range = new alphaTab.synth.PlaybackRange();
+      range.startTick = 0;
+      range.endTick = Math.ceil(endTick);
+      options.playbackRange = range;
+    }
     const exporter = await this.api.exportAudio(options);
     const chunks: { left: Float32Array; right: Float32Array }[] = [];
     try {
@@ -390,7 +405,11 @@ export class SynthClock implements Clock {
       exporter.destroy();
     }
     const plain = concatPcm(chunks, AUDIO_SAMPLE_RATE);
-    return effects ? renderWithEffects(plain) : plain;
+    if (!effects) return plain;
+    if (endTick <= 0) return renderWithEffects(plain);
+    // The room is rendered over the tab plus its tail, so the reverb of the last notes is in the file (KTD9).
+    const withEffects = await renderWithEffects(fitPcm(plain, this.duration + tailSeconds));
+    return { ...withEffects, tailSeconds };
   }
 
   dispose(): void {
