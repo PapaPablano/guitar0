@@ -40,6 +40,12 @@ export const BUNDLED_BANKS: readonly BundledBank[] = [
   { id: 'musescore-general', url: museScoreGeneralUrl, levels: MUSESCORE_GENERAL_LEVELS },
 ];
 
+/**
+ * The bank a player's own bank moves its palm-mute presets to (KTD2). No bundled bank has muted candidates, so no bundled
+ * file reserves one; a bundled bank that gains some must pick a different number.
+ */
+export const PLAYER_RESERVED_BANK = 300;
+
 /** The bundled banks as synth sources, in layering order. */
 export function bundledBankSources(): BankSource[] {
   return BUNDLED_BANKS.map((bank) => ({ url: bank.url }));
