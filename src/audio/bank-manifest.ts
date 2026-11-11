@@ -2,6 +2,10 @@ import type { BankSource } from './synth-bridge';
 import type { LevelTable } from './track-balance';
 // Bank files are tracked assets; Vite gives each a content-hashed name, so a new file is never served from an old cache.
 import museScoreGeneralUrl from '../../assets/soundfont/MuseScore_General.sf3?url';
+import freePatsCleanUrl from '../../assets/soundfont/FreePats_EGuitarFSBS_Clean.sf3?url';
+import freePatsDistortionUrl from '../../assets/soundfont/FreePats_EGuitarFSBS_Dist2.sf3?url';
+import freePatsFingerBassUrl from '../../assets/soundfont/FreePats_FingerBassYR.sf3?url';
+import freePatsPickedBassUrl from '../../assets/soundfont/FreePats_PickedBassYR.sf3?url';
 
 /** One sound bank that ships with the app. */
 export interface BundledBank {
@@ -34,10 +38,16 @@ const MUSESCORE_GENERAL_LEVELS: LevelTable = {
 
 /**
  * The bundled banks in layering order. MuseScore General comes first and covers every General MIDI sound; each later bank
- * is added over it, so its presets win for the programs it covers.
+ * is added over it, so its presets win for the programs it covers. The FreePats banks (CC0, see
+ * `assets/soundfont/FreePats_README.md`) each cover one program; their levels were measured layered over MuseScore General
+ * with `dev/measure-bank-levels.ts`.
  */
 export const BUNDLED_BANKS: readonly BundledBank[] = [
   { id: 'musescore-general', url: museScoreGeneralUrl, levels: MUSESCORE_GENERAL_LEVELS },
+  { id: 'freepats-clean', url: freePatsCleanUrl, levels: { 27: 0.1929 } },
+  { id: 'freepats-distortion', url: freePatsDistortionUrl, levels: { 30: 0.1225 } },
+  { id: 'freepats-finger-bass', url: freePatsFingerBassUrl, levels: { 33: 0.168 } },
+  { id: 'freepats-picked-bass', url: freePatsPickedBassUrl, levels: { 34: 0.1248 } },
 ];
 
 /**

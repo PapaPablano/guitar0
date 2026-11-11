@@ -3,6 +3,9 @@ import * as alphaTab from '@coderline/alphatab';
 import { SynthClock } from '../../src/audio/synth-bridge';
 import { DEFAULT_EFFECTS } from '../../src/audio/synth-effects';
 import { AUDIO_SAMPLE_RATE } from '../../src/export/presets';
+import { useMuseScoreLevelsOnly } from './museScore-levels';
+
+useMuseScoreLevelsOnly();
 
 type Handler<T> = (e: T) => void;
 

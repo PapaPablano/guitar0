@@ -206,10 +206,10 @@ describe('loadBanksThenScore', () => {
 });
 
 describe('bank manifest', () => {
-  it('starts with MuseScore General alone, so the sound is unchanged', () => {
-    expect(BUNDLED_BANKS).toHaveLength(1);
+  it('layers the FreePats guitars and basses over MuseScore General, each levelled for the one program it covers', () => {
     expect(BUNDLED_BANKS[0].url).toMatch(/MuseScore_General.*\.sf3/);
-    expect(bundledBankSources()).toEqual([{ url: BUNDLED_BANKS[0].url }]);
+    expect(BUNDLED_BANKS.slice(1).map((bank) => Object.keys(bank.levels).map(Number))).toEqual([[27], [30], [33], [34]]);
+    expect(bundledBankSources()).toEqual(BUNDLED_BANKS.map((bank) => ({ url: bank.url })));
   });
 });
 

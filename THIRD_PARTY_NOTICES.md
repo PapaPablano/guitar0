@@ -43,6 +43,12 @@ Tab Highway bundles the packages and assets below. Each keeps its own licence.
 - Licence: MIT. Copyright (c) 2000-2002, 2008 Frank Wen (FluidR3); (c) 2014-17 Michael Cowgill (FluidR3Mono); (c) 2018-19 S. Christian Collins (MuseScore General); samples by Ethan Winer (c) 2002 and Michael Schorsch (c) 2016.
 - Source: https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/ (version 0.2). Its licence file asks that the acknowledgements and copyright notices be included in any derivative work, so `MuseScore_General_License.md`, kept beside the font in `assets/soundfont/`, carries the full licence and credits.
 
+### FreePats guitar and bass banks (FreePats_*.sf3)
+
+- Layered over MuseScore General for clean guitar (27), distortion guitar (30), fingered bass (33) and picked bass (34). Kept in `assets/soundfont/` and shipped in the build as `assets/FreePats_*-<hash>.sf3` (4.8 MB together).
+- Licence: Creative Commons CC0 1.0 Universal (public domain dedication); full text in `assets/soundfont/FreePats_CC0_License.txt`.
+- Source: the FreePats project, http://freepats.zenvoid.org/. Electric Guitar FSBS clean (2026-08-07) and dist2 (2022-09-11); Finger Bass YR and Picked Bass YR (2019-09-30), samples by Andrea Biasior. `assets/soundfont/FreePats_README.md` lists each archive URL and how the files were converted with `scripts/prepare-bank.ts`.
+
 ### Bravura music font
 
 - Supplied with alphaTab in `@coderline/alphatab/dist/font/`.

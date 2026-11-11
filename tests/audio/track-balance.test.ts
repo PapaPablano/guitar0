@@ -3,10 +3,13 @@ import * as alphaTab from '@coderline/alphatab';
 import { activeLevels, mergeLevels, programGain, setActiveLevels } from '../../src/audio/track-balance';
 import { BUNDLED_BANKS } from '../../src/audio/bank-manifest';
 import { SynthClock } from '../../src/audio/synth-bridge';
+import { museScoreLevels, useMuseScoreLevelsOnly } from './museScore-levels';
+
+useMuseScoreLevelsOnly();
 
 /** The fixed table the gains came from before every bank was levelled (programs 24 to 31, MuseScore General). */
 const TODAY: Record<number, number> = { 24: 0.0475, 25: 0.0205, 26: 0.0233, 27: 0.1875, 28: 0.0855, 29: 0.0164, 30: 0.0185, 31: 0.0243 };
-const museScore = () => BUNDLED_BANKS.find((bank) => bank.id === 'musescore-general')!.levels;
+const museScore = museScoreLevels;
 
 describe('programGain', () => {
   it('brings the quiet distorted guitars up and the loud clean one down', () => {
@@ -78,15 +81,27 @@ describe('programGain', () => {
   });
 
   it("uses the active banks' levels by default, and can be set back to the bundled ones", () => {
-    const bundled = activeLevels();
-    try {
-      setActiveLevels([museScore(), { 30: 0.03 }]);
-      expect(programGain(30)).toBeCloseTo(2, 10);
-      expect(programGain(27)).toBe(programGain(27, bundled));
-    } finally {
-      setActiveLevels(BUNDLED_BANKS.map((bank) => bank.levels));
-    }
+    const bundled = mergeLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    setActiveLevels([museScore(), { 30: 0.03 }]);
+    expect(programGain(30)).toBeCloseTo(2, 10);
+    expect(programGain(27)).toBe(programGain(27, mergeLevels([museScore()])));
+    setActiveLevels(BUNDLED_BANKS.map((bank) => bank.levels));
     expect(activeLevels()).toEqual(bundled);
+  });
+
+  it('takes the FreePats levels for the programs they cover, and MuseScore General for the rest', () => {
+    const bundled = mergeLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    expect(bundled[27]).toBe(0.1929);
+    expect(bundled[30]).toBe(0.1225);
+    expect(bundled[33]).toBe(0.168);
+    expect(bundled[34]).toBe(0.1248);
+    for (const program of [24, 25, 26, 28, 29, 31, 32]) expect(bundled[program]).toBe(museScore()[program]);
+  });
+
+  it('keeps the bundled FreePats basses within 3 dB of today', () => {
+    // The FreePats basses are a little louder than MuseScore General's, so they are turned down slightly, not pulled far.
+    const bundled = mergeLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    for (const program of [33, 34]) expect(Math.abs(20 * Math.log10(programGain(program, bundled)))).toBeLessThan(3);
   });
 
   it('keeps every gain within a sensible range', () => {
