@@ -11,7 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@coderline/alphatab": "^1.8.4",
+    "@coderline/alphatab": "1.8.4",
     "mp4-muxer": "^5.2.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"

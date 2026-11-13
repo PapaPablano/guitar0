@@ -3,6 +3,7 @@ import { isWholeSoundFont, loadSoundFontBytes, SOUNDFONT_STALL_MS, type SoundFon
 
 const URL_A = 'https://example.test/assets/font-aaa.sf3';
 const URL_B = 'https://example.test/assets/font-bbb.sf3';
+const URL_OLD = 'https://example.test/assets/font-old.sf3';
 
 /** A minimal RIFF `sfbk` container of the given total length. */
 function font(total = 64): Uint8Array {
@@ -131,6 +132,29 @@ describe('loadSoundFontBytes', () => {
     const { caches, store } = fakeCaches({ [URL_B]: font(90) });
     await loadSoundFontBytes(URL_A, undefined, env({ caches }));
     expect([...store.keys()]).toEqual([URL_A]);
+  });
+
+  it('keeps every current bundled bank: storing one does not evict another', async () => {
+    const { caches, store } = fakeCaches({ [URL_B]: font(90) });
+    await loadSoundFontBytes(URL_A, undefined, env({ caches }), [URL_A, URL_B]);
+    expect([...store.keys()].sort()).toEqual([URL_A, URL_B]);
+  });
+
+  it('prunes an older build\'s bank that is not in the current list', async () => {
+    const { caches, store } = fakeCaches({ [URL_B]: font(90), [URL_OLD]: font(70) });
+    await loadSoundFontBytes(URL_A, undefined, env({ caches }), [URL_A, URL_B]);
+    expect([...store.keys()].sort()).toEqual([URL_A, URL_B]);
+  });
+
+  it('reports the file size with its progress, from the network and from the cache', async () => {
+    const sizes: number[] = [];
+    await loadSoundFontBytes(URL_A, (_f, total) => sizes.push(total), env({ fetch: vi.fn(async () => responseOf(font(120))) }));
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(sizes.every((size) => size === 120)).toBe(true);
+    const { caches } = fakeCaches({ [URL_A]: font(80) });
+    const cachedSizes: number[] = [];
+    await loadSoundFontBytes(URL_A, (_f, total) => cachedSizes.push(total), { fetch: vi.fn(), caches });
+    expect(cachedSizes).toEqual([80]);
   });
 
   it('gives up on a download that stops delivering, so a retry can be offered', async () => {

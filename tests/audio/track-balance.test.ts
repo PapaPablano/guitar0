@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as alphaTab from '@coderline/alphatab';
-import { programGain } from '../../src/audio/track-balance';
+import { activeLevels, mergeLevels, programGain, setActiveLevels } from '../../src/audio/track-balance';
+import { BUNDLED_BANKS } from '../../src/audio/bank-manifest';
 import { SynthClock } from '../../src/audio/synth-bridge';
+import { museScoreLevels, useMuseScoreLevelsOnly } from './museScore-levels';
+
+useMuseScoreLevelsOnly();
+
+/** The fixed table the gains came from before every bank was levelled (programs 24 to 31, MuseScore General). */
+const TODAY: Record<number, number> = { 24: 0.0475, 25: 0.0205, 26: 0.0233, 27: 0.1875, 28: 0.0855, 29: 0.0164, 30: 0.0185, 31: 0.0243 };
+const museScore = museScoreLevels;
 
 describe('programGain', () => {
   it('brings the quiet distorted guitars up and the loud clean one down', () => {
@@ -11,7 +19,89 @@ describe('programGain', () => {
   });
 
   it('leaves every sound that is not tuned at its own level', () => {
-    for (const program of [0, 2, 33, 48, 80, 118, 127]) expect(programGain(program)).toBe(1);
+    for (const program of [0, 2, 23, 35, 48, 80, 118, 127]) expect(programGain(program)).toBe(1);
+  });
+
+  it('gives the guitars the same gains as the fixed table did, with only MuseScore General levels', () => {
+    const levels = mergeLevels([museScore()]);
+    for (const [program, level] of Object.entries(TODAY)) {
+      const expected = Math.min(4, Math.max(0.3, 0.06 / level));
+      expect(programGain(Number(program), levels)).toBe(expected);
+      expect(programGain(Number(program))).toBe(expected);
+    }
+  });
+
+  it("lets a player's bank override the bundled level only for the programs it covers", () => {
+    const levels = mergeLevels([museScore(), { 30: 0.03 }]);
+    expect(programGain(30, levels)).toBeCloseTo(2, 10);
+    for (const program of [24, 25, 26, 27, 28, 29, 31, 32, 33, 34]) {
+      expect(programGain(program, levels)).toBe(programGain(program, mergeLevels([museScore()])));
+    }
+  });
+
+  it('takes the later of two banks for a program both cover, in layering order', () => {
+    const levels = mergeLevels([{ 27: 0.12 }, { 27: 0.03 }, { 29: 0.02 }]);
+    expect(levels[27]).toBe(0.03);
+    expect(levels[29]).toBe(0.02);
+  });
+
+  it('ignores a silent or broken level instead of letting it win', () => {
+    const levels = mergeLevels([{ 30: 0.03 }, { 30: 0 }, { 30: Number.NaN }, { 30: -1 }]);
+    expect(levels[30]).toBe(0.03);
+    expect(programGain(31, { 31: 0 })).toBe(1);
+  });
+
+  it('levels bass 32 to 34 from the table, and leaves other programs at 1', () => {
+    const levels = { 32: 0.05, 33: 0.2, 34: 0.1, 35: 0.05, 40: 0.05 };
+    expect(programGain(32, levels)).not.toBe(1);
+    expect(programGain(33, levels)).not.toBe(1);
+    expect(programGain(34, levels)).not.toBe(1);
+    // A louder bass gets a smaller gain.
+    expect(programGain(33, levels)).toBeLessThan(programGain(34, levels));
+    expect(programGain(34, levels)).toBeLessThan(programGain(32, levels));
+    expect(programGain(35, levels)).toBe(1);
+    expect(programGain(40, levels)).toBe(1);
+    expect(programGain(33, {})).toBe(1);
+  });
+
+  it("keeps MuseScore General's bass at about today's level", () => {
+    // Bass was never levelled before, so its gains stay near 1 rather than being pulled to the guitars' level.
+    for (const program of [32, 33, 34]) {
+      expect(museScore()[program]).toBeGreaterThan(0);
+      const gain = programGain(program);
+      expect(Math.abs(20 * Math.log10(gain))).toBeLessThan(3);
+    }
+  });
+
+  it('clamps every gain to 0.3 to 4', () => {
+    expect(programGain(30, { 30: 0.0001 })).toBe(4);
+    expect(programGain(27, { 27: 5 })).toBe(0.3);
+    expect(programGain(33, { 33: 0.0001 })).toBe(4);
+    expect(programGain(33, { 33: 5 })).toBe(0.3);
+  });
+
+  it("uses the active banks' levels by default, and can be set back to the bundled ones", () => {
+    const bundled = mergeLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    setActiveLevels([museScore(), { 30: 0.03 }]);
+    expect(programGain(30)).toBeCloseTo(2, 10);
+    expect(programGain(27)).toBe(programGain(27, mergeLevels([museScore()])));
+    setActiveLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    expect(activeLevels()).toEqual(bundled);
+  });
+
+  it('takes the FreePats levels for the programs they cover, and MuseScore General for the rest', () => {
+    const bundled = mergeLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    expect(bundled[27]).toBe(0.1929);
+    expect(bundled[30]).toBe(0.1225);
+    expect(bundled[33]).toBe(0.168);
+    expect(bundled[34]).toBe(0.1248);
+    for (const program of [24, 25, 26, 28, 29, 31, 32]) expect(bundled[program]).toBe(museScore()[program]);
+  });
+
+  it('keeps the bundled FreePats basses within 3 dB of today', () => {
+    // The FreePats basses are a little louder than MuseScore General's, so they are turned down slightly, not pulled far.
+    const bundled = mergeLevels(BUNDLED_BANKS.map((bank) => bank.levels));
+    for (const program of [33, 34]) expect(Math.abs(20 * Math.log10(programGain(program, bundled)))).toBeLessThan(3);
   });
 
   it('keeps every gain within a sensible range', () => {

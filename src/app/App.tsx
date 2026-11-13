@@ -9,6 +9,7 @@ import { copyStateText, exactLine, holdText } from './exactness-text';
 import { ExactnessStrip } from './ExactnessStrip';
 import { addLanding, emptyLandingStats, type LandingStats } from './landing-stats';
 import { readNeckCues, writeNeckCues } from './neck-cues-setting';
+import { readSynthEffects, writeSynthEffects } from './effects-setting';
 import { ClickCountIn } from '../audio/count-in';
 import type { model as AlphaModel } from '@coderline/alphatab';
 import { buildTimeline, loadAlphaTex } from '../model/alphatab-adapter';
@@ -122,11 +123,14 @@ import { ShortcutLegend } from './ShortcutLegend';
 import { PracticeTools } from './PracticeTools';
 import { alignmentNeedsLook, availableTools, type ToolId } from './practice-tools';
 import { WRITTEN } from './file-tuning-options';
-import soundFontUrl from '../../assets/soundfont/MuseScore_General.sf3?url';
+import { BUNDLED_BANKS, bundledBankUrls } from '../audio/bank-manifest';
+import { measureLevels } from '../audio/bank-levels';
+import { loadSoundFontBytes } from '../audio/soundfont-cache';
+import { setActiveLevels } from '../audio/track-balance';
+import { holdPlace, synthBankOptions, UserBankController } from '../audio/user-bank';
+import { defaultUserBankStore } from './user-bank-store';
+import { UserBankControl } from './UserBankControl';
 import './app.css';
-
-// The band SoundFont is a tracked asset; Vite gives it a content-hashed name so a new font is never served from an old cache.
-const SOUND_FONT_URL = soundFontUrl;
 
 type AudioState = { status: 'loading'; progress: number } | { status: 'ready' } | { status: 'failed'; message: string };
 
@@ -245,11 +249,41 @@ export function App() {
   const [labelMode, setLabelMode] = useState<LabelMode>(() => initialViewState().labelMode);
   /** Whether the neck shows technique cues: remembered between sessions, on until the player turns it off. */
   const [neckCues, setNeckCues] = useState(() => readNeckCues());
+  /** Whether the synth plays through its EQ and room: remembered between sessions, on until the player turns it off (R11). */
+  const [synthEffects, setSynthEffects] = useState(() => readSynthEffects());
+  /** The same choice for a synth session being built, which may happen in a callback that saw an older render. */
+  const synthEffectsRef = useRef(synthEffects);
   const [tuningId, setTuningId] = useState(FILE_TUNING);
   const lastShown = useRef(-1);
   const playingRef = useRef(false);
   /** Bumped whenever the session or its sound connection is replaced, so late results can be ignored. */
   const sessionToken = useRef(0);
+  /** Rebuilds the open song's sound for a changed sound bank; set each render, since the controller outlives every render. */
+  const rebuildForBank = useRef<() => void>(() => {});
+  /** The player's own sound bank (R7 to R10): layered last in every session built from now on. */
+  const userBank = useMemo(
+    () =>
+      new UserBankController({
+        storage: defaultUserBankStore(),
+        // From the SoundFont cache, which the first session filled; the levels are measured over the same banks the synth plays.
+        bundledBytes: () => Promise.all(BUNDLED_BANKS.map((bank) => loadSoundFontBytes(bank.url, undefined, undefined, bundledBankUrls()))),
+        measure: measureLevels,
+        // A frame, then a task, so the "Checking your sound bank…" state paints before the synchronous filter and measurement.
+        nextFrame: () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))),
+        setLevels: setActiveLevels,
+        rebuild: () => rebuildForBank.current(),
+      }),
+    [],
+  );
+  const userBankState = useSyncExternalStore(
+    useCallback((listener: () => void) => userBank.subscribe(listener), [userBank]),
+    () => userBank.snapshot(),
+  );
+  useEffect(() => {
+    void userBank.start();
+  }, [userBank]);
+  /** Where the song was when a bank change rebuilt its sound, and the session that rebuild made, to carry on from there once ready. */
+  const bankPlace = useRef<{ token: number; place: ReturnType<typeof holdPlace> } | null>(null);
   const userClockRef = useRef<UserAudioClock | null>(null);
   const stemsRef = useRef<ActiveStems | null>(null);
   /** The newest settings, for activateStems, which a separation calls minutes after it was started. */
@@ -763,8 +797,14 @@ export function App() {
     // The tab's sound is being rebuilt, so a comparison with the old render no longer counts.
     cancelAlignment();
     setAudio({ status: 'loading', progress: 0 });
+    // The bundled banks, then the player's own when one is loaded, with its palm-mute presets (KTD1, KTD5).
+    const { banks, mutedPresets } = synthBankOptions(userBank.active());
     const synth = createSynthSession(score, timelineToPlay.durationSeconds, timelineToPlay.tempoMap, {
-      soundFontUrl: SOUND_FONT_URL,
+      banks,
+      mutedPresets,
+      keep: bundledBankUrls(),
+      // A rebuilt session starts where the switch is, live and for its exports (R14).
+      effects: synthEffectsRef.current,
       onProgress: (progress) => {
         if (isCurrent()) setAudio((a) => (a.status === 'loading' ? { status: 'loading', progress } : a));
       },
@@ -967,6 +1007,14 @@ export function App() {
     writeNeckCues(on);
   }
 
+  /** Turns the synth's EQ and room on or off: heard at once, followed by exports, and kept for the next session (R11, R14). */
+  function changeSynthEffects(on: boolean) {
+    synthEffectsRef.current = on;
+    setSynthEffects(on);
+    writeSynthEffects(on);
+    live.current.session?.clock.setEffects(on);
+  }
+
   /** Switches between playing the stem mix and the plain recording, keeping the position. */
   function activateStems(next: ActiveStems | null) {
     const { alignment, tempoPercent, mix, userClock, session } = live.current;
@@ -1090,6 +1138,17 @@ export function App() {
   useEffect(() => {
     if (audio.status === 'ready') applyResume('synth', (s) => live.current.session?.clock.seek(s));
     // applyResume reads only refs
+  }, [audio.status, session]);
+  // A bank change's rebuild carries on from where the song was, once its sound is ready, since a seek before then can be lost.
+  useEffect(() => {
+    const pending = bankPlace.current;
+    if (audio.status !== 'ready' || !pending) return;
+    bankPlace.current = null;
+    // A later rebuild (a retry, a new song) has its own start.
+    if (pending.token !== sessionToken.current || !followedClock.current) return;
+    pending.place.restore(followedClock.current);
+    playingRef.current = followedClock.current.playing;
+    setPlaying(followedClock.current.playing);
   }, [audio.status, session]);
   // ...and to the video when its player takes over, since it copies the position it takes over from only once (KTD4).
   const videoClock = ytBacking.activeClock;
@@ -1350,6 +1409,24 @@ export function App() {
     setSession({ ...session, clock: connectAudio(session.score, session.timeline) });
     if (detecting) requestDetection();
   }
+
+  /**
+   * Rebuilds the open song's sound after the player's bank was loaded or removed (KTD1): playback pauses, the "Loading
+   * sound…" notice shows while the banks load, and the song carries on from the same playhead once the new sound is ready.
+   */
+  rebuildForBank.current = () => {
+    const current = live.current.session;
+    if (!current) return;
+    const place = holdPlace(followedClock.current);
+    pauseAll();
+    const detecting = isDetecting();
+    current.clock.dispose();
+    const next = { ...current, clock: connectAudio(current.score, current.timeline) };
+    bankPlace.current = { token: sessionToken.current, place };
+    live.current.session = next;
+    setSession(next);
+    if (detecting) requestDetection();
+  };
 
   /** Whether the loaded recording is being lined up with the tab, or waiting to be, which a rebuild of the tab's sound would cancel. */
   function isDetecting(): boolean {
@@ -1671,7 +1748,7 @@ export function App() {
           >
             Export video
           </button>
-          <Menu label="More" ariaLabel="More: find on Songsterr, open another file, back up and restore" className="more-menu">
+          <Menu label="More" ariaLabel="More: find on Songsterr, synth EQ and room, guitar sounds, open another file, back up and restore" className="more-menu">
             {songsterrLink && (
               <a
                 className="link-button"
@@ -1687,6 +1764,12 @@ export function App() {
                 Find on Songsterr
               </a>
             )}
+            {/* A label, not a button, so the menu stays open for flipping back and forth (Menu closes on buttons and links). */}
+            <label className="field">
+              <input type="checkbox" role="switch" checked={synthEffects} onChange={(e) => changeSynthEffects(e.target.checked)} /> Synth
+              EQ and room
+            </label>
+            <UserBankControl view={userBankState.view} onPick={(file) => void userBank.pick(file)} onRemove={() => void userBank.remove()} />
             <button
               type="button"
               onClick={toStartScreen}
@@ -1722,6 +1805,19 @@ export function App() {
           <p className="notice" role="status">
             {libraryNote}{' '}
             <button type="button" onClick={() => setLibraryNote(null)}>
+              Dismiss
+            </button>
+          </p>
+        )}
+        {userBankState.notice && (
+          <p className="notice" role="status">
+            {userBankState.notice.text}{' '}
+            {userBankState.notice.offerRemove && (
+              <button type="button" onClick={() => void userBank.remove()}>
+                Remove it
+              </button>
+            )}{' '}
+            <button type="button" onClick={() => userBank.dismiss()}>
               Dismiss
             </button>
           </p>

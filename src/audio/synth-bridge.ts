@@ -1,13 +1,14 @@
 import * as alphaTab from '@coderline/alphatab';
 import { secondsToTicks, ticksToSeconds } from '../model/alphatab-adapter';
-import { concatPcm, deinterleave, type PcmAudio } from '../export/audio';
+import { concatPcm, deinterleave, fitPcm, type PcmAudio } from '../export/audio';
 import { AUDIO_SAMPLE_RATE } from '../export/presets';
 import type { TempoPoint } from '../model/score';
 import { readOutputLatency } from './output-latency';
-import { loadSoundFontBytes } from './soundfont-cache';
-import { substituteUnplayablePrograms } from './font-substitutes';
+import { loadSoundFontBytes, type SoundFontEnv } from './soundfont-cache';
 import { programGain } from './track-balance';
-import { installLiveEffects, renderWithEffects } from './synth-effects';
+import { mutedLevelProgram, type MutedPresets } from './guitar-tone';
+import { buildSynthScore, deriveCompanionSounds, type Companion } from './synth-score';
+import { DEFAULT_EFFECTS, installLiveEffects, renderWithEffects } from './synth-effects';
 import { clamp, clampRate, normalizeLoop, type Clock, type LoopRange } from './clock';
 
 /** What a track played before a tone was chosen for it: its program and every instrument change written into its beats. */
@@ -17,7 +18,7 @@ interface WrittenSound {
 }
 
 export interface ExportAudioOptions {
-  /** Apply the light effects heard live. Off for the alignment, which needs the plain sound. */
+  /** Apply the light effects. Defaults to the effects switch, so the export sounds like live playback (R14); the alignment passes false for the plain sound. */
   effects?: boolean;
   /** Keep every track, including the one Play along silences. The alignment compares the recording with the whole band. */
   fullBand?: boolean;
@@ -28,11 +29,23 @@ export interface ExportAudioOptions {
 /** How long a rebuild of the synth's audio may take before it is given up on. */
 const RELOAD_TIMEOUT_MS = 20_000;
 
+/**
+ * One sound bank for the synth: a URL (relative URLs resolve against the page), downloaded once and kept in the browser's
+ * cache, or bytes already in hand, such as a bank the player chose.
+ */
+export type BankSource = { url: string } | { bytes: Uint8Array };
+
 export interface SynthOptions {
-  /** URL of the SoundFont; relative URLs resolve against the page. It is downloaded once and kept in the browser's cache. */
-  soundFontUrl: string;
-  /** Called with 0..1 while the SoundFont loads. */
+  /** The banks in layering order: the first replaces whatever the synth had, each later one is added over it. Not empty. */
+  banks: readonly BankSource[];
+  /** Cached bank URLs to keep when a download is stored; every other cached entry is an older build's. Defaults to the URL banks. */
+  keep?: readonly string[];
+  /** Called with 0..1 while the banks download, weighted by their sizes. */
   onProgress?: (fraction: number) => void;
+  /** Whether the synth's effects start switched on. Defaults to on. */
+  effects?: boolean;
+  /** The palm-mute preset the active banks have for each tone; a tone without one plays the shared muted sound. Defaults to none. */
+  mutedPresets?: MutedPresets;
 }
 
 /**
@@ -57,6 +70,13 @@ export class SynthClock implements Clock {
   private stopListening: (() => void) | null = null;
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  /** The score the session hands alphaTab once its banks are in. Until then alphaTab has no score, so track changes go to this one. */
+  private scoreToLoad: alphaTab.model.Score | null = null;
+  private effectsSwitch = true;
+  private liveEffects: (on: boolean) => void = () => {};
+  /** The palm-mute parts in the synth score, each played alongside its parent track (KTD4). */
+  private companions: readonly Companion[] = [];
+  private mutedPresets: MutedPresets = {};
 
   constructor(
     private readonly api: alphaTab.AlphaTabApi,
@@ -90,6 +110,48 @@ export class SynthClock implements Clock {
 
   get loop(): LoopRange | null {
     return this.loopRange;
+  }
+
+  /** Track changes made before alphaTab has the score are applied to this one, and reach the synth when it is handed over. */
+  awaitScore(score: alphaTab.model.Score): void {
+    this.scoreToLoad = score;
+  }
+
+  private tracks(): alphaTab.model.Track[] {
+    return (this.api.score ?? this.scoreToLoad)?.tracks ?? [];
+  }
+
+  /**
+   * Tells the clock which tracks of the synth score are palm-mute parts and whose. Everything set by track index (the tone,
+   * the silenced track, the export's single track) reaches a part's companions through its parent.
+   */
+  useCompanions(companions: readonly Companion[], mutedPresets: MutedPresets = {}): void {
+    this.companions = companions;
+    this.mutedPresets = mutedPresets;
+  }
+
+  private isCompanion(index: number): boolean {
+    return this.companions.some((c) => c.index === index);
+  }
+
+  /** A real track's index followed by its companions' indices. */
+  private withCompanions(index: number): number[] {
+    return [index, ...this.companions.filter((c) => c.parent === index).map((c) => c.index)];
+  }
+
+  /** A real track and its companions; empty for an index the song does not have, or for a companion's own. */
+  private group(index: number | null): alphaTab.model.Track[] {
+    if (index === null || this.isCompanion(index)) return [];
+    const tracks = this.tracks();
+    if (!tracks[index]) return [];
+    return this.withCompanions(index).flatMap((i) => (tracks[i] ? [tracks[i]] : []));
+  }
+
+  /** The program a track's level is evened out with: a companion's comes from its muted sound, not its parent's. */
+  private levelProgram(tracks: readonly alphaTab.model.Track[], index: number): number {
+    const companion = this.companions.find((c) => c.index === index);
+    const parent = companion ? tracks[companion.parent] : undefined;
+    return parent ? mutedLevelProgram(parent.playbackInfo.program) : tracks[index].playbackInfo.program;
   }
 
   /** The synth position interpolated to now, before the output latency is taken off. */
@@ -152,9 +214,9 @@ export class SynthClock implements Clock {
 
   /** Sets each guitar track to the common level for its sound. alphaTab drops a level set before its synth exists, so this runs on every ready. */
   private applyBalance(): void {
-    const tracks = this.api.score?.tracks ?? [];
+    const tracks = this.tracks();
     tracks.forEach((track, index) => {
-      const gain = programGain(track.playbackInfo.program);
+      const gain = programGain(this.levelProgram(tracks, index));
       if (gain === 1 && !this.levelled.has(index)) return;
       this.levelled.add(index);
       this.api.changeTrackVolume?.([track], gain);
@@ -162,31 +224,34 @@ export class SynthClock implements Clock {
   }
 
   private applySilence(): void {
-    if (this.silentTrack === null) return;
-    const track = this.api.score?.tracks[this.silentTrack];
-    if (track) this.api.changeTrackMute([track], true);
+    const group = this.group(this.silentTrack);
+    if (group.length > 0) this.api.changeTrackMute(group, true);
   }
 
-  /** Silences one track, or none, so the rest of the band plays without it. The export follows, unless it asks for the full band. */
+  /**
+   * Silences one track, or none, so the rest of the band plays without it; its palm-mute part goes silent with it. The export
+   * follows, unless it asks for the full band.
+   */
   setSilentTrack(index: number | null): void {
     if (index === this.silentTrack) return;
-    const tracks = this.api.score?.tracks ?? [];
-    const previous = this.silentTrack === null ? undefined : tracks[this.silentTrack];
-    const next = index === null ? undefined : tracks[index];
-    if (index !== null && !next) return;
-    if (previous) this.api.changeTrackMute([previous], false);
-    if (next) this.api.changeTrackMute([next], true);
+    const previous = this.group(this.silentTrack);
+    const next = this.group(index);
+    if (index !== null && next.length === 0) return;
+    if (previous.length > 0) this.api.changeTrackMute(previous, false);
+    if (next.length > 0) this.api.changeTrackMute(next, true);
     this.silentTrack = index;
   }
 
   /**
    * Plays the given tracks with the given General MIDI programs (track index -> program), and every other track with the
    * sound the tab wrote. The change reaches the live synth and the export alike, because both build their audio from the score.
+   * A palm-mute part is never given a sound here: it follows its parent's new sound with the matching muted one (KTD5).
    */
   setTrackPrograms(overrides: ReadonlyMap<number, number>): void {
-    const tracks = this.api.score?.tracks ?? [];
+    const tracks = this.tracks();
     let changed = false;
     tracks.forEach((track, index) => {
+      if (this.isCompanion(index)) return;
       const wanted = overrides.get(index);
       if (wanted === undefined) {
         // A track nobody chose a tone for goes back to what the tab wrote, whichever clock changed it.
@@ -201,7 +266,9 @@ export class SynthClock implements Clock {
       applyProgram(track, written, wanted);
       changed = true;
     });
-    if (changed) this.reloadMidi();
+    if (!changed) return;
+    deriveCompanionSounds(tracks, this.companions, this.mutedPresets);
+    this.reloadMidi();
   }
 
   /**
@@ -210,7 +277,8 @@ export class SynthClock implements Clock {
    * that never finishes is given up on so later changes still get through.
    */
   private reloadMidi(): void {
-    if (this.disposed) return;
+    // Before alphaTab has the score there is nothing to rebuild: the audio it builds when the score arrives has the change.
+    if (this.disposed || !this.api.score) return;
     if (this.reloading) {
       this.reloadAgain = true;
       return;
@@ -267,28 +335,63 @@ export class SynthClock implements Clock {
     if (this.resumeAfterReload) this.api.play();
   }
 
+  /** Whether the effects are switched on, live and for the export. */
+  get effectsOn(): boolean {
+    return this.effectsSwitch;
+  }
+
+  /** Switches the effects on or off: heard at once in live playback (R11), and followed by the next export (R14). */
+  setEffects(on: boolean): void {
+    this.effectsSwitch = on;
+    this.liveEffects(on);
+  }
+
+  /** Connects the effects switch to the live effects chain. */
+  bindLiveEffects(setEnabled: (on: boolean) => void): void {
+    this.liveEffects = setEnabled;
+  }
+
   /**
    * Renders the whole song's synth audio offline, at original tempo, for the video export.
    * Calls `onProgress` with 0..1 as it goes. The silenced track is left out unless `fullBand` is set, which the alignment
-   * needs so it compares the recording with every part. The light effects heard live are applied too, unless `effects` is
-   * false: the alignment needs the plain sound.
+   * needs so it compares the recording with every part. The light effects are applied when they are switched on, unless
+   * `effects` is false: the alignment needs the plain sound.
+   *
+   * With the effects on, the export runs on past the tab's end for the room's length (KTD9, R13), so the last notes fade
+   * out and the room decays instead of stopping dead; the result says how long that tail is. With them off it is the
+   * tab's length, as the alignment needs.
    */
-  async exportAudio(onProgress?: (fraction: number) => void, { effects = true, fullBand = false, onlyTrack }: ExportAudioOptions = {}): Promise<PcmAudio> {
+  async exportAudio(onProgress?: (fraction: number) => void, { effects = this.effectsSwitch, fullBand = false, onlyTrack }: ExportAudioOptions = {}): Promise<PcmAudio> {
     const options = new alphaTab.synth.AudioExportOptions();
     options.sampleRate = AUDIO_SAMPLE_RATE;
     options.useSyncPoints = false;
     options.masterVolume = 1;
     options.metronomeVolume = 0;
-    (this.api.score?.tracks ?? []).forEach((track, index) => {
-      const gain = programGain(track.playbackInfo.program);
+    const tracks = this.api.score?.tracks ?? [];
+    tracks.forEach((_, index) => {
+      const gain = programGain(this.levelProgram(tracks, index));
       if (gain !== 1) options.trackVolume.set(index, gain);
     });
-    const tracks = this.api.score?.tracks ?? [];
-    if (onlyTrack !== undefined && onlyTrack >= 0 && onlyTrack < tracks.length) {
+    // A track's palm-mute part is recorded with it, and left out with it.
+    if (onlyTrack !== undefined && onlyTrack >= 0 && onlyTrack < tracks.length && !this.isCompanion(onlyTrack)) {
+      const kept = new Set(this.withCompanions(onlyTrack));
       tracks.forEach((_, index) => {
-        if (index !== onlyTrack) options.trackVolume.set(index, 0);
+        if (!kept.has(index)) options.trackVolume.set(index, 0);
       });
-    } else if (!fullBand && this.silentTrack !== null) options.trackVolume.set(this.silentTrack, 0);
+    } else if (!fullBand && this.silentTrack !== null) {
+      for (const index of this.withCompanions(this.silentTrack)) options.trackVolume.set(index, 0);
+    }
+    const tailSeconds = effects ? DEFAULT_EFFECTS.roomSeconds : 0;
+    const endTick = tailSeconds > 0 ? secondsToTicks(this.tempoMap, this.duration + tailSeconds) : 0;
+    if (endTick > 0) {
+      // alphaTab's exporter cuts every voice off where its range ends, which by default is the last note's end. A range
+      // reaching past the end lets the last notes release naturally while nothing new plays, without touching the score
+      // that live playback and the timeline use. alphaTab times ticks past the end at the last tempo, as secondsToTicks does.
+      const range = new alphaTab.synth.PlaybackRange();
+      range.startTick = 0;
+      range.endTick = Math.ceil(endTick);
+      options.playbackRange = range;
+    }
     const exporter = await this.api.exportAudio(options);
     const chunks: { left: Float32Array; right: Float32Array }[] = [];
     try {
@@ -302,7 +405,11 @@ export class SynthClock implements Clock {
       exporter.destroy();
     }
     const plain = concatPcm(chunks, AUDIO_SAMPLE_RATE);
-    return effects ? renderWithEffects(plain) : plain;
+    if (!effects) return plain;
+    if (endTick <= 0) return renderWithEffects(plain);
+    // The room is rendered over the tab plus its tail, so the reverb of the last notes is in the file (KTD9).
+    const withEffects = await renderWithEffects(fitPcm(plain, this.duration + tailSeconds));
+    return { ...withEffects, tailSeconds };
   }
 
   dispose(): void {
@@ -352,10 +459,98 @@ function applyProgram(track: alphaTab.model.Track, written: WrittenSound, progra
   for (const entry of written.automations) entry.automation.value = program ?? entry.value;
 }
 
+export interface BankLoadOptions {
+  onProgress?: (fraction: number) => void;
+  /** Cached URLs to keep; defaults to the URL sources. */
+  keep?: readonly string[];
+  /** True once the session is closed; nothing is handed to alphaTab after that and `ready` never settles. */
+  isDisposed?: () => boolean;
+  env?: SoundFontEnv;
+}
+
+/**
+ * Fetches every bank, then hands them to alphaTab in order (the first replacing, the rest appended) and only then the score.
+ * alphaTab rebuilds its presets and reports ready again for each bank that arrives after the score's MIDI, so posting
+ * them all first gives a single ready that covers every bank. Resolves on that ready; rejects when any bank fails to
+ * download or load, so the caller can offer a retry.
+ */
+export function loadBanksThenScore(
+  api: alphaTab.AlphaTabApi,
+  score: alphaTab.model.Score,
+  banks: readonly BankSource[],
+  { onProgress, keep, isDisposed = () => false, env }: BankLoadOptions = {},
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (banks.length === 0) {
+      reject(new Error('The sound player has no sound bank.'));
+      return;
+    }
+    let scoreGiven = false;
+    // A ready before the score is handed over cannot cover every bank, so only one after it counts.
+    api.playerReady.on(() => {
+      if (scoreGiven) resolve();
+    });
+    api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
+    const urls = banks.flatMap((bank) => ('url' in bank ? [bank.url] : []));
+    const progress = combinedProgress(urls.length, onProgress);
+    let next = 0;
+    // The banks are fetched here, not by alphaTab, so they can be cached, show progress and be retried.
+    Promise.all(
+      banks.map((bank) => {
+        if (!('url' in bank)) return Promise.resolve(bank.bytes);
+        const report = progress(next++);
+        return loadSoundFontBytes(bank.url, report, env, keep ?? urls);
+      }),
+    )
+      .then((all) => {
+        if (isDisposed()) return;
+        for (const [index, bytes] of all.entries()) {
+          if (!api.loadSoundFont(bytes, index > 0)) {
+            reject(new Error('The sound player could not start.'));
+            return;
+          }
+        }
+        scoreGiven = true;
+        api.renderScore(score);
+      })
+      .catch(reject);
+  });
+}
+
+/**
+ * Joins the progress of several downloads into one 0..1, weighted by their sizes. A download whose size is not known yet
+ * counts as the average of the known ones. Never goes back, and reaches 1 only when every download is whole.
+ */
+function combinedProgress(count: number, onProgress?: (fraction: number) => void) {
+  const fractions = new Array<number>(count).fill(0);
+  const totals = new Array<number>(count).fill(0);
+  let shown = 0;
+  return (index: number) => (fraction: number, totalBytes: number) => {
+    fractions[index] = fraction;
+    totals[index] = totalBytes;
+    const known = totals.filter((total) => total > 0);
+    const guess = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+    let received = 0;
+    let whole = 0;
+    for (let i = 0; i < count; i++) {
+      const size = totals[i] > 0 ? totals[i] : guess;
+      whole += size;
+      received += totals[i] > 0 ? fractions[i] * size : 0;
+    }
+    const allIn = fractions.every((f) => f >= 1);
+    const combined = allIn ? 1 : Math.min(received / whole, 0.999);
+    if (combined <= shown) return;
+    shown = combined;
+    onProgress?.(shown);
+  };
+}
+
 export interface SynthSession {
   clock: SynthClock;
-  /** Resolves when the SoundFont and score are loaded and playback can start. */
+  /** Resolves when every bank and the score are loaded and playback can start. */
   ready: Promise<void>;
+  /** What the speakers are fed, after the effects switch, for a level meter in dev tools; null when the effects are not installed. */
+  output: AudioNode | null;
 }
 
 /**
@@ -380,33 +575,34 @@ export function createSynthSession(
   settings.player.scrollMode = alphaTab.ScrollMode.Off;
   settings.core.fontDirectory = './font/';
 
-  // Sounds the font has but alphaTab cannot play are swapped for ones it can, before the audio is built from the score.
-  substituteUnplayablePrograms(score);
+  // The synth plays a copy with palm mutes moved to parts of their own (KTD4); the timeline and tab strip keep the loaded score.
+  // The copy also has the font's unplayable sounds swapped for ones it can play.
+  const mutedPresets = options.mutedPresets ?? {};
+  const synthScore = buildSynthScore(score, mutedPresets);
   const api = new alphaTab.AlphaTabApi(host, settings);
   const clock = new SynthClock(api, durationSeconds, tempoMap);
   let disposed = false;
   // The same effects the export applies, so the video sounds like what was practised to.
-  const removeEffects = installLiveEffects(api);
+  const effectsOn = options.effects ?? true;
+  const effects = installLiveEffects(api, effectsOn);
+  clock.bindLiveEffects(effects.setEnabled);
+  clock.setEffects(effectsOn);
 
-  const ready = new Promise<void>((resolve, reject) => {
-    api.playerReady.on(() => resolve());
-    api.error.on((e) => reject(e instanceof Error ? e : new Error(String(e))));
-    api.renderScore(score);
-    // The SoundFont is fetched here, not by alphaTab, so it can be cached, show progress and be retried.
-    loadSoundFontBytes(options.soundFontUrl, options.onProgress)
-      .then((bytes) => {
-        if (disposed) return;
-        if (!api.loadSoundFont(bytes, false)) reject(new Error('The sound player could not start.'));
-      })
-      .catch(reject);
+  // Until the banks are in, alphaTab has no score, so tones and the silenced track chosen meanwhile go straight to it.
+  clock.awaitScore(synthScore.score);
+  clock.useCompanions(synthScore.companions, mutedPresets);
+  const ready = loadBanksThenScore(api, synthScore.score, options.banks, {
+    onProgress: options.onProgress,
+    keep: options.keep,
+    isDisposed: () => disposed,
   });
 
   const originalDispose = clock.dispose.bind(clock);
   clock.dispose = () => {
     disposed = true;
-    removeEffects();
+    effects.remove();
     originalDispose();
     host.remove();
   };
-  return { clock, ready };
+  return { clock, ready, output: effects.output };
 }

@@ -52,6 +52,27 @@ describe('menuPanelClick', () => {
     expect(menuPanelClick(target(false), false)).toEqual({ close: false, stop: false });
   });
 
+  it('keeps the More menu open when its "Synth EQ and room" switch is flipped, so it can be flipped again (U3)', () => {
+    // A label-wrapped checkbox inside the panel: neither the box nor the label text is in a button or link.
+    type Fake = { tag: string; parent: Fake | null; closest: (selector: string) => Fake | null };
+    const el = (tag: string, parent: Fake | null): Fake => ({
+      tag,
+      parent,
+      closest(selector) {
+        const tags = selector.split(',').map((t) => t.trim());
+        for (let at: Fake | null = this; at; at = at.parent) if (tags.includes(at.tag)) return at;
+        return null;
+      },
+    });
+    const panel = el('div', el('details', null));
+    const label = el('label', panel);
+    const box = el('input', label);
+    expect(menuPanelClick(box, false).close).toBe(false);
+    expect(menuPanelClick(label, false).close).toBe(false);
+    // A button beside it in the same panel still closes the menu.
+    expect(menuPanelClick(el('button', panel), false).close).toBe(true);
+  });
+
   it('with keepParentOpen, stops the click so the menu around it stays open (KTD8)', () => {
     expect(menuPanelClick(target(true), true)).toEqual({ close: true, stop: true });
     expect(menuPanelClick(target(false), true)).toEqual({ close: false, stop: true });

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildEffects,
+  CEILING_KNEE,
+  CROSSFADE_SECONDS,
   DEFAULT_EFFECTS,
   installLiveEffects,
   renderWithEffects,
@@ -8,10 +10,30 @@ import {
   softClipCurve,
 } from '../../src/audio/synth-effects';
 
+/** A stand-in audio parameter that records what was scheduled on it. */
+class FakeParam {
+  events: { kind: 'set' | 'ramp' | 'cancel'; value: number; time: number }[] = [];
+  constructor(public value: number) {}
+  setValueAtTime(value: number, time: number) {
+    this.events.push({ kind: 'set', value, time });
+  }
+  linearRampToValueAtTime(value: number, time: number) {
+    this.events.push({ kind: 'ramp', value, time });
+  }
+  cancelScheduledValues(time: number) {
+    this.events.push({ kind: 'cancel', value: Number.NaN, time });
+  }
+  /** Where the last ramp ends, or the plain value when nothing is scheduled. */
+  target() {
+    const ramps = this.events.filter((e) => e.kind === 'ramp');
+    return ramps.length > 0 ? ramps[ramps.length - 1] : { kind: 'none', value: this.value, time: 0 };
+  }
+}
+
 /** A stand-in audio node that records its kind, settings and connections. */
 class FakeNode {
   connections: FakeNode[] = [];
-  gain = { value: 1 };
+  gain = new FakeParam(1);
   frequency = { value: 0 };
   type = '';
   buffer: { length: number; channels: Float32Array[] } | null = null;
@@ -29,6 +51,7 @@ class FakeNode {
 
 class FakeContext {
   destination = new FakeNode('destination');
+  currentTime = 2;
   constructor(readonly sampleRate = 48000) {}
   createGain = () => new FakeNode('gain');
   createBiquadFilter = () => new FakeNode('biquad');
@@ -82,6 +105,35 @@ describe('softClipCurve', () => {
     for (let i = 1; i < curve.length; i++) expect(curve[i]).toBeGreaterThan(curve[i - 1]);
     expect(Math.abs(curve[Math.floor(curve.length / 2)])).toBeLessThan(0.001);
   });
+
+  it('leaves the signal unchanged below the knee (R12): no lift and no saturation at normal levels', () => {
+    expect(CEILING_KNEE).toBeGreaterThanOrEqual(0.5);
+    expect(CEILING_KNEE).toBeLessThan(1);
+    for (const points of [2048, 1025]) {
+      const curve = softClipCurve(points);
+      let checked = 0;
+      for (let i = 0; i < points; i++) {
+        const x = (i / (points - 1)) * 2 - 1;
+        if (Math.abs(x) > CEILING_KNEE) continue;
+        expect(curve[i]).toBeCloseTo(x, 6);
+        checked++;
+      }
+      expect(checked).toBeGreaterThan(points / 2);
+    }
+  });
+
+  it('bends smoothly above the knee and stays under full scale for any input', () => {
+    const points = 2048;
+    const curve = softClipCurve(points);
+    // The Web Audio shaper holds its end values for inputs past full scale, so the ends bound every input.
+    expect(curve[points - 1]).toBeLessThan(1 - 1e-3);
+    expect(curve[0]).toBeGreaterThan(-1 + 1e-3);
+    for (let i = 0; i < points; i++) expect(curve[i]).toBeCloseTo(-curve[points - 1 - i], 6);
+    // No kink at the knee: the slope just above it is still close to 1.
+    const step = 2 / (points - 1);
+    const above = Math.ceil(((CEILING_KNEE + 1) / 2) * (points - 1)) + 1;
+    expect((curve[above + 1] - curve[above]) / step).toBeGreaterThan(0.95);
+  });
 });
 
 describe('buildEffects', () => {
@@ -99,8 +151,10 @@ describe('buildEffects', () => {
     const biquads = nodes.filter((n) => n.kind === 'biquad').map((n) => n.type);
     expect(biquads).toEqual(['highpass', 'lowshelf', 'highshelf']);
     expect(nodes.some((n) => n.kind === 'convolver' && n.buffer && n.buffer.length > 0)).toBe(true);
-    expect(chain.output).toBe(nodes.find((n) => n.kind === 'shaper'));
-    expect((chain.output as unknown as FakeNode).oversample).toBe('2x');
+    const shaper = nodes.find((n) => n.kind === 'shaper')!;
+    expect(shaper.oversample).toBe('2x');
+    // The ceiling is on the processed path, which meets the plain path at the output.
+    expect(walk(shaper)).toContain(chain.output as unknown as FakeNode);
   });
 
   it('mixes the dry and room signals so they add up to the whole', () => {
@@ -110,11 +164,54 @@ describe('buildEffects', () => {
     expect(gains).toContain(DEFAULT_EFFECTS.roomMix);
   });
 
-  it('is a plain pass-through when switched off', () => {
-    const chain = buildEffects(asContext(new FakeContext()), false);
-    expect(chain.input).toBe(chain.output);
-    expect(walk(chain.input as unknown as FakeNode).map((n) => n.kind)).toEqual(['gain']);
-    expect((chain.input as unknown as FakeNode).gain.value).toBe(1);
+  /** The plain path (input straight to the output) and the processed path's last gain (after the ceiling). */
+  function paths(chain: { input: AudioNode; output: AudioNode }) {
+    const input = chain.input as unknown as FakeNode;
+    const output = chain.output as unknown as FakeNode;
+    const plain = input.connections.find((n) => n.kind === 'gain' && n.connections.includes(output));
+    const shaper = walk(input).find((n) => n.kind === 'shaper');
+    const processed = shaper?.connections.find((n) => n.kind === 'gain');
+    if (!plain || !processed) throw new Error('the chain has no plain and processed paths');
+    expect(processed.connections).toContain(output);
+    return { plain, processed };
+  }
+
+  it('starts with only the processed sound when on, and only the plain sound when off', () => {
+    const on = paths(buildEffects(asContext(new FakeContext())));
+    expect(on.plain.gain.value).toBe(0);
+    expect(on.processed.gain.value).toBe(1);
+    const off = paths(buildEffects(asContext(new FakeContext()), false));
+    expect(off.plain.gain.value).toBe(1);
+    expect(off.processed.gain.value).toBe(0);
+  });
+
+  it('switching off crossfades to the plain sound over a few milliseconds, without rebuilding the chain (KTD7)', () => {
+    const ctx = new FakeContext();
+    const chain = buildEffects(asContext(ctx));
+    const before = walk(chain.input as unknown as FakeNode);
+    const { plain, processed } = paths(chain);
+    expect(CROSSFADE_SECONDS).toBeGreaterThan(0.001);
+    expect(CROSSFADE_SECONDS).toBeLessThanOrEqual(0.03);
+
+    chain.setEnabled(false);
+    // Each ramp starts from where the gain is now, so a flip mid-fade does not jump.
+    expect(processed.gain.events.find((e) => e.kind === 'set')).toEqual({ kind: 'set', value: 1, time: ctx.currentTime });
+    expect(processed.gain.target()).toEqual({ kind: 'ramp', value: 0, time: ctx.currentTime + CROSSFADE_SECONDS });
+    expect(plain.gain.target()).toEqual({ kind: 'ramp', value: 1, time: ctx.currentTime + CROSSFADE_SECONDS });
+
+    ctx.currentTime = 5;
+    chain.setEnabled(true);
+    expect(processed.gain.target()).toEqual({ kind: 'ramp', value: 1, time: 5 + CROSSFADE_SECONDS });
+    expect(plain.gain.target()).toEqual({ kind: 'ramp', value: 0, time: 5 + CROSSFADE_SECONDS });
+
+    const after = walk(chain.input as unknown as FakeNode);
+    expect(after).toHaveLength(before.length);
+    after.forEach((node, i) => expect(node).toBe(before[i]));
+  });
+
+  it('ships a makeup gain near unity, now the ceiling adds no lift for it to offset (KTD8)', () => {
+    // The derivation is beside DEFAULT_EFFECTS: the EQ and room land within about 0.7 dB of the plain sound.
+    expect(Math.abs(DEFAULT_EFFECTS.makeupDb)).toBeLessThanOrEqual(1);
   });
 });
 
@@ -126,7 +223,7 @@ describe('installLiveEffects', () => {
   it('points alphaTab at the effects, ends at the real speakers, and can be taken out again', () => {
     const ctx = new FakeContext();
     const real = ctx.destination;
-    const remove = installLiveEffects(apiWith(ctx));
+    const { remove } = installLiveEffects(apiWith(ctx));
     const entry = ctx.destination as FakeNode;
     expect(entry).not.toBe(real);
     // Whatever alphaTab connects to `destination` now meets the effects, and the signal ends at the real destination.
@@ -136,9 +233,27 @@ describe('installLiveEffects', () => {
     expect(walk(entry).includes(real)).toBe(false);
   });
 
+  it('hands back a switch that flips the installed chain live, and the node the speakers hear', () => {
+    const ctx = new FakeContext();
+    const real = ctx.destination;
+    const effects = installLiveEffects(apiWith(ctx), false);
+    const entry = ctx.destination as FakeNode;
+    const output = effects.output as unknown as FakeNode;
+    expect(output.connections).toContain(real);
+    const plain = entry.connections.find((n) => n.kind === 'gain' && n.connections.includes(output));
+    expect(plain?.gain.value).toBe(1);
+    effects.setEnabled(true);
+    expect(plain?.gain.target()).toEqual({ kind: 'ramp', value: 0, time: ctx.currentTime + CROSSFADE_SECONDS });
+    // The switch does not reinstall: alphaTab still meets the same entry.
+    expect(ctx.destination).toBe(entry);
+  });
+
   it('leaves playback alone when alphaTab is not shaped as expected', () => {
     for (const api of [{}, { _player: {} }, apiWith(null), apiWith(undefined)]) {
-      expect(() => installLiveEffects(api)()).not.toThrow();
+      const effects = installLiveEffects(api);
+      expect(() => effects.setEnabled(false)).not.toThrow();
+      expect(() => effects.remove()).not.toThrow();
+      expect(effects.output).toBeNull();
     }
   });
 });

@@ -56,20 +56,20 @@ async function readCached(env: SoundFontEnv, url: string): Promise<Uint8Array | 
   return null;
 }
 
-async function writeCached(env: SoundFontEnv, url: string, bytes: Uint8Array): Promise<void> {
+async function writeCached(env: SoundFontEnv, url: string, bytes: Uint8Array, keep: readonly string[]): Promise<void> {
   try {
     const cache = await env.caches?.open(SOUNDFONT_CACHE);
     if (!cache) return;
     await cache.put(url, new Response(bytes as BodyInit));
-    // The file name carries a content hash, so any other entry is an older build's font.
-    const mine = absolute(url);
-    for (const request of await cache.keys()) if (request.url !== mine) await cache.delete(request);
+    // File names carry a content hash, so an entry outside the current list is an older build's bank.
+    const current = new Set([url, ...keep].map(absolute));
+    for (const request of await cache.keys()) if (!current.has(request.url)) await cache.delete(request);
   } catch {
     // Not being able to keep a copy only costs a download next time.
   }
 }
 
-async function download(env: SoundFontEnv, url: string, onProgress?: (fraction: number) => void): Promise<Uint8Array> {
+async function download(env: SoundFontEnv, url: string, onProgress?: SoundFontProgress): Promise<Uint8Array> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const watch = () => {
@@ -91,7 +91,7 @@ async function download(env: SoundFontEnv, url: string, onProgress?: (fraction: 
         watch();
         chunks.push(value);
         received += value.length;
-        if (total > 0) onProgress?.(Math.min(1, received / total));
+        if (total > 0) onProgress?.(Math.min(1, received / total), total);
       }
     } else {
       const whole = new Uint8Array(await response.arrayBuffer());
@@ -105,7 +105,7 @@ async function download(env: SoundFontEnv, url: string, onProgress?: (fraction: 
       at += chunk.length;
     }
     if (!isWholeSoundFont(bytes)) throw new Error('The sound download was incomplete.');
-    onProgress?.(1);
+    onProgress?.(1, bytes.length);
     return bytes;
   } catch (e) {
     if (controller.signal.aborted) throw new Error('The sound download stalled.');
@@ -115,21 +115,26 @@ async function download(env: SoundFontEnv, url: string, onProgress?: (fraction: 
   }
 }
 
+/** Called with 0..1 as a SoundFont loads, and its size in bytes once known (0 until the server says). */
+export type SoundFontProgress = (fraction: number, totalBytes: number) => void;
+
 /**
  * The SoundFont's bytes, from the browser's cache when a whole copy is there, otherwise downloaded (reporting 0..1)
  * and then kept for next time. Rejects when the download fails; the caller offers a retry.
+ * Storing a copy drops every cached entry whose URL is not this one or in `keep`, the current build's bundled banks.
  */
 export async function loadSoundFontBytes(
   url: string,
-  onProgress?: (fraction: number) => void,
+  onProgress?: SoundFontProgress,
   env: SoundFontEnv = defaultSoundFontEnv(),
+  keep: readonly string[] = [],
 ): Promise<Uint8Array> {
   const cached = await readCached(env, url);
   if (cached) {
-    onProgress?.(1);
+    onProgress?.(1, cached.length);
     return cached;
   }
   const bytes = await download(env, url, onProgress);
-  await writeCached(env, url, bytes);
+  await writeCached(env, url, bytes, keep);
   return bytes;
 }

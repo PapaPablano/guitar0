@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as alphaTab from '@coderline/alphatab';
 import { SynthClock } from '../../src/audio/synth-bridge';
+import { useMuseScoreLevelsOnly } from './museScore-levels';
+
+useMuseScoreLevelsOnly();
 
 type Handler<T> = (e: T) => void;
 

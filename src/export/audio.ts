@@ -8,6 +8,12 @@ export interface PcmAudio {
   readonly left: Float32Array;
   readonly right: Float32Array;
   readonly sampleRate: number;
+  /**
+   * Seconds at the end that run past the tab: the room's decay after the last note, on a full-song synth export with the
+   * effects on (KTD9). The video lasts through it, holding its last frame. Absent on audio that ends with the tab, and on
+   * anything cut or padded from it.
+   */
+  readonly tailSeconds?: number;
 }
 
 /** Splits interleaved stereo samples (L R L R ...) into planar channels. */
@@ -68,6 +74,14 @@ export function exportLength(durationSeconds: number, alignment?: AlignmentMap |
 export function tabTimeAt(alignment: AlignmentMap | null | undefined, outputSeconds: number): number {
   if (!bendsTime(alignment)) return outputSeconds;
   return Math.max(0, alignment.toTab(outputSeconds + alignment.base));
+}
+
+/**
+ * The tab time a video frame shows: as `tabTimeAt`, held at the tab's end, so frames in a tail past the tab (the room's
+ * decay) repeat the final frame instead of scrolling on.
+ */
+export function frameTabTime(alignment: AlignmentMap | null | undefined, outputSeconds: number, tabSeconds: number): number {
+  return Math.min(tabSeconds, tabTimeAt(alignment, outputSeconds));
 }
 
 /**

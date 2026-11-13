@@ -201,9 +201,9 @@ describe('SynthClock guitar tones', () => {
       expect(exported[0].firstBeat[2]).toBe(27);
     });
 
-    it('keeps the sample rate, and the length is the length rendered', async () => {
+    it('keeps the sample rate, and the plain length is the length rendered', async () => {
       const { clock, exported } = setup();
-      const pcm = await clock.exportAudio();
+      const pcm = await clock.exportAudio(undefined, { effects: false });
       expect(exported[0].sampleRate).toBe(AUDIO_SAMPLE_RATE);
       expect(pcm.sampleRate).toBe(AUDIO_SAMPLE_RATE);
       expect(pcm.left.length).toBe(8);
